@@ -1,0 +1,82 @@
+; Mega65 Symbol Table (45GS02 Processor)
+; Extended 6502 with Hypervisor and Modern Features
+
+; Hypervisor Interface
+d600 hypervisor_port IO Hypervisor Port
+d601 hypervisor_data IO Hypervisor Data
+d602 hypervisor_call IO Hypervisor Call
+
+; HyperRAM Controller
+d640 hyperram_control IO HyperRAM Control
+d641 hyperram_status IO HyperRAM Status
+d642 hyperram_addr_lo IO HyperRAM Address Lo
+d643 hyperram_addr_mid IO HyperRAM Address Mid
+d644 hyperram_addr_hi IO HyperRAM Address Hi
+d645 hyperram_data IO HyperRAM Data Port
+
+; Extended VIC (Video Controller)
+d000 vic_base IO VIC Base Address
+d009 vic_sprite_x_3 IO VIC Sprite 3 X
+d00a vic_sprite_y_3 IO VIC Sprite 3 Y
+d02e vic_extended IO VIC Extended Config
+
+; Mega65 SDRAM Controller
+ffd3610 sdram_base IO SDRAM Base
+ffd3611 sdram_config IO SDRAM Config
+ffd3612 sdram_status IO SDRAM Status
+
+; Bit Plane Support
+d700 bitplane_control IO Bitplane Control
+d701 bitplane_config IO Bitplane Config
+d702 bitplane_data IO Bitplane Data
+
+; Extended SID (Stereo)
+d400 sid_left IO SID Left Channel
+de00 sid_right IO SID Right Channel
+
+; DHE (Disk Host Engine)
+df00 dhe_control IO DHE Control
+df01 dhe_status IO DHE Status
+df02 dhe_data IO DHE Data Port
+
+; Mega65 Specific Kernal
+ff00 mega65_init FUNC Mega65 Initialization
+ff03 mega65_fast_mode FUNC Set Fast Mode (40MHz)
+ff06 mega65_hypervisor_call FUNC Hypervisor Call
+ff09 mega65_dma FUNC DMA Operations
+ff84 mega65_version FUNC Get Version
+
+; Version/Features Register
+d640 mega65_version_reg IO Mega65 Version
+d641 mega65_features_reg IO Mega65 Features
+
+; 45GS02 CPU Features
+; Z Register (pseudo-register in zero page)
+0010 z_register VAR Z Register
+
+; Extended Registers
+0011 b_register VAR B Register (Banking)
+
+; RAM Banking (up to 64MB)
+00000 ram_bank_0 REGION Bank 0
+10000 ram_bank_1 REGION Bank 1
+20000 ram_bank_2 REGION Bank 2
+
+; Fast IO Page
+fff0000 fast_io_page REGION Fast I/O Page
+
+; Extended Interrupts
+fffa mega65_nmi_vector REGION NMI Vector
+fffc mega65_reset_vector REGION Reset Vector
+fffe mega65_irq_vector REGION IRQ Vector
+10000 mega65_extended_vector REGION Extended Vector
+
+; Color RAM
+d800 color_ram REGION Color RAM (1KB)
+
+; Character ROM / Bitmap ROM
+8000 charset_rom REGION Character ROM
+
+; Video RAM Areas
+10000 video_ram_0 REGION Video RAM Bank 0
+20000 video_ram_1 REGION Video RAM Bank 1

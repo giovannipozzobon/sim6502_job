@@ -1,0 +1,92 @@
+# Commodore 64 Symbol Table
+# Format: ADDRESS NAME TYPE
+
+# Zero Page
+0000 zp_00 zeropage
+0001 zp_01 zeropage
+0002 zp_02 zeropage
+0003 zp_03 zeropage
+0004 zp_04 zeropage
+0005 zp_05 zeropage
+0006 zp_06 zeropage
+0007 zp_07 zeropage
+0008 zp_08 zeropage
+0009 zp_09 zeropage
+000a zp_0a zeropage
+000b zp_0b zeropage
+000c zp_0c zeropage
+000d zp_0d zeropage
+000e zp_0e zeropage
+000f zp_0f zeropage
+
+# Stack
+0100 stack_base stack
+01ff stack_top stack
+
+# BASIC ROM Area
+a000 basic_start romdata
+bfff basic_end romdata
+
+# Kernal ROM Area
+e000 kernal_start romdata
+ffff kernal_end romdata
+
+# VIC (Video Controller)
+d000 vic_base io
+d001 vic_sprite_x_1 io
+d002 vic_sprite_y_1 io
+d003 vic_sprite_x_2 io
+d004 vic_sprite_y_2 io
+d015 vic_sprite_enable io
+d016 vic_control io
+d017 vic_sprite_expand_y io
+d018 vic_memory_setup io
+d019 vic_irq_status io
+d01a vic_irq_enable io
+d01b vic_background_color io
+d01c vic_border_color io
+
+# SID (Sound Interface Device)
+d400 sid_base io
+d401 sid_freq_1_lo io
+d402 sid_freq_1_hi io
+d403 sid_pulse_1_lo io
+d404 sid_pulse_1_hi io
+d405 sid_control_1 io
+d406 sid_attack_decay_1 io
+d407 sid_sustain_release_1 io
+d408 sid_freq_2_lo io
+d409 sid_freq_2_hi io
+d40a sid_pulse_2_lo io
+d40b sid_pulse_2_hi io
+d40c sid_control_2 io
+d40d sid_attack_decay_2 io
+d40e sid_sustain_release_2 io
+
+# CIA 1 (Keyboard, Joystick)
+dc00 cia1_pra io
+dc01 cia1_prb io
+dc0d cia1_icr io
+dc0e cia1_cra io
+dc0f cia1_crb io
+
+# CIA 2 (Serial, NMI)
+dd00 cia2_pra io
+dd01 cia2_prb io
+dd0d cia2_icr io
+dd0e cia2_cra io
+dd0f cia2_crb io
+
+# Common Kernal Routines
+ffd2 kernal_chrout subroutine
+ffd5 kernal_chrin subroutine
+ffb1 kernal_load subroutine
+ffd8 kernal_save subroutine
+ffe4 kernal_getin subroutine
+ffe1 kernal_clall subroutine
+ffff kernal_reset subroutine
+
+# Interrupt Vectors
+fffa nmi_vector vector
+fffc reset_vector vector
+fffe irq_vector vector

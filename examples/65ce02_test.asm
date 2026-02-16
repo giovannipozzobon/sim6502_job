@@ -1,0 +1,8 @@
+.processor 65ce02
+LDA #$42
+PHX
+PHY
+LDX #$10
+LDY #$20
+PLY
+PLX

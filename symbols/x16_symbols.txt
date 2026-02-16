@@ -1,0 +1,61 @@
+# Commander X16 Symbol Table
+# 65C02 based system with modern features
+
+# VERA (Video Retro Architecture)
+9f00 vera_addr_lo io
+9f01 vera_addr_mid io
+9f02 vera_addr_hi io
+9f03 vera_data0 io
+9f04 vera_data1 io
+9f05 vera_ctrl io
+9f06 vera_irq_flags io
+9f07 vera_irq_enable io
+9f08 vera_isr io
+9f09 vera_csr io
+9f0a vera_hscale io
+9f0b vera_vscale io
+
+# VERA Layer 0 & 1 Configuration
+9f10 vera_l0_config io
+9f11 vera_l0_mapbase io
+9f12 vera_l0_tilebase io
+9f13 vera_l0_hscroll_lo io
+9f14 vera_l0_hscroll_hi io
+9f15 vera_l0_vscroll_lo io
+9f16 vera_l0_vscroll_hi io
+
+# SPI Controller (SD Card)
+9f20 spi_data io
+9f21 spi_ctrl io
+9f22 spi_status io
+
+# Expansion Port
+9f25 exp_port_data io
+9f26 exp_port_ctrl io
+
+# RTC (Real Time Clock)
+9f2b rtc_control io
+9f2c rtc_seconds io
+9f2d rtc_minutes io
+9f2e rtc_hours io
+9f2f rtc_day io
+9f30 rtc_month io
+9f31 rtc_year io
+
+# X16 Kernal Routines
+ffd2 kernal_chrout subroutine
+ffd5 kernal_chrin subroutine
+ff00 x16_setup subroutine
+ff03 x16_vera_init subroutine
+ff06 x16_spi_init subroutine
+
+# X16 ROM Banking
+9f61 rom_bank io
+
+# 65C02 Specific Features
+# (BRA, BIT immediate, STZ handled in CPU)
+
+# Interrupt Vectors
+fffa nmi_vector vector
+fffc reset_vector vector
+fffe irq_vector vector

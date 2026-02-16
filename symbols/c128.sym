@@ -1,0 +1,72 @@
+; Commodore 128 Symbol Table
+; Extends C64 with C128-specific features
+
+; C128 MMU (Memory Management Unit)
+ff00 mmu_config IO MMU Configuration
+ff01 mmu_preconfig IO MMU Preconfigure
+
+; C128 CPU Control
+ff02 cpu_speed IO CPU Speed Control (1/2 MHz)
+
+; Bank Select
+ff03 mmu_bank IO MMU Bank Select
+
+; C128 VDC (Video Display Controller) - 80 Column Mode
+d600 vdc_register IO VDC Register Select
+d601 vdc_data IO VDC Data Register
+
+; VDC Registers
+; (Access via d600/d601 port)
+
+; C128 Extended Kernal
+ff84 kernal_c128_init FUNC C128 Initialization
+ff87 kernal_fast_mode FUNC Set Fast Mode (2MHz)
+ff8a kernal_slow_mode FUNC Set Slow Mode (1MHz)
+ff8d kernal_bank_switch FUNC Switch Bank
+ff90 kernal_rambank FUNC RAM Bank Select
+
+; Extended SID (Second SID)
+de00 sid2_v1_freq_lo IO SID 2 Voice 1 Freq Lo
+de01 sid2_v1_freq_hi IO SID 2 Voice 1 Freq Hi
+de02 sid2_v1_pulse_lo IO SID 2 Voice 1 Pulse Lo
+de03 sid2_v1_pulse_hi IO SID 2 Voice 1 Pulse Hi
+de04 sid2_v1_control IO SID 2 Voice 1 Control
+de05 sid2_v1_ad IO SID 2 Voice 1 A/D
+de06 sid2_v1_sr IO SID 2 Voice 1 S/R
+de07 sid2_v2_freq_lo IO SID 2 Voice 2 Freq Lo
+de08 sid2_v2_freq_hi IO SID 2 Voice 2 Freq Hi
+de09 sid2_v2_pulse_lo IO SID 2 Voice 2 Pulse Lo
+de0a sid2_v2_pulse_hi IO SID 2 Voice 2 Pulse Hi
+de0b sid2_v2_control IO SID 2 Voice 2 Control
+de0c sid2_v2_ad IO SID 2 Voice 2 A/D
+de0d sid2_v2_sr IO SID 2 Voice 2 S/R
+de0e sid2_v3_freq_lo IO SID 2 Voice 3 Freq Lo
+de0f sid2_v3_freq_hi IO SID 2 Voice 3 Freq Hi
+de10 sid2_v3_pulse_lo IO SID 2 Voice 3 Pulse Lo
+de11 sid2_v3_pulse_hi IO SID 2 Voice 3 Pulse Hi
+de12 sid2_v3_control IO SID 2 Voice 3 Control
+de13 sid2_v3_ad IO SID 2 Voice 3 A/D
+de14 sid2_v3_sr IO SID 2 Voice 3 S/R
+de15 sid2_filter_lo IO SID 2 Filter Cutoff Lo
+de16 sid2_filter_hi IO SID 2 Filter Cutoff Hi
+de17 sid2_filter_control IO SID 2 Filter Control
+de18 sid2_volume IO SID 2 Master Volume
+
+; 40/80 Column Mode Register
+d030 mode_register IO 40/80 Column Mode
+d031 key_register IO Key Control Register
+
+; RAM Banking (128KB RAM)
+0000 ram_bank_0 REGION Bank 0 (0KB)
+10000 ram_bank_1 REGION Bank 1 (64KB)
+20000 ram_bank_2 REGION Bank 2 (128KB)
+
+; Additional Memory
+4000 exp_memory_base REGION Expansion Memory
+
+; Function Key Configuration
+f6 fn_key_base VAR Function Key Base
+
+; C128 BASIC Extension
+c000 basic_ext_start FUNC BASIC Extension Start
+cfff basic_ext_end FUNC BASIC Extension End

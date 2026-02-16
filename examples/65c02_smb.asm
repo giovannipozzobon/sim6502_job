@@ -1,0 +1,4 @@
+.processor 65c02
+LDA #$00
+STA $0050
+SMB3 $0050

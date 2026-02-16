@@ -1,0 +1,9 @@
+{
+  "name": "6502-simulator",
+  "author": "Craig Taylor (ctalkobt@ctalkobt.net)",
+  "description": "A 6502 simulator plugin for Gemini.",
+  "version": "1.0.0",
+  "gemini_version": "1.0.0",
+  "tool": "sim6502",
+  "command": "node index.js"
+}

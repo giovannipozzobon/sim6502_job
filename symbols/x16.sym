@@ -1,0 +1,102 @@
+; Commander X16 Symbol Table (65C02 Processor)
+; Modern 8-bit Computer with VERA Graphics and Extended I/O
+
+; VERA (Video Retro Architecture) Controller
+9f00 vera_addr_lo IO VERA Address Lo
+9f01 vera_addr_mid IO VERA Address Mid
+9f02 vera_addr_hi IO VERA Address Hi
+9f03 vera_data_0 IO VERA Data Port 0
+9f04 vera_data_1 IO VERA Data Port 1
+9f05 vera_control IO VERA Control
+9f06 vera_irq_flags IO VERA IRQ Flags
+9f07 vera_irq_enable IO VERA IRQ Enable
+9f08 vera_isr IO VERA ISR
+
+; VERA Display Composer
+9f09 vera_dc_video IO VERA Display Composer Video
+9f0a vera_dc_hscale IO VERA H-Scale
+9f0b vera_dc_vscale IO VERA V-Scale
+9f0c vera_dc_border IO VERA Border Color
+
+; VERA Layer 0 Configuration
+9f10 vera_l0_config IO VERA Layer 0 Config
+9f11 vera_l0_mapbase IO VERA Layer 0 Map Base
+9f12 vera_l0_tilebase IO VERA Layer 0 Tile Base
+9f13 vera_l0_hscroll_lo IO VERA Layer 0 HScroll Lo
+9f14 vera_l0_hscroll_hi IO VERA Layer 0 HScroll Hi
+9f15 vera_l0_vscroll_lo IO VERA Layer 0 VScroll Lo
+9f16 vera_l0_vscroll_hi IO VERA Layer 0 VScroll Hi
+
+; VERA Layer 1 Configuration
+9f18 vera_l1_config IO VERA Layer 1 Config
+9f19 vera_l1_mapbase IO VERA Layer 1 Map Base
+9f1a vera_l1_tilebase IO VERA Layer 1 Tile Base
+9f1b vera_l1_hscroll_lo IO VERA Layer 1 HScroll Lo
+9f1c vera_l1_hscroll_hi IO VERA Layer 1 HScroll Hi
+9f1d vera_l1_vscroll_lo IO VERA Layer 1 VScroll Lo
+9f1e vera_l1_vscroll_hi IO VERA Layer 1 VScroll Hi
+
+; VERA Sprite Engine
+9f20 vera_sprite_addr IO VERA Sprite Address
+9f21 vera_sprite_data IO VERA Sprite Data
+
+; SPI Controller (SD Card Interface)
+9f20 spi_data IO SPI Data Register
+9f21 spi_control IO SPI Control Register
+9f22 spi_status IO SPI Status Register
+
+; Expansion Port Control
+9f25 exp_port_data IO Expansion Port Data
+9f26 exp_port_control IO Expansion Port Control
+
+; Real-Time Clock (RTC)
+9f2b rtc_control IO RTC Control
+9f2c rtc_seconds IO RTC Seconds
+9f2d rtc_minutes IO RTC Minutes
+9f2e rtc_hours IO RTC Hours
+9f2f rtc_day IO RTC Day
+9f30 rtc_month IO RTC Month
+9f31 rtc_year IO RTC Year
+
+; PSG (Programmable Sound Generator)
+9f3e psg_data IO PSG Data
+9f3f psg_latch IO PSG Latch
+
+; Matrix (Input) Controller
+9f80 matrix_data IO Matrix Input Data
+9f81 matrix_control IO Matrix Control
+
+; GPIO
+9f85 gpio_port_a IO GPIO Port A
+9f86 gpio_port_b IO GPIO Port B
+
+; ROM Banking
+9f61 rom_bank IO ROM Bank Register
+
+; Kernal Routines
+ffd2 kernal_chrout FUNC Kernal CHROUT
+ffd5 kernal_chrin FUNC Kernal CHRIN
+ffb1 kernal_load FUNC Kernal LOAD
+ffd8 kernal_save FUNC Kernal SAVE
+
+; X16 Specific Init
+ff00 x16_startup FUNC X16 Startup
+ff03 x16_vera_init FUNC VERA Initialization
+ff06 x16_spi_init FUNC SPI Initialization
+ff09 x16_rtc_init FUNC RTC Initialization
+
+; Standard C64 Compatibility
+0400 screen_buffer REGION Screen Buffer (1KB)
+d800 color_buffer REGION Color Buffer (1KB)
+
+; Video RAM
+a0000 vram_base REGION VERA Video RAM (128KB)
+
+; Interrupt Vectors
+fffa nmi_vector REGION NMI Vector
+fffc reset_vector REGION Reset Vector
+fffe irq_vector REGION IRQ Vector
+
+; X16 BASIC Extensions
+c000 basic_x16_start FUNC X16 BASIC Extensions
+cfff basic_x16_end FUNC X16 BASIC Extensions End

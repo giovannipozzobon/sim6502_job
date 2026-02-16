@@ -1,0 +1,5 @@
+.processor 6502
+LDA #$10
+ADC #$20
+STA $1000
+LDA $1000

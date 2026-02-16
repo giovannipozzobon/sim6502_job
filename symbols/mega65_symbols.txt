@@ -1,0 +1,44 @@
+# Mega65 Symbol Table
+# 45GS02 variant with extended features
+
+# Hypervisor Interface
+d600 hypervisor_port io
+d601 hypervisor_data io
+
+# HyperRAM Interface
+d800 hyperram_ctrl io
+d801 hyperram_status io
+d802 hyperram_addr_lo io
+d803 hyperram_addr_mid io
+d804 hyperram_addr_hi io
+
+# Extended VIC
+d000 vic_base io
+d009 vic_sprite_x_3 io
+d00a vic_sprite_y_3 io
+d02e vic_ext_control io
+
+# Extended SID (Stereo)
+d400 sid_left io
+de00 sid_right io
+
+# New Registers (Mega65)
+d640 mega65_version io
+d641 mega65_features io
+
+# DHE (Hypervisor)
+df00 dhe_ctrl io
+df01 dhe_status io
+
+# Bit Plane Support
+d700 bitplane_ctrl io
+d701 bitplane_data io
+
+# 45GS02 Specific Instructions
+# (Z register operations handled in CPU)
+
+# Kernal Routines (Mega65 Extended)
+ff00 mega65_init subroutine
+ff03 mega65_fast_mode subroutine
+ff06 mega65_hypervisor_call subroutine
+ff84 mega65_get_version subroutine

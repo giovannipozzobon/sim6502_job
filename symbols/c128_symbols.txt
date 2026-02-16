@@ -1,0 +1,27 @@
+# Commodore 128 Symbol Table
+# Extends C64 with 128-specific features
+
+# C128 Banking
+ff00 mmu_config mmu
+ff01 mmu_precfg mmu
+
+# Extended SID (2nd SID at $DE00)
+de00 sid2_base io
+de01 sid2_freq_1_lo io
+de02 sid2_freq_1_hi io
+
+# Extended VIC (vertical split)
+d02e vic_ext_control io
+
+# 40/80 Column Mode
+d030 c128_mode_register io
+d031 c128_key_register io
+
+# C128 Kernal Extensions
+ff84 kernal_c128_init subroutine
+ff87 kernal_fast_mode subroutine
+ff8a kernal_slow_mode subroutine
+
+# RAM Configuration
+0000 zp_c128_bank zeropage
+0001 zp_c128_flags zeropage

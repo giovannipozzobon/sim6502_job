@@ -1,0 +1,11 @@
+{
+  "name": "gemini-6502-simulator",
+  "version": "1.0.0",
+  "description": "A 6502 simulator plugin for Gemini CLI.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "author": "Craig Taylor (ctalkobt@ctalkobt.net)",
+  "license": "MIT"
+}
