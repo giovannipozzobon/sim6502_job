@@ -1,0 +1,46 @@
+6502 Simulator Project - TODO and Enhancements
+===========================================
+
+This document outlines suggested next steps, feature enhancements, and technical improvements for the 6502 simulator.
+
+1. CPU & Architecture Support
+----------------------------
+*   [ ] Full 45GS02 Instruction Set: Complete any missing opcodes for the MEGA65 (45GS02) processor.
+*   [ ] 32-bit Address Support: Implement the 45GS02's ability to access up to 1MB/4GB via MAP and EOM instructions.
+*   [ ] Decimal Mode Accuracy: Ensure ADC/SBC correctly handle the D flag across all CPU variants (6502 vs 65C02 differences).
+*   [ ] Cycle Accuracy: Refine cycle counts for page crossings, branch success/failure, and 65CE02/45GS02 specific timing.
+*   [ ] Processor-Specific Reset State: Different CPU variants have slightly different register states after RESET.
+
+2. Memory System Enhancements
+----------------------------
+*   [ ] Memory Mapping (MMU): Support for banking and the MEGA65 MAP instructions.
+*   [ ] I/O Region Simulation: Implement basic hardware registers (e.g., VIC-II, SID, or MEGA65 specific registers) to allow running more complex programs.
+*   [ ] Read/Write Callbacks: Allow attaching functional hooks to specific memory addresses (useful for simulating hardware I/O).
+*   [ ] Memory Protection: Add the ability to mark regions as Read-Only or No-Execute.
+
+3. Debugging & Trace Features
+----------------------------
+*   [ ] Improved Trace Formatting: Make trace output more readable and include register changes (e.g., "A: 00 -> 01").
+*   [ ] Conditional Breakpoints: Support breakpoints that trigger only when a condition is met (e.g., "PC == $1234 && A == $00").
+*   [ ] Reverse Debugging: Implement a limited "step back" capability by keeping a history of CPU states.
+*   [ ] Stack Visualization: Add a dedicated view for the current stack contents and depth.
+*   [ ] Disassembler Integration: Improve the trace and memory viewer to show disassembled instructions alongside hex values.
+
+4. Performance & Infrastructure
+------------------------------
+*   [ ] JIT or Optimized Interpreter: Explore performance optimizations for long-running simulations.
+*   [ ] Unit Test Suite: Create a comprehensive test suite for all opcodes, especially for edge cases like decimal mode and overflow flag.
+*   [ ] Integration with External Tools: Support loading standard binary formats (e.g., .prg, .bin) and symbol files from common assemblers (ca65, acme).
+*   [ ] CMake Support: Add a CMakeLists.txt for better cross-platform build support.
+
+5. User Interface (CLI/Web)
+--------------------------
+*   [ ] Interactive CLI Mode: A "monitor" style interface where users can type commands (step, continue, examine, modify) without restarting.
+*   [ ] Web-based UI: Use the existing plugin-gemini structure or similar to create a visual representation of the CPU state and memory.
+*   [ ] Configuration Files: Support for .ini or .json files to specify CPU type, memory maps, and pre-loaded binaries.
+
+6. Documentation
+---------------
+*   [ ] API Documentation: Document the internal structures (cpu_t, memory_t) for developers.
+*   [ ] Instruction Set Reference: Generate or provide a reference for the supported opcodes of each processor type.
+*   [ ] Tutorial/Examples: Add more example programs demonstrating specific processor features (e.g., 45GS02 Z register, 65CE02 indirect addressing).

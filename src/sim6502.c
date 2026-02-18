@@ -60,6 +60,7 @@ static void print_help(const char *progname) {
 	printf("  -p, --processor <CPU>    Select processor (6502, 65c02, etc.)\n");
 	printf("  -l, --list               List available processors\n");
 	printf("  -o, --opcodes <CPU>      List all opcodes for processor\n");
+	printf("  -i, --info <OPCODE>      Show detailed information about an opcode\n");
 	printf("Memory Options:\n");
 	printf("  -m, --mem <RANGE>        View memory (format: 0x1000:0x1100)\n");
 	printf("  -s, --stats              Show memory statistics\n");
@@ -115,6 +116,67 @@ static void list_opcodes(cpu_type_t type) {
 			printf("%-20s", handlers[i+j].mnemonic);
 		}
 		printf("\n");
+	}
+	printf("\n");
+}
+
+static void print_opcode_info(const char *mnemonic) {
+	char upper_mnemonic[16];
+	int i;
+	for (i = 0; i < 15 && mnemonic[i]; i++)
+		upper_mnemonic[i] = toupper(mnemonic[i]);
+	upper_mnemonic[i] = 0;
+
+	printf("Instruction Reference: %s\n", upper_mnemonic);
+	printf("--------------------------------------------------------------------------------\n");
+	printf("%-10s %-10s %-8s %-8s %-8s %-8s %-8s\n", "Mode", "Mnemonic", "6502", "Undoc", "65C02", "65CE02", "45GS02");
+	printf("--------------------------------------------------------------------------------\n");
+
+	struct {
+		const char *name;
+		opcode_handler_t *handlers;
+		int count;
+	} variants[] = {
+		{"6502", opcodes_6502, OPCODES_6502_COUNT},
+		{"6502-undoc", opcodes_6502_undoc, OPCODES_6502_UNDOC_COUNT},
+		{"65C02", opcodes_65c02, OPCODES_65C02_COUNT},
+		{"65CE02", opcodes_65ce02, OPCODES_65CE02_COUNT},
+		{"45GS02", opcodes_45gs02, OPCODES_45GS02_COUNT}
+	};
+
+	/* We want to list all unique mode/mnemonic combinations for this instruction */
+	for (int mode = 0; mode <= MODE_ABS_INDIRECT_Y; mode++) {
+		int found_any = 0;
+		int presence[5] = {0, 0, 0, 0, 0};
+		unsigned char cycles[5] = {0, 0, 0, 0, 0};
+		
+		for (int v = 0; v < 5; v++) {
+			for (int h = 0; h < variants[v].count; h++) {
+				if (strcmp(variants[v].handlers[h].mnemonic, upper_mnemonic) == 0 &&
+				    variants[v].handlers[h].mode == mode) {
+					found_any = 1;
+					presence[v] = 1;
+					cycles[v] = variants[v].handlers[h].cycles_6502;
+					break;
+				}
+			}
+		}
+
+		if (found_any) {
+			printf("%-10s %-10s", mode_name(mode), upper_mnemonic);
+			for (int v = 0; v < 5; v++) {
+				if (presence[v]) {
+					if (cycles[v] > 0) {
+						printf(" %-8d", cycles[v]);
+					} else {
+						printf(" %-8s", "V");
+					}
+				} else {
+					printf(" %-8s", "");
+				}
+			}
+			printf("\n");
+		}
 	}
 	printf("\n");
 }
@@ -263,6 +325,11 @@ int main(int argc, char *argv[]) {
 				list_opcodes(list_type);
 				return 0;
 			}
+		} else if (strcmp(argv[i], "-i") == 0 || strcmp(argv[i], "--info") == 0) {
+			if (i + 1 < argc) {
+				print_opcode_info(argv[i+1]);
+				return 0;
+			}
 		} else if (strcmp(argv[i], "-b") == 0 || strcmp(argv[i], "--break") == 0) {
 			if (i + 1 < argc) {
 				unsigned short addr = (unsigned short)strtol(argv[i+1], NULL, 16);
@@ -292,7 +359,7 @@ int main(int argc, char *argv[]) {
 			}
 		} else if (strcmp(argv[i], "-s") == 0 || strcmp(argv[i], "--stats") == 0) {
 			show_stats = 1;
-		} else if (strcmp(argv[i], "-i") == 0 || strcmp(argv[i], "--irq") == 0) {
+		} else if (strcmp(argv[i], "--irq") == 0) {
 			if (i + 1 < argc) {
 				irq_trigger = (unsigned long)strtol(argv[i+1], NULL, 10);
 				irq_enabled = 1;

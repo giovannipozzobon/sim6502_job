@@ -21,18 +21,6 @@ static void ldz_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->pc += 2;
 }
 
-static void stz_z_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	mem_write(mem, arg, cpu->z);
-	cpu->cycles += 4;
-	cpu->pc += 3;
-}
-
-static void stz_z_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	mem_write(mem, arg & 0xFF, cpu->z);
-	cpu->cycles += 3;
-	cpu->pc += 2;
-}
-
 static void inz(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->z++;
 	update_nz(cpu, cpu->z);
