@@ -216,6 +216,50 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["mnemonic"],
         },
       },
+      {
+        name: "set_breakpoint",
+        description: "Sets a breakpoint at a specific address.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            address: {
+              type: "number",
+              description: "Address to set breakpoint at (decimal or hex)",
+            },
+          },
+          required: ["address"],
+        },
+      },
+      {
+        name: "clear_breakpoint",
+        description: "Clears a breakpoint at a specific address.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            address: {
+              type: "number",
+              description: "Address to clear breakpoint from (decimal or hex)",
+            },
+          },
+          required: ["address"],
+        },
+      },
+      {
+        name: "list_breakpoints",
+        description: "Lists all currently set breakpoints.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+      {
+        name: "run_program",
+        description: "Runs the program until a breakpoint, BRK, or STP is encountered.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
     ],
   };
 });
@@ -275,6 +319,28 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       };
     } else if (name === "get_opcode_info") {
       const output = await sendCommand(`info ${args.mnemonic}`);
+      return {
+        content: [{ type: "text", text: output }],
+      };
+    } else if (name === "set_breakpoint") {
+      const addr = args.address.toString(16);
+      const output = await sendCommand(`break ${addr}`);
+      return {
+        content: [{ type: "text", text: output }],
+      };
+    } else if (name === "clear_breakpoint") {
+      const addr = args.address.toString(16);
+      const output = await sendCommand(`clear ${addr}`);
+      return {
+        content: [{ type: "text", text: output }],
+      };
+    } else if (name === "list_breakpoints") {
+      const output = await sendCommand(`list`);
+      return {
+        content: [{ type: "text", text: output }],
+      };
+    } else if (name === "run_program") {
+      const output = await sendCommand(`run`);
       return {
         content: [{ type: "text", text: output }],
       };

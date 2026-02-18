@@ -35,10 +35,17 @@ The server communicates over `stdio` using the Model Context Protocol.
 
 - `load_program(code)`: Compiles and loads 6502 assembly code.
 - `step_instruction(count)`: Executes a specific number of instructions.
+- `run_program()`: Runs the program continuously until a breakpoint, BRK, or STP instruction.
+- `set_breakpoint(address)`: Sets a breakpoint at the specified address.
+- `clear_breakpoint(address)`: Removes a breakpoint at the specified address.
+- `list_breakpoints()`: Lists all currently set breakpoints.
 - `read_registers()`: Returns current CPU state (A, X, Y, SP, PC, Flags).
 - `read_memory(address, length)`: Returns a hex dump of memory.
 - `write_memory(address, value)`: Writes a byte to the specified memory address.
 - `reset_cpu()`: Resets the CPU state to the program start.
+- `list_processors()`: Lists all supported processor types (6502, 65c02, etc).
+- `set_processor(type)`: Sets the current processor architecture.
+- `get_opcode_info(mnemonic)`: Retrieves details about a specific instruction.
 
 ## Configuration for Gemini CLI
 

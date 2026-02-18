@@ -31,6 +31,21 @@ static inline int breakpoint_add(breakpoint_list_t *bp_list, unsigned short addr
 	return 1;
 }
 
+/* Remove a breakpoint at address */
+static inline int breakpoint_remove(breakpoint_list_t *bp_list, unsigned short address) {
+	for (int i = 0; i < bp_list->count; i++) {
+		if (bp_list->breakpoints[i].address == address) {
+			/* Shift remaining breakpoints down */
+			for (int j = i; j < bp_list->count - 1; j++) {
+				bp_list->breakpoints[j] = bp_list->breakpoints[j+1];
+			}
+			bp_list->count--;
+			return 1;
+		}
+	}
+	return 0;
+}
+
 /* Check if PC has breakpoint */
 static inline int breakpoint_hit(breakpoint_list_t *bp_list, unsigned short pc) {
 	for (int i = 0; i < bp_list->count; i++) {

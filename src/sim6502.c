@@ -334,7 +334,7 @@ static void execute(cpu_t *cpu, memory_t *mem, instruction_t *instr,
 
 static void run_interactive_mode(cpu_t *cpu, memory_t *mem, instruction_t *rom, 
                                  opcode_handler_t *handlers, int num_handlers, 
-                                 unsigned short start_addr) {
+                                 unsigned short start_addr, breakpoint_list_t *breakpoints) {
     char line[256];
     char cmd[32];
     
@@ -354,6 +354,10 @@ static void run_interactive_mode(cpu_t *cpu, memory_t *mem, instruction_t *rom,
         } else if (strcmp(cmd, "help") == 0) {
             printf("Commands:\n");
             printf("  step [n]         Execute n instructions (default 1)\n");
+            printf("  run              Run until breakpoint or BRK\n");
+            printf("  break <addr>     Set breakpoint at hex address\n");
+            printf("  clear <addr>     Clear breakpoint at hex address\n");
+            printf("  list             List breakpoints\n");
             printf("  regs             Show registers\n");
             printf("  mem <addr> <len> Dump memory hex\n");
             printf("  write <addr> <val> Write byte to memory\n");
@@ -362,6 +366,77 @@ static void run_interactive_mode(cpu_t *cpu, memory_t *mem, instruction_t *rom,
             printf("  processor <type> Set processor type\n");
             printf("  info <opcode>    Show opcode details\n");
             printf("  quit             Exit\n");
+        } else if (strcmp(cmd, "break") == 0) {
+            unsigned int addr;
+            if (sscanf(line, "%*s %x", &addr) == 1) {
+                if (breakpoint_add(breakpoints, (unsigned short)addr)) {
+                    printf("Breakpoint set at %04X\n", addr);
+                } else {
+                    printf("Failed to set breakpoint (max reached)\n");
+                }
+            } else {
+                printf("Usage: break <addr>\n");
+            }
+        } else if (strcmp(cmd, "clear") == 0) {
+            unsigned int addr;
+            if (sscanf(line, "%*s %x", &addr) == 1) {
+                if (breakpoint_remove(breakpoints, (unsigned short)addr)) {
+                    printf("Breakpoint cleared at %04X\n", addr);
+                } else {
+                    printf("No breakpoint found at %04X\n", addr);
+                }
+            } else {
+                printf("Usage: clear <addr>\n");
+            }
+        } else if (strcmp(cmd, "list") == 0) {
+            breakpoint_list(breakpoints);
+        } else if (strcmp(cmd, "run") == 0) {
+            printf("Running...\n");
+            int running = 1;
+            while (running) {
+                instruction_t instr = rom[cpu->pc];
+                
+                /* Check for Stop Conditions BEFORE execution */
+                if (!instr.op[0]) {
+                     printf("STOP (No Instruction) at %04X\n", cpu->pc);
+                     running = 0;
+                     break;
+                }
+                if (strcmp(instr.op, "BRK") == 0) {
+                     printf("STOP (BRK) at %04X\n", cpu->pc);
+                     running = 0;
+                     break;
+                }
+                if (strcmp(instr.op, "STP") == 0) {
+                     printf("STOP (STP) at %04X\n", cpu->pc);
+                     running = 0;
+                     break;
+                }
+                
+                /* Check Breakpoints (ignoring current PC if we just resumed? No, standard behavior is stop before exec) */
+                /* If we are at a breakpoint, we need to step once to move past it, OR the user must step manually. */
+                /* Standard debuggers: if you 'run' and are ON a breakpoint, it might step over. */
+                /* But here, 'run' starts. If we are ALREADY at a breakpoint, we should probably stop immediately? */
+                /* Or assume the user 'stepped' over it. */
+                /* Let's assume if we hit a breakpoint we stop. */
+                /* But if we start ON a breakpoint, we stop immediately. */
+                /* So the user should 'step' once then 'run'. */
+                if (breakpoint_hit(breakpoints, cpu->pc)) {
+                    printf("STOP (Breakpoint) at %04X\n", cpu->pc);
+                    running = 0;
+                    break;
+                }
+
+                execute(cpu, mem, &instr, handlers, num_handlers);
+                
+                /* Check for infinite loop / max cycles safety? */
+                /* For now, just run. MCP server has timeout. */
+                if (cpu->cycles > 100000000) { // Safety break
+                     printf("STOP (Cycle Limit Safety) at %04X\n", cpu->pc);
+                     running = 0;
+                     break;
+                }
+            }
         } else if (strcmp(cmd, "processors") == 0) {
             list_processors();
         } else if (strcmp(cmd, "info") == 0) {
@@ -691,7 +766,7 @@ int main(int argc, char *argv[]) {
 	int max_cycles = 100000;
 
 	if (interactive_mode) {
-		run_interactive_mode(&cpu, &mem, rom, handlers, num_handlers, start_addr_provided ? start_addr : 0);
+		run_interactive_mode(&cpu, &mem, rom, handlers, num_handlers, start_addr_provided ? start_addr : 0, &breakpoints);
 		return 0;
 	}
 

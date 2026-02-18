@@ -54,7 +54,7 @@ This document outlines suggested next steps, feature enhancements, and technical
 -----------------------------
 *   [ ] **MCP Missing Features:**
     *   Symbol Table Support: No tools to load custom symbol files or use presets (e.g., C64, Mega65).
-    *   Breakpoints: No `set_breakpoint` tool; currently relies on stepping.
+    *   [X] Breakpoints: Implemented `set_breakpoint`, `clear_breakpoint`, `list_breakpoints`, and `run_program` tools.
     *   Memory Statistics: No equivalent to the `-s` flag.
     *   Trace: No tool to enable/disable execution tracing or set a trace file.
     *   Interrupts: No tools to trigger IRQ or NMI.
