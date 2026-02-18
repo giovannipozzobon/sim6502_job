@@ -127,6 +127,11 @@ make
   program.asm
 ```
 
+### Interactive Debugging
+```bash
+./sim6502 -I program.asm
+```
+
 ## Symbol Tables
 
 ### Preset Architectures
@@ -222,7 +227,39 @@ Load with:
 
 ### Other
 ```
+-I, --interactive       Start in interactive debug mode
 -h, --help              Show help message
+```
+
+## Interactive Mode
+
+The simulator provides an interactive debug shell for stepping through code and inspecting state.
+
+### Commands
+- `step [n]`         : Execute `n` instructions (default: 1)
+- `regs`             : Show all CPU registers and flags
+- `mem <addr> [len]` : Dump memory hex starting at `addr`
+- `write <addr> <val>`: Write byte `val` to memory `addr`
+- `reset`            : Reset CPU to program start address
+- `processors`       : List all supported processor types
+- `processor <type>` : Change active processor type (e.g., `65c02`)
+- `info <mnemonic>`  : Show addressing modes and cycles for an opcode
+- `help`             : Show command help
+- `quit` / `exit`    : Exit the simulator
+
+### Usage Example
+```bash
+$ ./sim6502 -I examples/hello.asm
+6502 Simulator Interactive Mode
+Type 'help' for commands.
+> regs
+REGS A=00 X=00 Y=00 S=FF P=00 PC=0801 Cycles=0
+FLAGS N=0 V=0 B=0 D=0 I=0 Z=0 C=0
+> step
+STOP 0803
+> regs
+REGS A=41 X=00 Y=00 S=FF P=00 PC=0803 Cycles=2
+...
 ```
 
 ## Output Examples

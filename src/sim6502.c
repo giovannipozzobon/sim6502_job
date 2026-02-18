@@ -97,9 +97,38 @@ static void print_help(const char *progname) {
 	printf("DESCRIPTION:\n");
 	printf("  A feature-rich simulator for 6502 and compatible processors with\n");
 	printf("  professional debugging tools, symbol table support, and interrupts.\n\n");
-	// ... (rest of help truncated for brevity, but kept structure)
+
+	printf("PROCESSOR SELECTION:\n");
+	printf("  -p, --processor <CPU>  Select processor: 6502, 6502-undoc, 65c02, 65ce02, 45gs02\n");
+	printf("  -l, --list             List available processors\n");
+	printf("  -o, --opcodes <CPU>    List opcodes for processor\n\n");
+
+	printf("DEBUGGING:\n");
+	printf("  -I, --interactive      Start in interactive debug mode\n");
+	printf("  -b, --break <ADDR>     Set breakpoint (hex address, e.g., 0x1000)\n");
+	printf("  -t, --trace [FILE]     Enable execution trace (optional: output to FILE)\n");
+	printf("  -a, --address <ADDR>   Set start address (hex or label)\n\n");
+
+	printf("MEMORY:\n");
+	printf("  -m, --mem <START:END>  View memory range on exit (e.g., 0x1000:0x1100)\n");
+	printf("  -s, --stats            Show memory statistics on exit\n\n");
+
+	printf("SYMBOL TABLES:\n");
+	printf("  --symbols <FILE>       Load custom symbol table from FILE\n");
+	printf("  --preset <ARCH>        Load preset symbols: c64, c128, mega65, x16\n");
+	printf("  --show-symbols         Display loaded symbol table on exit\n\n");
+
+	printf("INTERRUPTS:\n");
+	printf("  -i, --irq <CYCLES>     Trigger IRQ at cycle count\n");
+	printf("  -n, --nmi <CYCLES>     Trigger NMI at cycle count\n\n");
+
+	printf("OTHER:\n");
+	printf("  -h, --help             Show this help message\n\n");
+
 	printf("EXAMPLES:\n");
 	printf("  %s program.asm                        Basic execution\n", progname);
+	printf("  %s -I program.asm                     Interactive debug session\n", progname);
+	printf("  %s --preset c64 --show-symbols p.asm  Run with C64 symbols\n", progname);
 }
 
 static void list_processors(void) {
@@ -475,9 +504,16 @@ int main(int argc, char *argv[]) {
 			list_processors();
 			return 0;
 		} else if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--opcodes") == 0) {
-			// (Simplified for brevity in rewrite, assume basic options work)
-			// Keeping it safe
-			if (i + 1 < argc) { /* ... */ i++; }
+			if (i + 1 < argc) {
+				cpu_type_t type = CPU_6502;
+				if (strcmp(argv[i+1], "6502") == 0) type = CPU_6502;
+				else if (strcmp(argv[i+1], "6502-undoc") == 0) type = CPU_6502_UNDOCUMENTED;
+				else if (strcmp(argv[i+1], "65c02") == 0) type = CPU_65C02;
+				else if (strcmp(argv[i+1], "65ce02") == 0) type = CPU_65CE02;
+				else if (strcmp(argv[i+1], "45gs02") == 0) type = CPU_45GS02;
+				list_opcodes(type);
+				return 0;
+			}
 			continue;
 		} else if (strcmp(argv[i], "-b") == 0 || strcmp(argv[i], "--break") == 0) {
 			if (i + 1 < argc) {
@@ -519,6 +555,18 @@ int main(int argc, char *argv[]) {
 			}
 		} else if (strcmp(argv[i], "-s") == 0 || strcmp(argv[i], "--stats") == 0) {
 			show_stats = 1;
+		} else if (strcmp(argv[i], "-i") == 0 || strcmp(argv[i], "--irq") == 0) {
+			if (i + 1 < argc) {
+				irq_trigger = strtoul(argv[i+1], NULL, 10);
+				irq_enabled = 1;
+				i++;
+			}
+		} else if (strcmp(argv[i], "-n") == 0 || strcmp(argv[i], "--nmi") == 0) {
+			if (i + 1 < argc) {
+				nmi_trigger = strtoul(argv[i+1], NULL, 10);
+				nmi_enabled = 1;
+				i++;
+			}
 		} else if (strcmp(argv[i], "--symbols") == 0) {
 			if (i + 1 < argc) {
 				symbol_file = argv[i+1];

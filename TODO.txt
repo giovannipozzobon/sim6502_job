@@ -49,3 +49,14 @@ This document outlines suggested next steps, feature enhancements, and technical
 *   [ ] API Documentation: Document the internal structures (cpu_t, memory_t) for developers.
 *   [ ] Instruction Set Reference: Generate or provide a reference for the supported opcodes of each processor type.
 *   [ ] Tutorial/Examples: Add more example programs demonstrating specific processor features (e.g., 45GS02 Z register, 65CE02 indirect addressing).
+
+7. Interface Gaps (CLI vs MCP)
+-----------------------------
+*   [ ] **MCP Missing Features:**
+    *   Symbol Table Support: No tools to load custom symbol files or use presets (e.g., C64, Mega65).
+    *   Breakpoints: No `set_breakpoint` tool; currently relies on stepping.
+    *   Memory Statistics: No equivalent to the `-s` flag.
+    *   Trace: No tool to enable/disable execution tracing or set a trace file.
+    *   Interrupts: No tools to trigger IRQ or NMI.
+*   [ ] **CLI Missing Features:**
+    *   Dynamic Code Loading: CLI requires a file path; cannot accept raw assembly string arguments (unlike MCP's `load_program`).
