@@ -92,8 +92,7 @@ function sendCommand(cmd) {
   
   return new Promise((resolve) => {
     simulatorResolve = resolve;
-    simulatorProcess.stdin.write(cmd + '
-');
+    simulatorProcess.stdin.write(cmd + '\n');
   });
 }
 

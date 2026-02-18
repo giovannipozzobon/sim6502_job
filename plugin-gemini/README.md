@@ -49,7 +49,13 @@ The server communicates over `stdio` using the Model Context Protocol.
 
 ## Configuration for Gemini CLI
 
-Add the following to your Gemini CLI configuration:
+The easiest way to add the simulator to Gemini CLI is using the `mcp` command from the root of the project:
+
+```bash
+gemini mcp add 6502-simulator node $(pwd)/plugin-gemini/server.js
+```
+
+Alternatively, you can manually add it to your Gemini CLI configuration (`.gemini/settings.json` or `~/.gemini/settings.json`):
 
 ```json
 {

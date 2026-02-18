@@ -58,6 +58,27 @@ The simulator includes a built-in MCP server that allows Large Language Models (
    node server.js
    ```
 
+### Configuration for Gemini CLI
+
+The easiest way to add the simulator to Gemini CLI is using the `mcp` command:
+
+```bash
+gemini mcp add 6502-simulator node $(pwd)/plugin-gemini/server.js
+```
+
+Alternatively, you can manually add it to your Gemini CLI configuration (`.gemini/settings.json` or `~/.gemini/settings.json`):
+
+```json
+{
+  "mcpServers": {
+    "6502-simulator": {
+      "command": "node",
+      "args": ["/path/to/6502-simulator/plugin-gemini/server.js"]
+    }
+  }
+}
+```
+
 ### MCP Tools
 The server exposes the following tools:
 - `load_program(code)`: Compile and load ASM into the simulator.
@@ -237,9 +258,16 @@ The simulator provides an interactive debug shell for stepping through code and 
 
 ### Commands
 - `step [n]`         : Execute `n` instructions (default: 1)
-- `regs`             : Show all CPU registers and flags
+- `run`              : Execute instructions until a breakpoint or stop condition is met
+- `break <addr>`     : Set a breakpoint at address `addr`
+- `clear <addr>`     : Clear a breakpoint at address `addr`
+- `list`             : List all active breakpoints
+- `regs`             : Show all CPU registers and flags (shows Z and B for 45GS02)
 - `mem <addr> [len]` : Dump memory hex starting at `addr`
 - `write <addr> <val>`: Write byte `val` to memory `addr`
+- `jump <addr>`      : Set Program Counter (PC) to address `addr`
+- `set <reg> <val>`  : Set register `reg` (A, X, Y, Z, B, S, P, PC) to `val`
+- `flag <flag> <0|1>`: Set flag `flag` (C, Z, I, D, B, V, N) to 0 or 1
 - `reset`            : Reset CPU to program start address
 - `processors`       : List all supported processor types
 - `processor <type>` : Change active processor type (e.g., `65c02`)

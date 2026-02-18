@@ -325,6 +325,7 @@ static void run_interactive_mode(cpu_t *cpu, memory_t *mem, instruction_t *rom,
         if (strcmp(cmd, "quit") == 0 || strcmp(cmd, "exit") == 0) break;
         else if (strcmp(cmd, "help") == 0) {
             printf("Commands: step [n], run, break <addr>, clear <addr>, list, regs, mem <addr> <len>, write <addr> <val>, reset, processors, processor <type>, info <opcode>, quit\n");
+            printf("          jump <addr>, set <reg> <val>, flag <flag> <0|1>\n");
         } else if (strcmp(cmd, "break") == 0) {
             unsigned int addr;
             if (sscanf(line, "%*s %x", &addr) == 1) breakpoint_add(breakpoints, (unsigned short)addr);
@@ -332,7 +333,55 @@ static void run_interactive_mode(cpu_t *cpu, memory_t *mem, instruction_t *rom,
             unsigned int addr;
             if (sscanf(line, "%*s %x", &addr) == 1) breakpoint_remove(breakpoints, (unsigned short)addr);
         } else if (strcmp(cmd, "list") == 0) breakpoint_list(breakpoints);
-        else if (strcmp(cmd, "run") == 0) {
+        else if (strcmp(cmd, "jump") == 0) {
+            unsigned int addr;
+            if (sscanf(line, "%*s %x", &addr) == 1) {
+                cpu->pc = (unsigned short)addr;
+                printf("PC set to %04X\n", cpu->pc);
+            } else {
+                printf("Usage: jump <addr>\n");
+            }
+        } else if (strcmp(cmd, "set") == 0) {
+            char reg[16];
+            unsigned int val;
+            if (sscanf(line, "%*s %15s %x", reg, &val) == 2) {
+                if (strcmp(reg, "A") == 0 || strcmp(reg, "a") == 0) cpu->a = (unsigned char)val;
+                else if (strcmp(reg, "X") == 0 || strcmp(reg, "x") == 0) cpu->x = (unsigned char)val;
+                else if (strcmp(reg, "Y") == 0 || strcmp(reg, "y") == 0) cpu->y = (unsigned char)val;
+                else if (strcmp(reg, "Z") == 0 || strcmp(reg, "z") == 0) cpu->z = (unsigned char)val;
+                else if (strcmp(reg, "B") == 0 || strcmp(reg, "b") == 0) cpu->b = (unsigned char)val;
+                else if (strcmp(reg, "S") == 0 || strcmp(reg, "s") == 0 || strcmp(reg, "SP") == 0 || strcmp(reg, "sp") == 0) cpu->s = (unsigned char)val;
+                else if (strcmp(reg, "P") == 0 || strcmp(reg, "p") == 0) cpu->p = (unsigned char)val;
+                else if (strcmp(reg, "PC") == 0 || strcmp(reg, "pc") == 0) cpu->pc = (unsigned short)val;
+                else printf("Unknown register: %s\n", reg);
+                printf("Register %s set to %02X\n", reg, val);
+            } else {
+                printf("Usage: set <reg> <val>\n");
+            }
+        } else if (strcmp(cmd, "flag") == 0) {
+            char flag_name[16];
+            int val;
+            if (sscanf(line, "%*s %15s %d", flag_name, &val) == 2) {
+                unsigned char flag_mask = 0;
+                if (toupper(flag_name[0]) == 'C') flag_mask = FLAG_C;
+                else if (toupper(flag_name[0]) == 'Z') flag_mask = FLAG_Z;
+                else if (toupper(flag_name[0]) == 'I') flag_mask = FLAG_I;
+                else if (toupper(flag_name[0]) == 'D') flag_mask = FLAG_D;
+                else if (toupper(flag_name[0]) == 'B') flag_mask = FLAG_B;
+                else if (toupper(flag_name[0]) == 'V') flag_mask = FLAG_V;
+                else if (toupper(flag_name[0]) == 'N') flag_mask = FLAG_N;
+                
+                if (flag_mask) {
+                    if (val) cpu->p |= flag_mask;
+                    else cpu->p &= ~flag_mask;
+                    printf("Flag %c set to %d (P=%02X)\n", toupper(flag_name[0]), val ? 1 : 0, cpu->p);
+                } else {
+                    printf("Unknown flag: %s\n", flag_name);
+                }
+            } else {
+                printf("Usage: flag <N|V|B|D|I|Z|C> <0|1>\n");
+            }
+        } else if (strcmp(cmd, "run") == 0) {
             int running = 1;
             while (running) {
                 instruction_t instr = rom[cpu->pc];
@@ -357,7 +406,10 @@ static void run_interactive_mode(cpu_t *cpu, memory_t *mem, instruction_t *rom,
                 printf("Processor set to %s\n", type_str);
             }
         } else if (strcmp(cmd, "regs") == 0) {
-            printf("REGS A=%02X X=%02X Y=%02X S=%02X P=%02X PC=%04X Cycles=%lu\n", cpu->a, cpu->x, cpu->y, cpu->s, cpu->p, cpu->pc, cpu->cycles);
+            if (*p_handlers == opcodes_45gs02)
+                printf("REGS A=%02X X=%02X Y=%02X Z=%02X B=%02X S=%02X P=%02X PC=%04X Cycles=%lu\n", cpu->a, cpu->x, cpu->y, cpu->z, cpu->b, cpu->s, cpu->p, cpu->pc, cpu->cycles);
+            else
+                printf("REGS A=%02X X=%02X Y=%02X S=%02X P=%02X PC=%04X Cycles=%lu\n", cpu->a, cpu->x, cpu->y, cpu->s, cpu->p, cpu->pc, cpu->cycles);
         } else if (strcmp(cmd, "mem") == 0) {
             unsigned int addr, len = 16;
             if (sscanf(line + 3, "%x %u", &addr, &len) >= 1) {
