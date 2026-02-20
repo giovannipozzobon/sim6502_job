@@ -845,6 +845,22 @@ static void mem_write32_zp(memory_t *mem, unsigned char addr, unsigned int val) 
 	mem_write(mem, (unsigned char)(addr + 3), (val >> 24) & 0xFF);
 }
 
+/* Read 4 consecutive bytes from absolute address (wrapping within 64KB) as little-endian 32-bit */
+static unsigned int mem_read32_abs(memory_t *mem, unsigned short addr) {
+	return (unsigned int)mem_read(mem, (unsigned short)(addr)) |
+	       ((unsigned int)mem_read(mem, (unsigned short)(addr + 1)) << 8) |
+	       ((unsigned int)mem_read(mem, (unsigned short)(addr + 2)) << 16) |
+	       ((unsigned int)mem_read(mem, (unsigned short)(addr + 3)) << 24);
+}
+
+/* Write 32-bit value as 4 consecutive bytes to absolute address (wrapping within 64KB) */
+static void mem_write32_abs(memory_t *mem, unsigned short addr, unsigned int val) {
+	mem_write(mem, (unsigned short)(addr),     val & 0xFF);
+	mem_write(mem, (unsigned short)(addr + 1), (val >> 8) & 0xFF);
+	mem_write(mem, (unsigned short)(addr + 2), (val >> 16) & 0xFF);
+	mem_write(mem, (unsigned short)(addr + 3), (val >> 24) & 0xFF);
+}
+
 /* --- Quad (32-bit) Instructions (NEG NEG prefix: $42 $42) --- */
 
 static void ldq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
@@ -856,7 +872,7 @@ static void ldq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 }
 
 static void ldq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
+	unsigned int val = mem_read32_abs(mem, arg);
 	set_q(cpu, val);
 	update_nz_q(cpu, val);
 	cpu->cycles += 5;
@@ -870,7 +886,7 @@ static void stq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 }
 
 static void stq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	mem_write32_zp(mem, (unsigned char)(arg & 0xFF), get_q(cpu));
+	mem_write32_abs(mem, arg, get_q(cpu));
 	cpu->cycles += 5;
 	cpu->pc += 3;
 }
@@ -890,7 +906,7 @@ static void adcq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 static void adcq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned int q = get_q(cpu);
-	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
+	unsigned int val = mem_read32_abs(mem, arg);
 	unsigned long long result = (unsigned long long)q + val + get_flag(cpu, FLAG_C);
 	set_flag(cpu, FLAG_C, result > 0xFFFFFFFFUL);
 	unsigned int r = (unsigned int)(result & 0xFFFFFFFF);
@@ -916,7 +932,7 @@ static void sbcq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 static void sbcq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned int q = get_q(cpu);
-	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
+	unsigned int val = mem_read32_abs(mem, arg);
 	long long result = (long long)q - (long long)val - (1 - get_flag(cpu, FLAG_C));
 	set_flag(cpu, FLAG_C, result >= 0);
 	unsigned int r = (unsigned int)(result & 0xFFFFFFFF);
@@ -938,7 +954,7 @@ static void cpq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 static void cpq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned int q = get_q(cpu);
-	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
+	unsigned int val = mem_read32_abs(mem, arg);
 	set_flag(cpu, FLAG_C, q >= val);
 	update_nz_q(cpu, q - val);
 	cpu->cycles += 5;
@@ -957,7 +973,7 @@ static void eorq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 static void eorq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned int q = get_q(cpu);
-	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
+	unsigned int val = mem_read32_abs(mem, arg);
 	unsigned int r = q ^ val;
 	set_q(cpu, r);
 	update_nz_q(cpu, r);
@@ -977,7 +993,7 @@ static void andq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 static void andq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned int q = get_q(cpu);
-	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
+	unsigned int val = mem_read32_abs(mem, arg);
 	unsigned int r = q & val;
 	set_q(cpu, r);
 	update_nz_q(cpu, r);
@@ -997,7 +1013,7 @@ static void bitq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 static void bitq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned int q = get_q(cpu);
-	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
+	unsigned int val = mem_read32_abs(mem, arg);
 	set_flag(cpu, FLAG_Z, (q & val) == 0);
 	set_flag(cpu, FLAG_N, (val >> 31) & 1);
 	set_flag(cpu, FLAG_V, (val >> 30) & 1);
@@ -1017,7 +1033,7 @@ static void orq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 static void orq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned int q = get_q(cpu);
-	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
+	unsigned int val = mem_read32_abs(mem, arg);
 	unsigned int r = q | val;
 	set_q(cpu, r);
 	update_nz_q(cpu, r);
