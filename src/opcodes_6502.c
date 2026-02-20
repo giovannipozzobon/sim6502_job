@@ -545,6 +545,7 @@ void bit_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 }
 
 void jmp_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	cpu->cycles += 3;
 	cpu->pc = arg;
 }
 
@@ -554,6 +555,7 @@ void jsr_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->s--;
 	mem_write(mem, 0x100 + cpu->s, ret & 0xFF);
 	cpu->s--;
+	cpu->cycles += 6;
 	cpu->pc = arg;
 }
 
@@ -562,11 +564,13 @@ void rts(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short ret = mem_read(mem, 0x100 + cpu->s);
 	cpu->s++;
 	ret |= mem_read(mem, 0x100 + cpu->s) << 8;
+	cpu->cycles += 6;
 	cpu->pc = ret + 1;
 }
 
 void bra(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	signed char offset = arg & 0xFF;
+	cpu->cycles += 3;
 	cpu->pc += 2 + offset;
 }
 
