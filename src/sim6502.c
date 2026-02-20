@@ -359,7 +359,10 @@ static void parse_line(const char *line, instruction_t *instr, symbol_table_t *s
 					if (instr->mode == MODE_RELATIVE) instr->arg = (unsigned short)(addr - (pc + 2));
 					else if (instr->mode == MODE_RELATIVE_LONG) instr->arg = (unsigned short)(addr - (pc + 3));
 					else instr->arg = addr;
-				} else instr->arg = 0;
+				} else {
+					fprintf(stderr, "Warning: undefined label '%s'\n", label);
+					instr->arg = 0;
+				}
 			}
 		} else instr->mode = MODE_IMPLIED;
 	}

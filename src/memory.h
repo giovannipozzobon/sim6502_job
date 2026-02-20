@@ -13,8 +13,8 @@ static inline void mem_write(memory_t *mem, unsigned short addr, unsigned char v
 	if (mem->mem_writes < 256) {
 		mem->mem_addr[mem->mem_writes] = addr;
 		mem->mem_val[mem->mem_writes] = val;
-		mem->mem_writes++;
 	}
+	mem->mem_writes++;
 }
 
 static inline unsigned char mem_read(memory_t *mem, unsigned short addr) {
