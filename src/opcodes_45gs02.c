@@ -807,6 +807,292 @@ static void stp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->pc += 1;
 }
 
+/* --- Quad (32-bit) Register Helpers ---
+ * Q = {Z:Y:X:A} where A is bits 7:0 (LSB) and Z is bits 31:24 (MSB).
+ */
+static unsigned int get_q(cpu_t *cpu) {
+	return (unsigned int)cpu->a |
+	       ((unsigned int)cpu->x << 8) |
+	       ((unsigned int)cpu->y << 16) |
+	       ((unsigned int)cpu->z << 24);
+}
+
+static void set_q(cpu_t *cpu, unsigned int val) {
+	cpu->a = val & 0xFF;
+	cpu->x = (val >> 8) & 0xFF;
+	cpu->y = (val >> 16) & 0xFF;
+	cpu->z = (val >> 24) & 0xFF;
+}
+
+static void update_nz_q(cpu_t *cpu, unsigned int val) {
+	set_flag(cpu, FLAG_Z, val == 0);
+	set_flag(cpu, FLAG_N, (val >> 31) & 1);
+}
+
+/* Read 4 consecutive bytes from ZP (wrapping within ZP) as little-endian 32-bit */
+static unsigned int mem_read32_zp(memory_t *mem, unsigned char addr) {
+	return (unsigned int)mem_read(mem, (unsigned char)(addr)) |
+	       ((unsigned int)mem_read(mem, (unsigned char)(addr + 1)) << 8) |
+	       ((unsigned int)mem_read(mem, (unsigned char)(addr + 2)) << 16) |
+	       ((unsigned int)mem_read(mem, (unsigned char)(addr + 3)) << 24);
+}
+
+/* Write 32-bit value as 4 consecutive bytes to ZP (wrapping within ZP) */
+static void mem_write32_zp(memory_t *mem, unsigned char addr, unsigned int val) {
+	mem_write(mem, (unsigned char)(addr),     val & 0xFF);
+	mem_write(mem, (unsigned char)(addr + 1), (val >> 8) & 0xFF);
+	mem_write(mem, (unsigned char)(addr + 2), (val >> 16) & 0xFF);
+	mem_write(mem, (unsigned char)(addr + 3), (val >> 24) & 0xFF);
+}
+
+/* --- Quad (32-bit) Instructions (NEG NEG prefix: $42 $42) --- */
+
+static void ldq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
+	set_q(cpu, val);
+	update_nz_q(cpu, val);
+	cpu->cycles += 5;
+	cpu->pc += 2;
+}
+
+static void ldq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
+	set_q(cpu, val);
+	update_nz_q(cpu, val);
+	cpu->cycles += 5;
+	cpu->pc += 3;
+}
+
+static void stq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	mem_write32_zp(mem, (unsigned char)(arg & 0xFF), get_q(cpu));
+	cpu->cycles += 5;
+	cpu->pc += 2;
+}
+
+static void stq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	mem_write32_zp(mem, (unsigned char)(arg & 0xFF), get_q(cpu));
+	cpu->cycles += 5;
+	cpu->pc += 3;
+}
+
+static void adcq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned int q = get_q(cpu);
+	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
+	unsigned long long result = (unsigned long long)q + val + get_flag(cpu, FLAG_C);
+	set_flag(cpu, FLAG_C, result > 0xFFFFFFFFUL);
+	unsigned int r = (unsigned int)(result & 0xFFFFFFFF);
+	set_flag(cpu, FLAG_V, (~(q ^ val) & (q ^ r) & 0x80000000) != 0);
+	set_q(cpu, r);
+	update_nz_q(cpu, r);
+	cpu->cycles += 5;
+	cpu->pc += 2;
+}
+
+static void adcq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned int q = get_q(cpu);
+	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
+	unsigned long long result = (unsigned long long)q + val + get_flag(cpu, FLAG_C);
+	set_flag(cpu, FLAG_C, result > 0xFFFFFFFFUL);
+	unsigned int r = (unsigned int)(result & 0xFFFFFFFF);
+	set_flag(cpu, FLAG_V, (~(q ^ val) & (q ^ r) & 0x80000000) != 0);
+	set_q(cpu, r);
+	update_nz_q(cpu, r);
+	cpu->cycles += 5;
+	cpu->pc += 3;
+}
+
+static void sbcq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned int q = get_q(cpu);
+	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
+	long long result = (long long)q - (long long)val - (1 - get_flag(cpu, FLAG_C));
+	set_flag(cpu, FLAG_C, result >= 0);
+	unsigned int r = (unsigned int)(result & 0xFFFFFFFF);
+	set_flag(cpu, FLAG_V, ((q ^ val) & (q ^ r) & 0x80000000) != 0);
+	set_q(cpu, r);
+	update_nz_q(cpu, r);
+	cpu->cycles += 5;
+	cpu->pc += 2;
+}
+
+static void sbcq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned int q = get_q(cpu);
+	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
+	long long result = (long long)q - (long long)val - (1 - get_flag(cpu, FLAG_C));
+	set_flag(cpu, FLAG_C, result >= 0);
+	unsigned int r = (unsigned int)(result & 0xFFFFFFFF);
+	set_flag(cpu, FLAG_V, ((q ^ val) & (q ^ r) & 0x80000000) != 0);
+	set_q(cpu, r);
+	update_nz_q(cpu, r);
+	cpu->cycles += 5;
+	cpu->pc += 3;
+}
+
+static void cpq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned int q = get_q(cpu);
+	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
+	set_flag(cpu, FLAG_C, q >= val);
+	update_nz_q(cpu, q - val);
+	cpu->cycles += 5;
+	cpu->pc += 2;
+}
+
+static void cpq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned int q = get_q(cpu);
+	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
+	set_flag(cpu, FLAG_C, q >= val);
+	update_nz_q(cpu, q - val);
+	cpu->cycles += 5;
+	cpu->pc += 3;
+}
+
+static void eorq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned int q = get_q(cpu);
+	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
+	unsigned int r = q ^ val;
+	set_q(cpu, r);
+	update_nz_q(cpu, r);
+	cpu->cycles += 5;
+	cpu->pc += 2;
+}
+
+static void eorq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned int q = get_q(cpu);
+	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
+	unsigned int r = q ^ val;
+	set_q(cpu, r);
+	update_nz_q(cpu, r);
+	cpu->cycles += 5;
+	cpu->pc += 3;
+}
+
+static void andq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned int q = get_q(cpu);
+	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
+	unsigned int r = q & val;
+	set_q(cpu, r);
+	update_nz_q(cpu, r);
+	cpu->cycles += 5;
+	cpu->pc += 2;
+}
+
+static void andq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned int q = get_q(cpu);
+	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
+	unsigned int r = q & val;
+	set_q(cpu, r);
+	update_nz_q(cpu, r);
+	cpu->cycles += 5;
+	cpu->pc += 3;
+}
+
+static void bitq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned int q = get_q(cpu);
+	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
+	set_flag(cpu, FLAG_Z, (q & val) == 0);
+	set_flag(cpu, FLAG_N, (val >> 31) & 1);
+	set_flag(cpu, FLAG_V, (val >> 30) & 1);
+	cpu->cycles += 5;
+	cpu->pc += 2;
+}
+
+static void bitq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned int q = get_q(cpu);
+	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
+	set_flag(cpu, FLAG_Z, (q & val) == 0);
+	set_flag(cpu, FLAG_N, (val >> 31) & 1);
+	set_flag(cpu, FLAG_V, (val >> 30) & 1);
+	cpu->cycles += 5;
+	cpu->pc += 3;
+}
+
+static void orq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned int q = get_q(cpu);
+	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
+	unsigned int r = q | val;
+	set_q(cpu, r);
+	update_nz_q(cpu, r);
+	cpu->cycles += 5;
+	cpu->pc += 2;
+}
+
+static void orq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned int q = get_q(cpu);
+	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
+	unsigned int r = q | val;
+	set_q(cpu, r);
+	update_nz_q(cpu, r);
+	cpu->cycles += 5;
+	cpu->pc += 3;
+}
+
+static void aslq(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned int q = get_q(cpu);
+	set_flag(cpu, FLAG_C, (q >> 31) & 1);
+	q <<= 1;
+	set_q(cpu, q);
+	update_nz_q(cpu, q);
+	cpu->cycles += 2;
+	cpu->pc += 1;
+}
+
+static void asrq(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned int q = get_q(cpu);
+	set_flag(cpu, FLAG_C, q & 1);
+	q = (q >> 1) | (q & 0x80000000); /* preserve sign bit */
+	set_q(cpu, q);
+	update_nz_q(cpu, q);
+	cpu->cycles += 2;
+	cpu->pc += 1;
+}
+
+static void lsrq(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned int q = get_q(cpu);
+	set_flag(cpu, FLAG_C, q & 1);
+	q >>= 1;
+	set_q(cpu, q);
+	update_nz_q(cpu, q);
+	cpu->cycles += 2;
+	cpu->pc += 1;
+}
+
+static void rolq(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned int q = get_q(cpu);
+	int c = get_flag(cpu, FLAG_C);
+	set_flag(cpu, FLAG_C, (q >> 31) & 1);
+	q = (q << 1) | (unsigned int)c;
+	set_q(cpu, q);
+	update_nz_q(cpu, q);
+	cpu->cycles += 2;
+	cpu->pc += 1;
+}
+
+static void rorq(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned int q = get_q(cpu);
+	int c = get_flag(cpu, FLAG_C);
+	set_flag(cpu, FLAG_C, q & 1);
+	q = (q >> 1) | ((unsigned int)c << 31);
+	set_q(cpu, q);
+	update_nz_q(cpu, q);
+	cpu->cycles += 2;
+	cpu->pc += 1;
+}
+
+static void inq(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned int q = get_q(cpu) + 1;
+	set_q(cpu, q);
+	update_nz_q(cpu, q);
+	cpu->cycles += 2;
+	cpu->pc += 1;
+}
+
+static void deq(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned int q = get_q(cpu) - 1;
+	set_q(cpu, q);
+	update_nz_q(cpu, q);
+	cpu->cycles += 2;
+	cpu->pc += 1;
+}
+
 extern void lda_imm(cpu_t *cpu, memory_t *mem, unsigned short arg);
 extern void lda_abs(cpu_t *cpu, memory_t *mem, unsigned short arg);
 extern void lda_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg);
@@ -1211,6 +1497,32 @@ opcode_handler_t opcodes_45gs02[] = {
 	{"STP", MODE_IMPLIED, stp, 3},
 	{"EOM", MODE_IMPLIED, eom, 2},
 	{"NOP", MODE_IMPLIED, nop, 2},
+	/* Quad (32-bit) instructions - NEG NEG ($42 $42) prefix */
+	{"LDQ",  MODE_ZP,       ldq_zp,   5},
+	{"LDQ",  MODE_ABSOLUTE, ldq_abs,  5},
+	{"STQ",  MODE_ZP,       stq_zp,   5},
+	{"STQ",  MODE_ABSOLUTE, stq_abs,  5},
+	{"ADCQ", MODE_ZP,       adcq_zp,  5},
+	{"ADCQ", MODE_ABSOLUTE, adcq_abs, 5},
+	{"SBCQ", MODE_ZP,       sbcq_zp,  5},
+	{"SBCQ", MODE_ABSOLUTE, sbcq_abs, 5},
+	{"CPQ",  MODE_ZP,       cpq_zp,   5},
+	{"CPQ",  MODE_ABSOLUTE, cpq_abs,  5},
+	{"EORQ", MODE_ZP,       eorq_zp,  5},
+	{"EORQ", MODE_ABSOLUTE, eorq_abs, 5},
+	{"ANDQ", MODE_ZP,       andq_zp,  5},
+	{"ANDQ", MODE_ABSOLUTE, andq_abs, 5},
+	{"BITQ", MODE_ZP,       bitq_zp,  5},
+	{"BITQ", MODE_ABSOLUTE, bitq_abs, 5},
+	{"ORQ",  MODE_ZP,       orq_zp,   5},
+	{"ORQ",  MODE_ABSOLUTE, orq_abs,  5},
+	{"ASLQ", MODE_IMPLIED,  aslq,    2},
+	{"ASRQ", MODE_IMPLIED,  asrq,    2},
+	{"LSRQ", MODE_IMPLIED,  lsrq,    2},
+	{"ROLQ", MODE_IMPLIED,  rolq,    2},
+	{"RORQ", MODE_IMPLIED,  rorq,    2},
+	{"INQ",  MODE_IMPLIED,  inq,     2},
+	{"DEQ",  MODE_IMPLIED,  deq,     2},
 };
 
 int OPCODES_45GS02_COUNT = sizeof(opcodes_45gs02) / sizeof(opcodes_45gs02[0]);
