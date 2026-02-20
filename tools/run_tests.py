@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+import os
+import subprocess
+import re
+import sys
+
+def run_test(asm_file):
+    print(f"Running test: {asm_file}...", end=" ", flush=True)
+    
+    # Read expectations from the first line
+    with open(asm_file, 'r') as f:
+        first_line = f.readline()
+    
+    match = re.search(r'EXPECT: (.*)', first_line)
+    if not match:
+        print("SKIP (no expectations found)")
+        return True
+    
+    expectations = match.group(1).strip()
+    
+    # Run simulator
+    try:
+        result = subprocess.run(['./sim6502', asm_file], capture_output=True, text=True, timeout=5)
+    except subprocess.TimeoutExpired:
+        print("FAIL (timeout)")
+        return False
+    
+    if result.returncode != 0:
+        print(f"FAIL (return code {result.returncode})")
+        print(result.stderr)
+        return False
+    
+    # Parse actual results
+    # First try "Registers: ..." (standard output)
+    actual_match = re.search(r'Registers: (.*)', result.stdout)
+    if not actual_match:
+        # Then try "REGS ..." (45GS02 specific output)
+        actual_match = re.search(r'REGS (.*)', result.stdout)
+        
+    if not actual_match:
+        print("FAIL (could not parse results)")
+        print(result.stdout)
+        return False
+    
+    actual = actual_match.group(1).strip()
+    
+    # Compare expectations
+    def parse_regs(s):
+        return dict(re.findall(r'(\w+)=([\dA-F]+)', s))
+    
+    expected_regs = parse_regs(expectations)
+    actual_regs = parse_regs(actual)
+    
+    passed = True
+    mismatch_details = []
+    for reg, val in expected_regs.items():
+        actual_val = actual_regs.get(reg)
+        if actual_val != val:
+            passed = False
+            mismatch_details.append(f"{reg}: expected {val}, got {actual_val}")
+            
+    if passed:
+        print("PASS")
+        return True
+    else:
+        print(f"FAIL")
+        print(f"  Expected: {expectations}")
+        print(f"  Actual:   {actual}")
+        for detail in mismatch_details:
+            print(f"  - {detail}")
+        return False
+
+def main():
+    test_dir = 'tests'
+    if not os.path.exists(test_dir):
+        print(f"Test directory '{test_dir}' not found.")
+        return 1
+        
+    tests = [os.path.join(test_dir, f) for f in os.listdir(test_dir) if f.endswith('.asm')]
+    tests.sort()
+    
+    if not tests:
+        print("No tests found.")
+        return 0
+    
+    failed = 0
+    for test in tests:
+        if not run_test(test):
+            failed += 1
+            
+    print(f"\nSummary: {len(tests) - failed} passed, {failed} failed.")
+    return 1 if failed > 0 else 0
+
+if __name__ == "__main__":
+    sys.exit(main())

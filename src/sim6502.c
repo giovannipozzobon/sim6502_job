@@ -79,24 +79,32 @@ static int get_instruction_length(unsigned char mode) {
 }
 
 static int is_branch_opcode(const char *op) {
-	if (strcmp(op, "BCC") == 0) return 1;
-	if (strcmp(op, "BCS") == 0) return 1;
-	if (strcmp(op, "BEQ") == 0) return 1;
-	if (strcmp(op, "BMI") == 0) return 1;
-	if (strcmp(op, "BNE") == 0) return 1;
-	if (strcmp(op, "BPL") == 0) return 1;
-	if (strcmp(op, "BVC") == 0) return 1;
-	if (strcmp(op, "BVS") == 0) return 1;
-	if (strcmp(op, "BRA") == 0) return 1;
-	if (strcmp(op, "BSR") == 0) return 1;
+	if (strcmp(op, "BCC") == 0 || strcmp(op, "LBCC") == 0) return 1;
+	if (strcmp(op, "BCS") == 0 || strcmp(op, "LBCS") == 0) return 1;
+	if (strcmp(op, "BEQ") == 0 || strcmp(op, "LBEQ") == 0) return 1;
+	if (strcmp(op, "BMI") == 0 || strcmp(op, "LBMI") == 0) return 1;
+	if (strcmp(op, "BNE") == 0 || strcmp(op, "LBNE") == 0) return 1;
+	if (strcmp(op, "BPL") == 0 || strcmp(op, "LBPL") == 0) return 1;
+	if (strcmp(op, "BVC") == 0 || strcmp(op, "LBVC") == 0) return 1;
+	if (strcmp(op, "BVS") == 0 || strcmp(op, "LBVS") == 0) return 1;
+	if (strcmp(op, "BRA") == 0 || strcmp(op, "LBRA") == 0) return 1;
+	if (strcmp(op, "BSR") == 0 || strcmp(op, "LBSR") == 0) return 1;
 	if (strcmp(op, "BRL") == 0) return 1;
 	return 0;
 }
 
 static int is_long_branch_opcode(const char *op) {
+	if (op[0] == 'L' && (strcmp(op, "LBRL") != 0)) {
+		/* Most L-prefixed branches are long on 45GS02 */
+		if (strcmp(op, "LBCC") == 0 || strcmp(op, "LBCS") == 0 || 
+		    strcmp(op, "LBEQ") == 0 || strcmp(op, "LBNE") == 0 ||
+		    strcmp(op, "LBMI") == 0 || strcmp(op, "LBPL") == 0 ||
+		    strcmp(op, "LBVC") == 0 || strcmp(op, "LBVS") == 0 ||
+		    strcmp(op, "LBRA") == 0 || strcmp(op, "LBSR") == 0)
+			return 1;
+	}
 	if (strcmp(op, "BSR") == 0) return 1;
 	if (strcmp(op, "BRL") == 0) return 1;
-	/* Conditional long branches on 45GS02 are often handled via a separate mechanism or opcode */
 	return 0;
 }
 
@@ -597,7 +605,12 @@ int main(int argc, char *argv[]) {
 		if (trace_info.enabled) trace_instruction_full(&trace_info, &cpu, instr.op, mode_name(instr.mode), cpu.cycles);
 		execute(&cpu, &mem, &instr, handlers, num_handlers);
 	}
-	printf("\nExecution Finished.\nRegisters: A=%02X X=%02X Y=%02X PC=%04X\n", cpu.a, cpu.x, cpu.y, cpu.pc);
+	printf("\nExecution Finished.\n");
+	if (cpu_type == CPU_45GS02)
+		printf("Registers: A=%02X X=%02X Y=%02X Z=%02X B=%02X PC=%04X\n", cpu.a, cpu.x, cpu.y, cpu.z, cpu.b, cpu.pc);
+	else
+		printf("Registers: A=%02X X=%02X Y=%02X PC=%04X\n", cpu.a, cpu.x, cpu.y, cpu.pc);
+
 	if (show_memory) memory_dump(&mem, mem_start, mem_end);
 	if (show_symbols) symbol_display(&symbols);
 	return 0;
