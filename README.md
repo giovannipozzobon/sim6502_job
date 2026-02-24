@@ -2,6 +2,8 @@
 
 A complete, feature-rich simulator for 6502 and compatible processors (65C02, 65CE02, 45GS02) with professional debugging tools, symbol table support, and predefined memory maps for Commodore systems.
 
+Help with this development by contributing and buy me coffee at : https://kodecoffee.com/i/ctalkobt
+
 ## Features
 
 ### Core Simulation
