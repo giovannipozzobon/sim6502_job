@@ -27,7 +27,8 @@ A complete, feature-rich simulator for 6502 and compatible processors (65C02, 65
 - ✅ **Custom Symbol Tables**: Load from text files
 - ✅ **Preset Architectures**: C64, C128, Mega65, Commander X16
 - ✅ **Symbol Display**: View all loaded symbols with descriptions
-- ✅ **Multiple Symbol Types**: Labels, Variables, Functions, I/O Ports, Memory Regions
+- ✅ **Multiple Symbol Types**: Labels, Variables, Functions, I/O Ports, Memory Regions, Traps
+- ✅ **ROM Trapping**: Intercept JSR calls to ROM addresses — dumps registers and simulates RTS without needing real ROM code
 
 ## Model Context Protocol (MCP) Server ⭐ NEW
 
@@ -200,17 +201,47 @@ Create your own symbol table file (format: ADDRESS NAME TYPE COMMENT):
 ```
 ; My Symbol Table
 ; Format: ADDRESS NAME TYPE COMMENT
-; Types: LABEL, VAR, CONST, FUNC, IO, REGION
+; Types: LABEL, VAR, CONST, FUNC, IO, REGION, TRAP
 
 1000 my_routine FUNC My custom function
 2000 my_data VAR My data area
 d000 vic_base IO VIC controller base
+ffd2 CHROUT TRAP Output char A to current channel
 ```
 
 Load with:
 ```bash
 ./sim6502 --symbols mysymbols.sym program.asm
 ```
+
+### TRAP — Intercepting ROM Routines
+
+The `TRAP` symbol type lets you write programs that call ROM addresses (e.g. C64 Kernal routines) without needing actual ROM code loaded. When the PC reaches a TRAPped address, the simulator:
+
+1. Prints a register dump showing the CPU state at the point of call
+2. Simulates an `RTS` — pops the return address left by the caller's `JSR` and resumes execution there
+3. Adds 6 cycles (nominal RTS cost)
+
+If the trap is reached via a `JMP` or fall-through rather than `JSR` (stack return address is `$0000`), execution halts with a diagnostic message.
+
+#### Example output
+
+```
+[TRAP] CHROUT               $FFD2  A=41 X=00 Y=00 S=FD P=00  ; Output char A to current channel
+[TRAP] CHROUT               $FFD2  A=42 X=00 Y=00 S=FD P=00  ; Output char A to current channel
+```
+
+Each line shows the name, address, and full register state at the moment `JSR` transferred control — making it easy to see exactly what arguments your code passed to a ROM routine.
+
+#### Defining TRAPs in a symbol file
+
+```
+; Stub out two C64 Kernal routines
+ffd2 CHROUT TRAP Output char A to current channel
+ffe4 GETIN  TRAP Get char from keyboard queue -> A
+```
+
+The preset `--preset c64` (and `c128`, `mega65`) ship with the full Kernal jump table already defined as TRAPs, so any program that calls standard routines will produce readable intercept output without real ROM.
 
 ## Command-Line Options
 
@@ -428,13 +459,16 @@ $A0000-$BFFFF : VERA Video RAM (128KB)
 ```
 ; Comment line starts with ; or #
 ; Format: ADDRESS NAME TYPE [COMMENT]
-; Types: LABEL, VAR, CONST, FUNC, IO, REGION
+; Types: LABEL, VAR, CONST, FUNC, IO, REGION, TRAP
 
 1000 main_loop LABEL Main program loop
 2000 data_area VAR Data storage area
 d000 vic_base IO VIC-II controller base
 fffa nmi_vector REGION NMI interrupt vector
+ffd2 CHROUT TRAP Output char A to current channel
 ```
+
+`TRAP` intercepts any `JSR` to that address: the simulator prints the current register state and simulates an `RTS`, resuming the caller. No ROM code is needed. See the [TRAP section](#trap--intercepting-rom-routines) above for details.
 
 ### Loading Symbol Tables
 ```bash

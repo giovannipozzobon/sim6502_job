@@ -6,21 +6,29 @@ import sys
 
 def run_test(asm_file):
     print(f"Running test: {asm_file}...", end=" ", flush=True)
-    
-    # Read expectations from the first line
+
+    # Read expectations and optional FLAGS from leading comment lines
+    expectations = None
+    extra_flags = []
     with open(asm_file, 'r') as f:
-        first_line = f.readline()
-    
-    match = re.search(r'EXPECT: (.*)', first_line)
-    if not match:
+        for _ in range(10):
+            line = f.readline()
+            if not line or not line.startswith(';'):
+                break
+            m = re.search(r'EXPECT: (.*)', line)
+            if m:
+                expectations = m.group(1).strip()
+            m = re.search(r'FLAGS: (.*)', line)
+            if m:
+                extra_flags = m.group(1).strip().split()
+
+    if expectations is None:
         print("SKIP (no expectations found)")
         return True
-    
-    expectations = match.group(1).strip()
-    
+
     # Run simulator
     try:
-        result = subprocess.run(['./sim6502', asm_file], capture_output=True, text=True, timeout=5)
+        result = subprocess.run(['./sim6502'] + extra_flags + [asm_file], capture_output=True, text=True, timeout=5)
     except subprocess.TimeoutExpired:
         print("FAIL (timeout)")
         return False
