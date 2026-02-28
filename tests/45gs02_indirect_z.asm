@@ -1,4 +1,4 @@
-; EXPECT: A=55 X=00 Y=00 Z=00 B=00 PC=003D
+; EXPECT: A=55 X=00 Y=00 Z=00 B=00 S=FF PC=023D
 .processor 45gs02
 
 ; Set up a pointer in zero page $10

@@ -1,4 +1,6 @@
-; EXPECT: A=42 X=10 Y=00 Z=00 B=00 PC=0011
+; EXPECT: A=42 X=10 Y=00 Z=00 B=00 S=FF PC=2011
+; PROCESSOR: 45gs02
+; FLAGS: -a 0x2000
 .processor 45gs02
 
 ; Write $42 to physical $1000 (MAP not yet active, virtual == physical)

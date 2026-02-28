@@ -14,7 +14,9 @@ typedef struct {
 	unsigned char cycles_65c02;     /* Cycles on 65C02 (may differ) */
 	unsigned char cycles_65ce02;    /* Cycles on 65CE02 (may differ) */
 	unsigned char cycles_45gs02;    /* Cycles on 45GS02 (may differ) */
-	unsigned int opcode;            /* Opcode byte value (supports multi-byte) */
+	unsigned char opcode_bytes[4];  /* Opcode bytes first→last: 1=plain, 2={EOM,base},
+	                                   3={$42,$42,base}, 4={$42,$42,$EA,base} */
+	unsigned char opcode_len;       /* 0=unassigned, 1–4=number of opcode bytes */
 } opcode_handler_t;
 
 extern opcode_handler_t opcodes_6502[];

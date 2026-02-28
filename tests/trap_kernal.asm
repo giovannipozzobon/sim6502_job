@@ -1,4 +1,4 @@
-; EXPECT: A=41 X=00 Y=00 PC=0005
+; EXPECT: A=41 X=00 Y=00 S=FF PC=0205
 ; FLAGS: --preset c64
 ; Test: TRAP intercept via --preset c64.
 ; JSR to CHROUT ($FFD2) should be trapped, dump registers, and simulate RTS.

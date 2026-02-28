@@ -1,4 +1,4 @@
-; EXPECT: A=42 X=00 Y=00 Z=00 B=00 PC=001A
+; EXPECT: A=42 X=00 Y=00 Z=00 B=00 S=FF PC=021A
 .processor 45gs02
 
 ; Store 32-bit far address $00012345 in ZP $10-$13

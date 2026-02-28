@@ -1,4 +1,4 @@
-; EXPECT: A=80 X=00 Y=00 Z=00 B=00 S=FD PC=0030
+; EXPECT: A=80 X=00 Y=00 Z=00 B=00 S=FD PC=0230
 .processor 45gs02
 
 ; 1. Test PHW Immediate

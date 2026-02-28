@@ -1,4 +1,4 @@
-; EXPECT: A=AA X=F0 Y=02 Z=00 B=00 PC=001F
+; EXPECT: A=AA X=F0 Y=02 Z=00 B=00 S=F0 PC=021F
 .processor 45gs02
 ; Pointer at $01F0 = $2000
 LDA #$00

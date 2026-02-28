@@ -1,4 +1,4 @@
-; EXPECT: A=00 X=01 Y=00 Z=00 B=00 PC=000A
+; EXPECT: A=00 X=01 Y=00 Z=00 B=00 S=FF PC=020C
 ; Test STQ absolute and BEQ with $addr notation
 .processor 45gs02
 

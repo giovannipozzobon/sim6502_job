@@ -21,7 +21,6 @@ typedef struct {
 	char op[8];
 	unsigned char mode;
 	unsigned short arg;
-	unsigned char flat;	/* 1 = [zp],Z bracket syntax: insert synthetic EOM before this instruction */
 } instruction_t;
 
 static instruction_t rom[65536]; /* 64KB Instruction ROM */
@@ -58,8 +57,37 @@ static const char *mode_name(unsigned char mode) {
 	case MODE_SP_INDIRECT_Y: return "SIY";
 	case MODE_ABS_INDIRECT_X: return "AIX";
 	case MODE_IMMEDIATE_WORD: return "IMW";
+	case MODE_ZP_INDIRECT_FLAT: return "FLT";
+	case MODE_ZP_INDIRECT_Z_FLAT: return "FLZ";
 	default: return "???";
 	}
+}
+
+/* Return the total encoded byte count for (mnemonic,mode), including
+ * any multi-byte prefix (e.g. $42 $42 for quad, $EA for flat).
+ * Falls back to get_instruction_length if not found. */
+static int get_encoded_length(const char *mnem, unsigned char mode,
+		const opcode_handler_t *handlers, int n) {
+	for (int i = 0; i < n; i++) {
+		if (strcmp(handlers[i].mnemonic, mnem) == 0 &&
+		    handlers[i].mode == mode &&
+		    handlers[i].opcode_len > 0) {
+			/* operand bytes = get_instruction_length(mode) - 1 */
+			int operand = 0;
+			switch (mode) {
+			case MODE_ABSOLUTE: case MODE_ABSOLUTE_X: case MODE_ABSOLUTE_Y:
+			case MODE_INDIRECT: case MODE_ABS_INDIRECT_X:
+			case MODE_RELATIVE_LONG: case MODE_IMMEDIATE_WORD:
+				operand = 2; break;
+			case MODE_IMPLIED:
+				operand = 0; break;
+			default:
+				operand = 1; break;
+			}
+			return (int)handlers[i].opcode_len + operand;
+		}
+	}
+	return -1; /* not found */
 }
 
 /* Helper to determine instruction length based on addressing mode */
@@ -84,7 +112,31 @@ static int get_instruction_length(unsigned char mode) {
 	case MODE_SP_INDIRECT_Y: return 2;
 	case MODE_ABS_INDIRECT_X: return 3;
 	case MODE_IMMEDIATE_WORD: return 3;
+	case MODE_ZP_INDIRECT_FLAT: return 2;
+	case MODE_ZP_INDIRECT_Z_FLAT: return 2;
 	default: return 1;
+	}
+}
+
+/* Read the instruction operand from mem[cpu->pc+1..] based on addressing mode.
+ * Does NOT modify PC. */
+static unsigned short decode_operand(cpu_t *cpu, memory_t *mem, unsigned char mode) {
+	switch (mode) {
+	case MODE_IMPLIED:
+		return 0;
+	case MODE_IMMEDIATE: case MODE_ZP: case MODE_ZP_X: case MODE_ZP_Y:
+	case MODE_INDIRECT_X: case MODE_INDIRECT_Y:
+	case MODE_ZP_INDIRECT: case MODE_ZP_INDIRECT_Z:
+	case MODE_ZP_INDIRECT_FLAT: case MODE_ZP_INDIRECT_Z_FLAT:
+	case MODE_SP_INDIRECT_Y: case MODE_RELATIVE: case MODE_ABS_INDIRECT_Y:
+		return mem_read(mem, (unsigned short)(cpu->pc + 1));
+	case MODE_ABSOLUTE: case MODE_ABSOLUTE_X: case MODE_ABSOLUTE_Y:
+	case MODE_INDIRECT: case MODE_ABS_INDIRECT_X:
+	case MODE_RELATIVE_LONG: case MODE_IMMEDIATE_WORD:
+		return (unsigned short)(mem_read(mem, (unsigned short)(cpu->pc + 1)) |
+		        (mem_read(mem, (unsigned short)(cpu->pc + 2)) << 8));
+	default:
+		return 0;
 	}
 }
 
@@ -222,9 +274,12 @@ static void print_opcode_info(opcode_handler_t *handlers, int num_handlers, cons
 			if (handlers[i].mode == MODE_RELATIVE_LONG) len = 3;
 			if (strncmp(handlers[i].mnemonic, "BBR", 3) == 0 || strncmp(handlers[i].mnemonic, "BBS", 3) == 0) len = 3;
 			
-			unsigned int opcode = handlers[i].opcode;
+			/* Build a display value from opcode_bytes for printing */
+			unsigned int opcode = 0;
+			for (int ob = 0; ob < handlers[i].opcode_len; ob++)
+				opcode = (opcode << 8) | handlers[i].opcode_bytes[ob];
 			int cycles = handlers[i].cycles_6502;
-			
+
 			printf("%-15s $%-9X %-10d %-10d\n", 
 				mode_name(handlers[i].mode), opcode, len, cycles);
 			found = 1;
@@ -277,7 +332,6 @@ static void parse_line(const char *line, instruction_t *instr, symbol_table_t *s
 	while (*line && isspace(*line)) line++;
 	instr->mode = MODE_IMPLIED;
 	instr->arg = 0;
-	instr->flat = 0;
 
 	int is_branch = is_branch_opcode(instr->op);
 
@@ -353,7 +407,7 @@ static void parse_line(const char *line, instruction_t *instr, symbol_table_t *s
 			}
 		}
 	} else if (*line == '[') {
-		/* [zp] or [zp],Z — flat/far indirect via 32-bit ZP pointer (needs EOM prefix) */
+		/* [zp] or [zp],Z — flat/far indirect via 32-bit ZP pointer */
 		line++;
 		if (*line == '$') {
 			line++;
@@ -364,14 +418,11 @@ static void parse_line(const char *line, instruction_t *instr, symbol_table_t *s
 			if (*line == ',') {
 				line++;
 				while (*line && isspace(*line)) line++;
-				if (toupper(*line) == 'Z') {
-					instr->mode = MODE_ZP_INDIRECT_Z;
-					instr->flat = 1;
-				}
+				if (toupper(*line) == 'Z')
+					instr->mode = MODE_ZP_INDIRECT_Z_FLAT;
 			} else {
 				/* [zp] without ,Z — flat indirect, no Z offset */
-				instr->mode = MODE_ZP_INDIRECT;
-				instr->flat = 1;
+				instr->mode = MODE_ZP_INDIRECT_FLAT;
 			}
 		}
 	} else if (instr->op[0]) {
@@ -468,8 +519,156 @@ static void execute(cpu_t *cpu, memory_t *mem, instruction_t *instr,
 	cpu->eom_prefix = 0;
 }
 
+/* ============================================================
+ * Dispatch table — O(1) byte-indexed execution (Phases 2+4)
+ * ============================================================ */
+typedef struct {
+	opcode_fn     fn;
+	unsigned char mode;
+	const char   *mnemonic;
+	unsigned char cycles;
+} dispatch_entry_t;
+
+typedef struct {
+	dispatch_entry_t base[256];     /* indexed by single opcode byte */
+	dispatch_entry_t quad[256];     /* 45GS02: $42 $42 prefix, indexed by 3rd byte */
+	dispatch_entry_t quad_eom[256]; /* 45GS02: $42 $42 $EA prefix, indexed by 4th byte */
+} dispatch_table_t;
+
+static void dispatch_build(dispatch_table_t *dt,
+		const opcode_handler_t *handlers, int n, cpu_type_t cpu_type) {
+	memset(dt, 0, sizeof(*dt));
+	for (int i = 0; i < n; i++) {
+		unsigned char olen = handlers[i].opcode_len;
+		if (olen == 0) continue;  /* unassigned sentinel */
+		unsigned char cyc;
+		switch (cpu_type) {
+		case CPU_65C02:  cyc = handlers[i].cycles_65c02  ? handlers[i].cycles_65c02  : handlers[i].cycles_6502; break;
+		case CPU_65CE02: cyc = handlers[i].cycles_65ce02 ? handlers[i].cycles_65ce02 : handlers[i].cycles_6502; break;
+		case CPU_45GS02: cyc = handlers[i].cycles_45gs02 ? handlers[i].cycles_45gs02 : handlers[i].cycles_6502; break;
+		default:         cyc = handlers[i].cycles_6502; break;
+		}
+
+		dispatch_entry_t *slot = NULL;
+		unsigned char key = handlers[i].opcode_bytes[olen - 1];
+
+		if (olen == 1) {
+			/* Single-byte opcode → base table */
+			slot = &dt->base[key];
+		} else if (olen == 2 && handlers[i].opcode_bytes[0] == 0xEA) {
+			/* EOM ($EA) + base opcode: handled by EOM chaining in execute_from_mem;
+			 * do NOT put in quad[] — EOM in base[0xEA] sets eom_prefix, then the
+			 * base opcode byte is dispatched normally on the next call. Skip here. */
+			continue;
+		} else if (olen == 3 && handlers[i].opcode_bytes[0] == 0x42 &&
+		           handlers[i].opcode_bytes[1] == 0x42) {
+			/* $42 $42 + base opcode → quad table */
+			slot = &dt->quad[key];
+		} else if (olen == 4 && handlers[i].opcode_bytes[0] == 0x42 &&
+		           handlers[i].opcode_bytes[1] == 0x42 &&
+		           handlers[i].opcode_bytes[2] == 0xEA) {
+			/* $42 $42 $EA + base opcode → quad_eom table */
+			slot = &dt->quad_eom[key];
+		}
+		/* Any other pattern is unrecognised — skip */
+
+		if (slot && !slot->fn) {
+			slot->fn       = handlers[i].fn;
+			slot->mode     = handlers[i].mode;
+			slot->mnemonic = handlers[i].mnemonic;
+			slot->cycles   = cyc;
+		}
+	}
+}
+
+/* Fetch opcode from mem[], dispatch via table, execute.
+ * Handles 45GS02 NEG NEG ($42 $42) quad prefix and $42 $42 $EA quad-flat. */
+static void execute_from_mem(cpu_t *cpu, memory_t *mem,
+		const dispatch_table_t *dt, cpu_type_t cpu_type) {
+	unsigned char byte0 = mem_read(mem, cpu->pc);
+	if (cpu_type == CPU_45GS02 && byte0 == 0x42) {
+		unsigned char byte1 = mem_read(mem, (unsigned short)(cpu->pc + 1));
+		if (byte1 == 0x42) {
+			unsigned char byte2 = mem_read(mem, (unsigned short)(cpu->pc + 2));
+			if (byte2 == 0xEA) {
+				/* $42 $42 $EA $base — quad flat indirect */
+				unsigned char base = mem_read(mem, (unsigned short)(cpu->pc + 3));
+				const dispatch_entry_t *e = &dt->quad_eom[base];
+				if (e->fn) {
+					cpu->pc += 3;  /* consume $42 $42 $EA; handler at base opcode */
+					cpu->eom_prefix = 2;  /* flat is active */
+					unsigned short arg = decode_operand(cpu, mem, e->mode);
+					e->fn(cpu, mem, arg);
+					return;
+				}
+			} else {
+				/* $42 $42 $base — quad non-flat */
+				const dispatch_entry_t *e = &dt->quad[byte2];
+				if (e->fn) {
+					cpu->pc += 2;  /* consume $42 $42; handler sees PC at base opcode */
+					cpu->eom_prefix = (cpu->eom_prefix == 1) ? 2 : 0;
+					unsigned short arg = decode_operand(cpu, mem, e->mode);
+					e->fn(cpu, mem, arg);
+					return;
+				}
+			}
+		}
+	}
+	/* Normal single-byte dispatch (also handles EOM via eom_prefix chaining) */
+	cpu->eom_prefix = (cpu->eom_prefix == 1) ? 2 : 0;
+	const dispatch_entry_t *e = &dt->base[byte0];
+	if (!e->fn) { cpu->pc++; return; }  /* unimplemented: skip */
+	unsigned short arg = decode_operand(cpu, mem, e->mode);
+	e->fn(cpu, mem, arg);
+}
+
+/* Encode one instruction into mem[].
+ * pc_base is the address to write at.
+ * Returns the total number of bytes written, or -1 if not found. */
+static int encode_to_mem(memory_t *mem, int pc_base,
+		const instruction_t *instr,
+		const opcode_handler_t *handlers, int n) {
+	int pc = pc_base;
+
+	/* Find handler by (mnemonic, mode) with an assigned opcode */
+	int i;
+	for (i = 0; i < n; i++) {
+		if (strcmp(instr->op, handlers[i].mnemonic) == 0 &&
+		    handlers[i].mode == instr->mode &&
+		    handlers[i].opcode_len > 0)
+			break;
+	}
+	if (i >= n) return -1;  /* not found — leave memory zeroed */
+
+	/* Write opcode bytes in order (first to last) */
+	unsigned char olen = handlers[i].opcode_len;
+	for (int j = 0; j < olen; j++)
+		mem->mem[pc++] = handlers[i].opcode_bytes[j];
+
+	/* Write operand byte(s) */
+	switch (handlers[i].mode) {
+	case MODE_IMPLIED:
+		break;
+	case MODE_IMMEDIATE: case MODE_ZP: case MODE_ZP_X: case MODE_ZP_Y:
+	case MODE_INDIRECT_X: case MODE_INDIRECT_Y:
+	case MODE_ZP_INDIRECT: case MODE_ZP_INDIRECT_Z:
+	case MODE_ZP_INDIRECT_Z_FLAT: case MODE_ZP_INDIRECT_FLAT:
+	case MODE_SP_INDIRECT_Y: case MODE_RELATIVE: case MODE_ABS_INDIRECT_Y:
+		mem->mem[pc++] = instr->arg & 0xFF;
+		break;
+	case MODE_ABSOLUTE: case MODE_ABSOLUTE_X: case MODE_ABSOLUTE_Y:
+	case MODE_INDIRECT: case MODE_ABS_INDIRECT_X:
+	case MODE_RELATIVE_LONG: case MODE_IMMEDIATE_WORD:
+		mem->mem[pc++] = instr->arg & 0xFF;
+		mem->mem[pc++] = (instr->arg >> 8) & 0xFF;
+		break;
+	}
+	return pc - pc_base;  /* total bytes written */
+}
+
 static void run_interactive_mode(cpu_t *cpu, memory_t *mem, instruction_t *rom,
                                  opcode_handler_t **p_handlers, int *p_num_handlers,
+                                 cpu_type_t *p_cpu_type, dispatch_table_t *dt,
                                  unsigned short start_addr, breakpoint_list_t *breakpoints,
                                  symbol_table_t *symbols) {
     char line[256];
@@ -546,10 +745,10 @@ static void run_interactive_mode(cpu_t *cpu, memory_t *mem, instruction_t *rom,
                 int tr = handle_trap(symbols, cpu, mem, *p_handlers);
                 if (tr < 0) break;
                 if (tr > 0) continue;
-                instruction_t instr = rom[cpu->pc];
-                if (!instr.op[0] || strcmp(instr.op, "BRK") == 0 || strcmp(instr.op, "STP") == 0) break;
+                unsigned char opc = mem_read(mem, cpu->pc);
+                if (opc == 0x00) break;  /* BRK */
                 if (breakpoint_hit(breakpoints, cpu->pc)) break;
-                execute(cpu, mem, &instr, *p_handlers, *p_num_handlers);
+                execute_from_mem(cpu, mem, dt, *p_cpu_type);
                 if (cpu->cycles > 100000000) break;
             }
             printf("STOP at %04X\n", cpu->pc);
@@ -560,15 +759,16 @@ static void run_interactive_mode(cpu_t *cpu, memory_t *mem, instruction_t *rom,
         } else if (strcmp(cmd, "processor") == 0) {
             char type_str[16];
             if (sscanf(line, "%*s %15s", type_str) == 1) {
-                if (strcmp(type_str, "6502") == 0) { *p_handlers = opcodes_6502; *p_num_handlers = OPCODES_6502_COUNT; }
-                else if (strcmp(type_str, "6502-undoc") == 0) { *p_handlers = opcodes_6502_undoc; *p_num_handlers = OPCODES_6502_UNDOC_COUNT; }
-                else if (strcmp(type_str, "65c02") == 0) { *p_handlers = opcodes_65c02; *p_num_handlers = OPCODES_65C02_COUNT; }
-                else if (strcmp(type_str, "65ce02") == 0) { *p_handlers = opcodes_65ce02; *p_num_handlers = OPCODES_65CE02_COUNT; }
-                else if (strcmp(type_str, "45gs02") == 0) { *p_handlers = opcodes_45gs02; *p_num_handlers = OPCODES_45GS02_COUNT; }
+                if (strcmp(type_str, "6502") == 0) { *p_handlers = opcodes_6502; *p_num_handlers = OPCODES_6502_COUNT; *p_cpu_type = CPU_6502; }
+                else if (strcmp(type_str, "6502-undoc") == 0) { *p_handlers = opcodes_6502_undoc; *p_num_handlers = OPCODES_6502_UNDOC_COUNT; *p_cpu_type = CPU_6502_UNDOCUMENTED; }
+                else if (strcmp(type_str, "65c02") == 0) { *p_handlers = opcodes_65c02; *p_num_handlers = OPCODES_65C02_COUNT; *p_cpu_type = CPU_65C02; }
+                else if (strcmp(type_str, "65ce02") == 0) { *p_handlers = opcodes_65ce02; *p_num_handlers = OPCODES_65CE02_COUNT; *p_cpu_type = CPU_65CE02; }
+                else if (strcmp(type_str, "45gs02") == 0) { *p_handlers = opcodes_45gs02; *p_num_handlers = OPCODES_45GS02_COUNT; *p_cpu_type = CPU_45GS02; }
+                dispatch_build(dt, *p_handlers, *p_num_handlers, *p_cpu_type);
                 printf("Processor set to %s\n", type_str);
             }
         } else if (strcmp(cmd, "regs") == 0) {
-            if (*p_handlers == opcodes_45gs02)
+            if (*p_cpu_type == CPU_45GS02)
                 printf("REGS A=%02X X=%02X Y=%02X Z=%02X B=%02X S=%02X P=%02X PC=%04X Cycles=%lu\n", cpu->a, cpu->x, cpu->y, cpu->z, cpu->b, cpu->s, cpu->p, cpu->pc, cpu->cycles);
             else
                 printf("REGS A=%02X X=%02X Y=%02X S=%02X P=%02X PC=%04X Cycles=%lu\n", cpu->a, cpu->x, cpu->y, cpu->s, cpu->p, cpu->pc, cpu->cycles);
@@ -593,9 +793,9 @@ static void run_interactive_mode(cpu_t *cpu, memory_t *mem, instruction_t *rom,
                 int tr = handle_trap(symbols, cpu, mem, *p_handlers);
                 if (tr < 0) break;
                 if (tr > 0) continue;
-                instruction_t instr = rom[cpu->pc];
-                if (!instr.op[0] || strcmp(instr.op, "BRK") == 0) break;
-                execute(cpu, mem, &instr, *p_handlers, *p_num_handlers);
+                unsigned char opc = mem_read(mem, cpu->pc);
+                if (opc == 0x00) break;  /* BRK */
+                execute_from_mem(cpu, mem, dt, *p_cpu_type);
             }
             printf("STOP %04X\n", cpu->pc);
         }
@@ -707,7 +907,7 @@ int main(int argc, char *argv[]) {
 	if (!f) { perror("fopen"); return 1; }
 
 	char line[128];
-	int pc = start_addr_provided ? start_addr : 0;
+	int pc = start_addr_provided ? start_addr : 0x0200;
 	while (fgets(line, sizeof(line), f)) {
 		if (line[0] == '.') { parse_pseudo_op(line, &cpu_type); continue; }
 		char *ptr = line;
@@ -721,8 +921,13 @@ int main(int argc, char *argv[]) {
 		}
 		instruction_t instr; parse_line(line, &instr, NULL, pc);
 		if (instr.op[0]) {
-			int len = (strcmp(instr.op, "BRK") == 0) ? 2 : get_instruction_length(instr.mode);
-			if (instr.flat) len++;	/* account for synthetic EOM prefix byte */
+			int len;
+			if (strcmp(instr.op, "BRK") == 0) {
+				len = 2;
+			} else {
+				len = get_encoded_length(instr.op, instr.mode, handlers, num_handlers);
+				if (len < 0) len = get_instruction_length(instr.mode);
+			}
 			pc += len;
 		}
 	}
@@ -732,49 +937,60 @@ int main(int argc, char *argv[]) {
 		start_addr_provided = 1;
 	}
 
+	/* Finalise handler selection after first pass (may have changed via .processor) */
+	if (cpu_type == CPU_65C02) { handlers = opcodes_65c02; num_handlers = OPCODES_65C02_COUNT; }
+	else if (cpu_type == CPU_65CE02) { handlers = opcodes_65ce02; num_handlers = OPCODES_65CE02_COUNT; }
+	else if (cpu_type == CPU_45GS02) { handlers = opcodes_45gs02; num_handlers = OPCODES_45GS02_COUNT; }
+	else if (cpu_type == CPU_6502_UNDOCUMENTED) { handlers = opcodes_6502_undoc; num_handlers = OPCODES_6502_UNDOC_COUNT; }
+
+	cpu_t cpu; cpu_init(&cpu); cpu.pc = start_addr_provided ? start_addr : 0x0200;
+	memory_t mem; memset(&mem, 0, sizeof(mem));
+
+	/* Second pass: populate rom[] and encode bytes into mem[] */
 	rewind(f);
-	pc = start_addr_provided ? start_addr : 0;
+	pc = start_addr_provided ? start_addr : 0x0200;
 	while (fgets(line, sizeof(line), f)) {
 		if (line[0] == '.' || line[0] == ';') continue;
 		instruction_t instr; parse_line(line, &instr, &symbols, pc);
 		if (instr.op[0]) {
-			if (instr.flat) {
-				instruction_t eom_instr;
-				memset(&eom_instr, 0, sizeof(eom_instr));
-				strcpy(eom_instr.op, "EOM");
-				eom_instr.mode = MODE_IMPLIED;
-				rom[pc++] = eom_instr;
-			}
-			rom[pc] = instr;
-			pc += (strcmp(instr.op, "BRK") == 0) ? 2 : get_instruction_length(instr.mode);
+			rom[pc] = instr;  /* debug overlay */
+			int enc = encode_to_mem(&mem, pc, &instr, handlers, num_handlers);
+			/* BRK uses 2-byte convention (opcode + pad), even though encode writes 1 */
+			if (strcmp(instr.op, "BRK") == 0)
+				pc += 2;
+			else if (enc > 0)
+				pc += enc;
+			else
+				pc += get_instruction_length(instr.mode);
 		}
 	}
 	fclose(f);
 
-	if (cpu_type == CPU_65C02) { handlers = opcodes_65c02; num_handlers = OPCODES_65C02_COUNT; }
-	else if (cpu_type == CPU_65CE02) { handlers = opcodes_65ce02; num_handlers = OPCODES_65CE02_COUNT; }
-	else if (cpu_type == CPU_45GS02) {
-		handlers = opcodes_45gs02;
-		num_handlers = OPCODES_45GS02_COUNT;
-	}
-	else if (cpu_type == CPU_6502_UNDOCUMENTED) { handlers = opcodes_6502_undoc; num_handlers = OPCODES_6502_UNDOC_COUNT; }
+	/* Build byte-indexed dispatch table */
+	dispatch_table_t dt;
+	dispatch_build(&dt, handlers, num_handlers, cpu_type);
 
-	cpu_t cpu; cpu_init(&cpu); if (start_addr_provided) cpu.pc = start_addr;
-	memory_t mem; memset(&mem, 0, sizeof(mem));
 	if (enable_trace && trace_file) trace_enable_file(&trace_info, trace_file);
 	else if (enable_trace) trace_enable_stdout(&trace_info);
 
-	if (interactive_mode) { run_interactive_mode(&cpu, &mem, rom, &handlers, &num_handlers, start_addr_provided ? start_addr : 0, &breakpoints, &symbols); return 0; }
+	if (interactive_mode) { run_interactive_mode(&cpu, &mem, rom, &handlers, &num_handlers, &cpu_type, &dt, start_addr_provided ? start_addr : 0, &breakpoints, &symbols); return 0; }
 
 	printf("\nStarting execution at 0x%04X...\n", cpu.pc);
 	while (cpu.cycles < 100000) {
 		int tr = handle_trap(&symbols, &cpu, &mem, handlers);
 		if (tr < 0) break;	/* bad return address — halt */
 		if (tr > 0) continue;
-		instruction_t instr = rom[cpu.pc];
-		if (!instr.op[0] || strcmp(instr.op, "BRK") == 0 || strcmp(instr.op, "STP") == 0 || breakpoint_hit(&breakpoints, cpu.pc)) break;
-		if (trace_info.enabled) trace_instruction_full(&trace_info, &cpu, instr.op, mode_name(instr.mode), cpu.cycles);
-		execute(&cpu, &mem, &instr, handlers, num_handlers);
+		unsigned char opc = mem_read(&mem, cpu.pc);
+		if (opc == 0x00) break;  /* BRK halts */
+		/* Check dispatch table for halt instructions (STP etc.) */
+		const dispatch_entry_t *te = &dt.base[opc];
+		if (te->mnemonic && strcmp(te->mnemonic, "STP") == 0) break;
+		if (breakpoint_hit(&breakpoints, cpu.pc)) break;
+		if (trace_info.enabled) {
+			const char *mn = te->mnemonic ? te->mnemonic : "???";
+			trace_instruction_full(&trace_info, &cpu, mn, mode_name(te->mode), cpu.cycles);
+		}
+		execute_from_mem(&cpu, &mem, &dt, cpu_type);
 	}
 	printf("\nExecution Finished.\n");
 	if (cpu_type == CPU_45GS02)
