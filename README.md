@@ -12,6 +12,7 @@ Help with this development by contributing and buy me coffee at : https://kodeco
 - ✅ **Accurate Cycle Counting**: Real cycle-accurate timing
 - ✅ **Full Memory Space**: 64KB addressable memory
 - ✅ **Flag Management**: All processor flags (N, V, B, D, I, Z, C)
+- ✅ **Self-Modifying Code**: Full support for programs that modify their own instructions at runtime
 
 ### Debugging Features (Phase 1)
 - ✅ **Breakpoints**: Set up to 16 breakpoints per run
@@ -90,6 +91,13 @@ The server exposes the following tools:
 - `read_memory(address, length)`: Hex dump of memory range.
 - `write_memory(address, value)`: Write byte to memory.
 - `reset_cpu()`: Reset to initial state.
+- `run_program()`: Run until a breakpoint, BRK, or STP instruction.
+- `set_breakpoint(address)`: Set a breakpoint at the given address.
+- `clear_breakpoint(address)`: Remove a breakpoint.
+- `list_breakpoints()`: List all active breakpoints.
+- `list_processors()`: List all supported processor types.
+- `set_processor(type)`: Switch processor architecture (e.g. `45gs02`).
+- `get_opcode_info(mnemonic)`: Show addressing modes and cycles for an opcode.
 
 ## Installation
 
@@ -314,12 +322,12 @@ $ ./sim6502 -I examples/hello.asm
 6502 Simulator Interactive Mode
 Type 'help' for commands.
 > regs
-REGS A=00 X=00 Y=00 S=FF P=00 PC=0801 Cycles=0
+REGS A=00 X=00 Y=00 S=FF P=00 PC=0200 Cycles=0
 FLAGS N=0 V=0 B=0 D=0 I=0 Z=0 C=0
 > step
-STOP 0803
+STOP 0202
 > regs
-REGS A=41 X=00 Y=00 S=FF P=00 PC=0803 Cycles=2
+REGS A=41 X=00 Y=00 S=FF P=00 PC=0202 Cycles=2
 ...
 ```
 
@@ -530,7 +538,7 @@ For issues, questions, or feature requests, please create an issue or consult th
 ---
 
 **Version**: 2.0  
-**Last Updated**: 2026-02-02  
+**Last Updated**: 2026-02-28
 **Status**: Production Ready ✅
 
 Perfect for:
