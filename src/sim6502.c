@@ -581,6 +581,26 @@ static void dispatch_build(dispatch_table_t *dt,
 	}
 }
 
+/* Return the dispatch entry for the instruction at cpu->pc without executing.
+ * Peeks past $42 $42 and $42 $42 $EA prefixes for 45GS02. */
+static const dispatch_entry_t *peek_dispatch(const cpu_t *cpu, const memory_t *mem,
+		const dispatch_table_t *dt, cpu_type_t cpu_type) {
+	unsigned char byte0 = mem_read((memory_t *)mem, cpu->pc);
+	if (cpu_type == CPU_45GS02 && byte0 == 0x42) {
+		unsigned char byte1 = mem_read((memory_t *)mem, (unsigned short)(cpu->pc + 1));
+		if (byte1 == 0x42) {
+			unsigned char byte2 = mem_read((memory_t *)mem, (unsigned short)(cpu->pc + 2));
+			if (byte2 == 0xEA) {
+				unsigned char byte3 = mem_read((memory_t *)mem, (unsigned short)(cpu->pc + 3));
+				if (dt->quad_eom[byte3].fn) return &dt->quad_eom[byte3];
+			} else {
+				if (dt->quad[byte2].fn) return &dt->quad[byte2];
+			}
+		}
+	}
+	return &dt->base[byte0];
+}
+
 /* Fetch opcode from mem[], dispatch via table, execute.
  * Handles 45GS02 NEG NEG ($42 $42) quad prefix and $42 $42 $EA quad-flat. */
 static void execute_from_mem(cpu_t *cpu, memory_t *mem,
@@ -747,6 +767,8 @@ static void run_interactive_mode(cpu_t *cpu, memory_t *mem, instruction_t *rom,
                 if (tr > 0) continue;
                 unsigned char opc = mem_read(mem, cpu->pc);
                 if (opc == 0x00) break;  /* BRK */
+                const dispatch_entry_t *te = peek_dispatch(cpu, mem, dt, *p_cpu_type);
+                if (te->mnemonic && strcmp(te->mnemonic, "STP") == 0) break;
                 if (breakpoint_hit(breakpoints, cpu->pc)) break;
                 execute_from_mem(cpu, mem, dt, *p_cpu_type);
                 if (cpu->cycles > 100000000) break;
@@ -973,7 +995,7 @@ int main(int argc, char *argv[]) {
 	if (enable_trace && trace_file) trace_enable_file(&trace_info, trace_file);
 	else if (enable_trace) trace_enable_stdout(&trace_info);
 
-	if (interactive_mode) { run_interactive_mode(&cpu, &mem, rom, &handlers, &num_handlers, &cpu_type, &dt, start_addr_provided ? start_addr : 0, &breakpoints, &symbols); return 0; }
+	if (interactive_mode) { run_interactive_mode(&cpu, &mem, rom, &handlers, &num_handlers, &cpu_type, &dt, start_addr_provided ? start_addr : 0x0200, &breakpoints, &symbols); return 0; }
 
 	printf("\nStarting execution at 0x%04X...\n", cpu.pc);
 	while (cpu.cycles < 100000) {
@@ -982,8 +1004,7 @@ int main(int argc, char *argv[]) {
 		if (tr > 0) continue;
 		unsigned char opc = mem_read(&mem, cpu.pc);
 		if (opc == 0x00) break;  /* BRK halts */
-		/* Check dispatch table for halt instructions (STP etc.) */
-		const dispatch_entry_t *te = &dt.base[opc];
+		const dispatch_entry_t *te = peek_dispatch(&cpu, &mem, &dt, cpu_type);
 		if (te->mnemonic && strcmp(te->mnemonic, "STP") == 0) break;
 		if (breakpoint_hit(&breakpoints, cpu.pc)) break;
 		if (trace_info.enabled) {
