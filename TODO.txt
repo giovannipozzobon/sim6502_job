@@ -15,8 +15,8 @@ This document outlines suggested next steps, feature enhancements, and technical
     *   [ ] Verify/Complete: MAP (0x5C stub), NEG (0x42), RTN (0x62).
     *   [X] EOM Prefix Logic (quad-flat): execute_from_mem() now detects $42 $42 $EA $base (quad-flat) vs $42 $42 $base (quad) and sets eom_prefix=2 directly; dispatch_table_t gained quad_eom[256] for routing.
 *   [ ] 45GS02 Architectural Features:
-    *   16-bit Stack Pointer: Update `cpu_t` to support 16-bit `S` register and implementation of CLE/SEE (E flag).
-    *   E Flag (Extended Stack): Implement bit 5 of the status register to toggle 16-bit stack.
+    *   [X] 16-bit Stack Pointer: `cpu_t.s` widened to `unsigned short`; CLE/SEE now functionally switch between emulation (E=1, page-1 stack) and extended (E=0, full 16-bit SP) modes. All 45GS02 stack operations are E-flag-aware. 45GS02 initialises with E=1 (emulation mode) matching real hardware reset behaviour.
+    *   [X] E Flag (Extended Stack): Bit 5 of P toggles 16-bit vs 8-bit stack via CLE/SEE.
     *   32-bit Address Support: Implement the 45GS02's ability to access up to 1MB/4GB via MAP and EOM instructions.
 *   [ ] Decimal Mode Accuracy: Ensure ADC/SBC correctly handle the D flag across all CPU variants (6502 vs 65C02 differences).
 *   [ ] Cycle Accuracy: Refine cycle counts for page crossings, branch success/failure, and 65CE02/45GS02 specific timing.

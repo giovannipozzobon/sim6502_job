@@ -1,5 +1,26 @@
 #include "opcodes.h"
 
+/* 45GS02 16-bit stack helpers.
+ * E=1 (emulation): 8-bit SP, stack on page 1 (0x0100-0x01FF), wraps at 0xFF.
+ * E=0 (extended):  16-bit SP, stack can be anywhere in 64KB. */
+static inline unsigned short stack45_addr(cpu_t *cpu) {
+	return get_flag(cpu, FLAG_E) ? (0x0100 | (cpu->s & 0xFF)) : cpu->s;
+}
+
+static inline void stack45_push(cpu_t *cpu) {
+	if (get_flag(cpu, FLAG_E))
+		cpu->s = (cpu->s & 0xFF00) | ((cpu->s - 1) & 0xFF);
+	else
+		cpu->s--;
+}
+
+static inline void stack45_pop(cpu_t *cpu) {
+	if (get_flag(cpu, FLAG_E))
+		cpu->s = (cpu->s & 0xFF00) | ((cpu->s + 1) & 0xFF);
+	else
+		cpu->s++;
+}
+
 static void ldz_imm(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->z = arg & 0xFF;
 	update_nz(cpu, cpu->z);
@@ -56,7 +77,7 @@ static void cpz_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 }
 
 static void tsy(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	cpu->y = cpu->s;
+	cpu->y = (unsigned char)cpu->s;  /* low byte of 16-bit SP */
 	update_nz(cpu, cpu->y);
 	cpu->cycles += 2;
 	cpu->pc += 1;
@@ -210,34 +231,34 @@ static void inw_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 }
 
 static void phw_imm(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	mem_write(mem, 0x100 + cpu->s, (arg >> 8) & 0xFF);
-	cpu->s--;
-	mem_write(mem, 0x100 + cpu->s, arg & 0xFF);
-	cpu->s--;
+	mem_write(mem, stack45_addr(cpu), (arg >> 8) & 0xFF);
+	stack45_push(cpu);
+	mem_write(mem, stack45_addr(cpu), arg & 0xFF);
+	stack45_push(cpu);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
 static void phw_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short val = mem_read(mem, arg) | (mem_read(mem, arg + 1) << 8);
-	mem_write(mem, 0x100 + cpu->s, (val >> 8) & 0xFF);
-	cpu->s--;
-	mem_write(mem, 0x100 + cpu->s, val & 0xFF);
-	cpu->s--;
+	mem_write(mem, stack45_addr(cpu), (val >> 8) & 0xFF);
+	stack45_push(cpu);
+	mem_write(mem, stack45_addr(cpu), val & 0xFF);
+	stack45_push(cpu);
 	cpu->cycles += 5;
 	cpu->pc += 3;
 }
 
 static void phz(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	mem_write(mem, 0x100 + cpu->s, cpu->z);
-	cpu->s--;
+	mem_write(mem, stack45_addr(cpu), cpu->z);
+	stack45_push(cpu);
 	cpu->cycles += 3;
 	cpu->pc += 1;
 }
 
 static void plz(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	cpu->s++;
-	cpu->z = mem_read(mem, 0x100 + cpu->s);
+	stack45_pop(cpu);
+	cpu->z = mem_read(mem, stack45_addr(cpu));
 	update_nz(cpu, cpu->z);
 	cpu->cycles += 4;
 	cpu->pc += 1;
@@ -421,7 +442,7 @@ static void eor_zp_ind_z(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 }
 
 static void lda_sp_ind_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	unsigned short ptr_addr = (0x100 + cpu->s + (arg & 0xFF)) & 0xFFFF;
+	unsigned short ptr_addr = (stack45_addr(cpu) + (arg & 0xFF)) & 0xFFFF;
 	unsigned short addr = mem_read(mem, ptr_addr) | (mem_read(mem, (ptr_addr + 1) & 0xFFFF) << 8);
 	cpu->a = mem_read(mem, addr + cpu->y);
 	update_nz(cpu, cpu->a);
@@ -430,7 +451,7 @@ static void lda_sp_ind_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 }
 
 static void sta_sp_ind_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	unsigned short ptr_addr = (0x100 + cpu->s + (arg & 0xFF)) & 0xFFFF;
+	unsigned short ptr_addr = (stack45_addr(cpu) + (arg & 0xFF)) & 0xFFFF;
 	unsigned short addr = mem_read(mem, ptr_addr) | (mem_read(mem, (ptr_addr + 1) & 0xFFFF) << 8);
 	mem_write(mem, addr + cpu->y, cpu->a);
 	cpu->cycles += 6;
@@ -439,10 +460,10 @@ static void sta_sp_ind_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 static void jsr_ind(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short ret = cpu->pc + 2;
-	mem_write(mem, 0x100 + cpu->s, (ret >> 8) & 0xFF);
-	cpu->s--;
-	mem_write(mem, 0x100 + cpu->s, ret & 0xFF);
-	cpu->s--;
+	mem_write(mem, stack45_addr(cpu), (ret >> 8) & 0xFF);
+	stack45_push(cpu);
+	mem_write(mem, stack45_addr(cpu), ret & 0xFF);
+	stack45_push(cpu);
 	unsigned short addr = mem_read(mem, arg) | (mem_read(mem, arg + 1) << 8);
 	cpu->pc = addr;
 	cpu->cycles += 5;
@@ -450,21 +471,26 @@ static void jsr_ind(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 static void jsr_ind_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short ret = cpu->pc + 2;
-	mem_write(mem, 0x100 + cpu->s, (ret >> 8) & 0xFF);
-	cpu->s--;
-	mem_write(mem, 0x100 + cpu->s, ret & 0xFF);
-	cpu->s--;
+	mem_write(mem, stack45_addr(cpu), (ret >> 8) & 0xFF);
+	stack45_push(cpu);
+	mem_write(mem, stack45_addr(cpu), ret & 0xFF);
+	stack45_push(cpu);
 	unsigned short addr = mem_read(mem, arg + cpu->x) | (mem_read(mem, arg + cpu->x + 1) << 8);
 	cpu->pc = addr;
 	cpu->cycles += 5;
 }
 
 static void rtn(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	cpu->s++;
-	unsigned short lo = mem_read(mem, 0x100 + cpu->s);
-	cpu->s++;
-	unsigned short hi = mem_read(mem, 0x100 + cpu->s);
-	cpu->s += arg & 0xFF; /* discard stack-frame parameters */
+	stack45_pop(cpu);
+	unsigned short lo = mem_read(mem, stack45_addr(cpu));
+	stack45_pop(cpu);
+	unsigned short hi = mem_read(mem, stack45_addr(cpu));
+	/* Discard stack-frame parameters, respecting stack mode */
+	unsigned char n = arg & 0xFF;
+	if (get_flag(cpu, FLAG_E))
+		cpu->s = (cpu->s & 0xFF00) | ((cpu->s + n) & 0xFF);
+	else
+		cpu->s += n;
 	cpu->pc = (hi << 8) | lo;
 	cpu->pc++; /* return address is stored as addr-1, same as RTS */
 	cpu->cycles += 6;
@@ -479,10 +505,10 @@ static void bra_relfar(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void bsr_relfar(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	/* Push return address (last byte of BSR instruction) */
 	unsigned short ret = cpu->pc + 2;
-	mem_write(mem, 0x100 + cpu->s, (ret >> 8) & 0xFF);
-	cpu->s--;
-	mem_write(mem, 0x100 + cpu->s, ret & 0xFF);
-	cpu->s--;
+	mem_write(mem, stack45_addr(cpu), (ret >> 8) & 0xFF);
+	stack45_push(cpu);
+	mem_write(mem, stack45_addr(cpu), ret & 0xFF);
+	stack45_push(cpu);
 	/* 16-bit relative branch */
 	cpu->pc += (short)arg + 3;
 	cpu->cycles += 4;
@@ -835,11 +861,11 @@ static void bra_rel(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->cycles += 3;
 }
 
-/* PHP on 45GS02: bit 5 is not the unused/always-1 bit (it has a different
- * meaning in this architecture), so we do not force it to 1. */
+/* PHP on 45GS02: bit 5 is the E flag (not the unused/always-1 bit), so we
+ * do not force it to 1.  Stack address respects the current E flag mode. */
 static void php_45gs02(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	mem_write(mem, 0x100 + cpu->s, cpu->p | FLAG_B);
-	cpu->s--;
+	mem_write(mem, stack45_addr(cpu), cpu->p | FLAG_B);
+	stack45_push(cpu);
 	cpu->cycles += 3;
 	cpu->pc += 1;
 }
@@ -1338,18 +1364,84 @@ extern void tay(cpu_t *cpu, memory_t *mem, unsigned short arg);
 extern void tya(cpu_t *cpu, memory_t *mem, unsigned short arg);
 extern void tsx(cpu_t *cpu, memory_t *mem, unsigned short arg);
 extern void txs(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void pha(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void pla(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void php(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void plp(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void phx(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void plx(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void phy(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void ply(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void brk(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void rti(cpu_t *cpu, memory_t *mem, unsigned short arg);
 extern void eom(cpu_t *cpu, memory_t *mem, unsigned short arg);
 extern void nop(cpu_t *cpu, memory_t *mem, unsigned short arg);
+
+/* 45GS02 E-flag-aware stack operations — replace shared 6502 versions. */
+static void pha_45gs02(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	mem_write(mem, stack45_addr(cpu), cpu->a);
+	stack45_push(cpu);
+	cpu->cycles += 3;
+	cpu->pc += 1;
+}
+
+static void pla_45gs02(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	stack45_pop(cpu);
+	cpu->a = mem_read(mem, stack45_addr(cpu));
+	update_nz(cpu, cpu->a);
+	cpu->cycles += 4;
+	cpu->pc += 1;
+}
+
+static void plp_45gs02(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	stack45_pop(cpu);
+	cpu->p = mem_read(mem, stack45_addr(cpu));
+	cpu->cycles += 4;
+	cpu->pc += 1;
+}
+
+static void phx_45gs02(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	mem_write(mem, stack45_addr(cpu), cpu->x);
+	stack45_push(cpu);
+	cpu->cycles += 3;
+	cpu->pc += 1;
+}
+
+static void plx_45gs02(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	stack45_pop(cpu);
+	cpu->x = mem_read(mem, stack45_addr(cpu));
+	update_nz(cpu, cpu->x);
+	cpu->cycles += 4;
+	cpu->pc += 1;
+}
+
+static void phy_45gs02(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	mem_write(mem, stack45_addr(cpu), cpu->y);
+	stack45_push(cpu);
+	cpu->cycles += 3;
+	cpu->pc += 1;
+}
+
+static void ply_45gs02(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	stack45_pop(cpu);
+	cpu->y = mem_read(mem, stack45_addr(cpu));
+	update_nz(cpu, cpu->y);
+	cpu->cycles += 4;
+	cpu->pc += 1;
+}
+
+static void brk_45gs02(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	cpu->cycles += 7;
+	cpu->pc += 2;
+	mem_write(mem, stack45_addr(cpu), (cpu->pc >> 8) & 0xFF);
+	stack45_push(cpu);
+	mem_write(mem, stack45_addr(cpu), cpu->pc & 0xFF);
+	stack45_push(cpu);
+	set_flag(cpu, FLAG_B, 1);
+	mem_write(mem, stack45_addr(cpu), cpu->p);
+	stack45_push(cpu);
+	set_flag(cpu, FLAG_I, 1);
+}
+
+static void rti_45gs02(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	stack45_pop(cpu);
+	cpu->p = mem_read(mem, stack45_addr(cpu));
+	stack45_pop(cpu);
+	unsigned short ret = mem_read(mem, stack45_addr(cpu));
+	stack45_pop(cpu);
+	ret |= mem_read(mem, stack45_addr(cpu)) << 8;
+	cpu->pc = ret;
+}
 
 opcode_handler_t opcodes_45gs02[] = {
 	{"LDA", MODE_IMMEDIATE, lda_imm, 2, 0, 0, 0, {0xA9}, 1},
@@ -1588,16 +1680,16 @@ opcode_handler_t opcodes_45gs02[] = {
 	{"TYA", MODE_IMPLIED, tya, 2, 0, 0, 0, {0x98}, 1},
 	{"TSX", MODE_IMPLIED, tsx, 2, 0, 0, 0, {0xBA}, 1},
 	{"TXS", MODE_IMPLIED, txs, 2, 0, 0, 0, {0x9A}, 1},
-	{"PHA", MODE_IMPLIED, pha, 3, 0, 0, 0, {0x48}, 1},
-	{"PLA", MODE_IMPLIED, pla, 4, 0, 0, 0, {0x68}, 1},
-	{"PHX", MODE_IMPLIED, phx, 3, 0, 0, 0, {0xDA}, 1},
-	{"PLX", MODE_IMPLIED, plx, 4, 0, 0, 0, {0xFA}, 1},
-	{"PHY", MODE_IMPLIED, phy, 3, 0, 0, 0, {0x5A}, 1},
-	{"PLY", MODE_IMPLIED, ply, 4, 0, 0, 0, {0x7A}, 1},
+	{"PHA", MODE_IMPLIED, pha_45gs02, 3, 0, 0, 0, {0x48}, 1},
+	{"PLA", MODE_IMPLIED, pla_45gs02, 4, 0, 0, 0, {0x68}, 1},
+	{"PHX", MODE_IMPLIED, phx_45gs02, 3, 0, 0, 0, {0xDA}, 1},
+	{"PLX", MODE_IMPLIED, plx_45gs02, 4, 0, 0, 0, {0xFA}, 1},
+	{"PHY", MODE_IMPLIED, phy_45gs02, 3, 0, 0, 0, {0x5A}, 1},
+	{"PLY", MODE_IMPLIED, ply_45gs02, 4, 0, 0, 0, {0x7A}, 1},
 	{"PHP", MODE_IMPLIED, php_45gs02, 3, 0, 0, 0, {0x08}, 1},
-	{"PLP", MODE_IMPLIED, plp, 4, 0, 0, 0, {0x28}, 1},
-	{"BRK", MODE_IMPLIED, brk, 7, 0, 0, 0, {0x00}, 1},
-	{"RTI", MODE_IMPLIED, rti, 6, 0, 0, 0, {0x40}, 1},
+	{"PLP", MODE_IMPLIED, plp_45gs02, 4, 0, 0, 0, {0x28}, 1},
+	{"BRK", MODE_IMPLIED, brk_45gs02, 7, 0, 0, 0, {0x00}, 1},
+	{"RTI", MODE_IMPLIED, rti_45gs02, 6, 0, 0, 0, {0x40}, 1},
 	{"EOM", MODE_IMPLIED, eom, 2, 0, 0, 0, {0xEA}, 1},
 	{"NOP", MODE_IMPLIED, nop, 2, 0, 0, 0, {0xEA}, 0},
 	/* Quad (32-bit) instructions - NEG NEG ($42 $42) prefix */

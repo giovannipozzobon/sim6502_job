@@ -20,7 +20,7 @@ typedef struct {
 	unsigned char y;
 	unsigned char z;      /* 45GS02 only */
 	unsigned char b;      /* 45GS02 only */
-	unsigned char s;
+	unsigned short s;     /* 16-bit on 45GS02; 8-bit (page 1) on others */
 	unsigned short pc;
 	unsigned char p;
 	unsigned long cycles;  /* Clock cycles executed */

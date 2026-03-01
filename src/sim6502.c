@@ -729,7 +729,7 @@ static void run_interactive_mode(cpu_t *cpu, memory_t *mem, instruction_t *rom,
                 else if (strcmp(reg, "Y") == 0 || strcmp(reg, "y") == 0) cpu->y = (unsigned char)val;
                 else if (strcmp(reg, "Z") == 0 || strcmp(reg, "z") == 0) cpu->z = (unsigned char)val;
                 else if (strcmp(reg, "B") == 0 || strcmp(reg, "b") == 0) cpu->b = (unsigned char)val;
-                else if (strcmp(reg, "S") == 0 || strcmp(reg, "s") == 0 || strcmp(reg, "SP") == 0 || strcmp(reg, "sp") == 0) cpu->s = (unsigned char)val;
+                else if (strcmp(reg, "S") == 0 || strcmp(reg, "s") == 0 || strcmp(reg, "SP") == 0 || strcmp(reg, "sp") == 0) cpu->s = (unsigned short)val;
                 else if (strcmp(reg, "P") == 0 || strcmp(reg, "p") == 0) cpu->p = (unsigned char)val;
                 else if (strcmp(reg, "PC") == 0 || strcmp(reg, "pc") == 0) cpu->pc = (unsigned short)val;
                 else printf("Unknown register: %s\n", reg);
@@ -808,6 +808,7 @@ static void run_interactive_mode(cpu_t *cpu, memory_t *mem, instruction_t *rom,
             if (sscanf(line + 5, "%x %x", &addr, &val) == 2) mem_write(mem, addr, (unsigned char)val);
         } else if (strcmp(cmd, "reset") == 0) {
             cpu_init(cpu); cpu->pc = start_addr;
+            if (*p_cpu_type == CPU_45GS02) set_flag(cpu, FLAG_E, 1);
         } else if (strcmp(cmd, "step") == 0) {
             int steps = 1;
             if (sscanf(line + 4, "%d", &steps) != 1) steps = 1;
@@ -966,6 +967,8 @@ int main(int argc, char *argv[]) {
 	else if (cpu_type == CPU_6502_UNDOCUMENTED) { handlers = opcodes_6502_undoc; num_handlers = OPCODES_6502_UNDOC_COUNT; }
 
 	cpu_t cpu; cpu_init(&cpu); cpu.pc = start_addr_provided ? start_addr : 0x0200;
+	/* 45GS02 resets in emulation mode (E=1): 8-bit SP on page 1, compatible with 6502 */
+	if (cpu_type == CPU_45GS02) set_flag(&cpu, FLAG_E, 1);
 	memory_t mem; memset(&mem, 0, sizeof(mem));
 
 	/* Second pass: populate rom[] and encode bytes into mem[] */
