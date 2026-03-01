@@ -900,7 +900,16 @@ static void run_interactive_mode(cpu_t *cpu, memory_t *mem, instruction_t *rom,
     while (1) {
         printf("> ");
         if (!fgets(line, sizeof(line), stdin)) break;
-        if (sscanf(line, "%31s", cmd) != 1) continue;
+        if (sscanf(line, "%31s", cmd) != 1) {
+            /* blank / whitespace-only line: single step */
+            int tr = handle_trap(symbols, cpu, mem, *p_handlers);
+            if (tr == 0) {
+                unsigned char opc = mem_read(mem, cpu->pc);
+                if (opc != 0x00) execute_from_mem(cpu, mem, dt, *p_cpu_type);
+            }
+            printf("STOP %04X\n", cpu->pc);
+            continue;
+        }
         
         if (strcmp(cmd, "quit") == 0 || strcmp(cmd, "exit") == 0) break;
         else if (strcmp(cmd, "help") == 0) {
@@ -1147,13 +1156,19 @@ int main(int argc, char *argv[]) {
 	else if (cpu_type == CPU_6502_UNDOCUMENTED) { handlers = opcodes_6502_undoc; num_handlers = OPCODES_6502_UNDOC_COUNT; }
 
 	if (info_mnemonic) { print_opcode_info(handlers, num_handlers, info_mnemonic); return 0; }
-	if (!filename) { fprintf(stderr, "Usage: %s [options] <file.asm>\n", argv[0]); return 1; }
+	/* A filename is required only when not entering interactive mode */
+	if (!filename && !interactive_mode) { fprintf(stderr, "Usage: %s [options] <file.asm>\n", argv[0]); return 1; }
 
 	if (symbol_file) symbol_load_file(&symbols, symbol_file);
+
+	cpu_t cpu;
+	memory_t mem; memset(&mem, 0, sizeof(mem));
+
+	char line[512];
+	if (filename) {
 	FILE *f = fopen(filename, "r");
 	if (!f) { perror("fopen"); return 1; }
 
-	char line[512];
 	int pc = start_addr_provided ? start_addr : 0x0200;
 	while (fgets(line, sizeof(line), f)) {
 		char *ptr = line;
@@ -1194,10 +1209,9 @@ int main(int argc, char *argv[]) {
 	else if (cpu_type == CPU_45GS02) { handlers = opcodes_45gs02; num_handlers = OPCODES_45GS02_COUNT; }
 	else if (cpu_type == CPU_6502_UNDOCUMENTED) { handlers = opcodes_6502_undoc; num_handlers = OPCODES_6502_UNDOC_COUNT; }
 
-	cpu_t cpu; cpu_init(&cpu); cpu.pc = start_addr_provided ? start_addr : 0x0200;
+	cpu_init(&cpu); cpu.pc = start_addr_provided ? start_addr : 0x0200;
 	/* 45GS02 resets in emulation mode (E=1): 8-bit SP on page 1, compatible with 6502 */
 	if (cpu_type == CPU_45GS02) set_flag(&cpu, FLAG_E, 1);
-	memory_t mem; memset(&mem, 0, sizeof(mem));
 
 	/* Second pass: populate rom[] and encode bytes into mem[] */
 	rewind(f);
@@ -1228,6 +1242,11 @@ int main(int argc, char *argv[]) {
 		}
 	}
 	fclose(f);
+	} else {
+		/* Interactive mode with no source file: initialise CPU from command-line options only */
+		cpu_init(&cpu); cpu.pc = start_addr_provided ? start_addr : 0x0200;
+		if (cpu_type == CPU_45GS02) set_flag(&cpu, FLAG_E, 1);
+	}
 
 	/* Build byte-indexed dispatch table */
 	dispatch_table_t dt;

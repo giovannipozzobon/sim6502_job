@@ -1,76 +1,361 @@
-# 6502 Simulator - Professional 6502 Development & Debugging Platform
+# 6502 Simulator
 
-A complete, feature-rich simulator for 6502 and compatible processors (65C02, 65CE02, 45GS02) with professional debugging tools, symbol table support, and predefined memory maps for Commodore systems.
+A single-pass assembler and executor for 6502 and compatible processors, with an interactive monitor, symbol table support, and an MCP server for LLM integration.
 
-Help with this development by contributing and buy me coffee at : https://kodecoffee.com/i/ctalkobt
+Help with this development by contributing and buy me coffee at: https://kodecoffee.com/i/ctalkobt
+
+---
+
+## Table of Contents
+
+1. [Features](#features)
+2. [Building](#building)
+3. [Quick Start](#quick-start)
+4. [Command-Line Options](#command-line-options)
+5. [Assembler Syntax](#assembler-syntax)
+6. [Interactive Monitor](#interactive-monitor)
+7. [Symbol Tables](#symbol-tables)
+8. [MCP Server](#mcp-server)
+9. [File Structure](#file-structure)
+10. [Known Limitations](#known-limitations)
+
+---
 
 ## Features
 
-### Core Simulation
-- ✅ **5 Processor Variants**: 6502, 6502 (undocumented), 65C02, 65CE02, 45GS02
-- ✅ **240+ Opcodes**: Complete instruction set support
-- ✅ **Accurate Cycle Counting**: Real cycle-accurate timing
-- ✅ **Full Memory Space**: 64KB addressable memory
-- ✅ **Flag Management**: All processor flags (N, V, B, D, I, Z, C)
-- ✅ **Self-Modifying Code**: Full support for programs that modify their own instructions at runtime
+### Processor Variants
 
-### Debugging Features (Phase 1)
-- ✅ **Breakpoints**: Set up to 16 breakpoints per run
-- ✅ **Execution Trace**: Log every instruction with cycle count
-- ✅ **Register Display**: View all registers and flags
-- ✅ **Memory Tracking**: Monitor all memory writes
+| Flag | Processor | Notes |
+|------|-----------|-------|
+| `6502` | NMOS 6502 | Standard documented opcodes |
+| `6502-undoc` | NMOS 6502 | Includes undocumented/illegal opcodes |
+| `65c02` | CMOS 65C02 | WDC extensions (BIT imm, STZ, TRB, TSB, …) |
+| `65ce02` | CSG 65CE02 | Adds Z register, B register, 16-bit branches, word ops |
+| `45gs02` | MEGA65 45GS02 | Full 32-bit quad instructions via `$42 $42` prefix, MAP, flat addressing |
 
-### Analysis Features (Phase 2)
-- ✅ **Memory Inspector**: View memory ranges in hex + ASCII
-- ✅ **Memory Statistics**: Analyze memory usage
-- ✅ **Interrupt Handling**: Simulate IRQ, NMI, BRK interrupts
-- ✅ **Stack Analysis**: Monitor stack operations
+### Assembler
 
-### Symbol Table Support (Phase 3) ⭐ NEW
-- ✅ **Custom Symbol Tables**: Load from text files
-- ✅ **Preset Architectures**: C64, C128, Mega65, Commander X16
-- ✅ **Symbol Display**: View all loaded symbols with descriptions
-- ✅ **Multiple Symbol Types**: Labels, Variables, Functions, I/O Ports, Memory Regions, Traps
-- ✅ **ROM Trapping**: Intercept JSR calls to ROM addresses — dumps registers and simulates RTS without needing real ROM code
+The simulator includes a two-pass assembler that runs before execution:
 
-## Model Context Protocol (MCP) Server ⭐ NEW
+- **Forward label references** resolved in the second pass
+- **All literal formats**: `$FF` hex, `%10101010` binary, `'A'` character, `123` decimal
+- **Pseudo-ops**: `.processor`, `.org`, `.byte`, `.word`, `.text`, `.align`, `.bin`
 
-The simulator includes a built-in MCP server that allows Large Language Models (LLMs) to interact directly with the 6502 simulation.
+### Debugger / Monitor
 
-### Features
-- **Code Loading**: Dynamically load and compile assembly code.
-- **Step Execution**: Execute instructions one by one or in batches.
-- **State Inspection**: Read registers and memory ranges.
-- **State Modification**: Write directly to memory.
-- **CPU Control**: Reset the simulation state.
+- Up to 16 simultaneous breakpoints
+- Execution trace to stdout or file (every instruction, address, cycle count)
+- Interactive monitor: step, run, inspect/modify registers and memory
+- Interactive mode can be entered **without a source file** (useful for hand-entry or `bload`)
+- ROM **TRAP** intercept: simulate Kernal/ROM calls without loading real ROM
 
-### Installation & Usage
+### Symbol Tables
 
-1. **Build the Simulator**:
-   ```bash
-   make
-   ```
+- Custom `.sym` files (address, name, type, comment)
+- Built-in presets: **C64**, **C128**, **MEGA65**, **Commander X16**
+- Symbol types: `LABEL`, `VAR`, `CONST`, `FUNC`, `IO`, `REGION`, `TRAP`
 
-2. **Setup the MCP Plugin**:
-   ```bash
-   cd plugin-gemini
-   npm install
-   ```
+---
 
-3. **Run the Server**:
-   ```bash
-   node server.js
-   ```
-
-### Configuration for Gemini CLI
-
-The easiest way to add the simulator to Gemini CLI is using the `mcp` command:
+## Building
 
 ```bash
-gemini mcp add 6502-simulator node $(pwd)/plugin-gemini/server.js
+make          # build sim6502 binary
+make test     # build and run test suite
+make clean    # remove object files and binary
 ```
 
-Alternatively, you can manually add it to your Gemini CLI configuration (`.gemini/settings.json` or `~/.gemini/settings.json`):
+Requirements: GCC (or compatible C99 compiler), GNU Make, Linux/macOS.
+
+---
+
+## Quick Start
+
+```bash
+# Assemble and run a file
+./sim6502 examples/hello.asm
+
+# Choose a processor variant
+./sim6502 -p 45gs02 examples/45gs02_test.asm
+
+# Interactive monitor with a source file
+./sim6502 -I examples/hello.asm
+
+# Interactive monitor with no source file (blank memory)
+./sim6502 -I
+
+# Interactive monitor with a preset symbol table, no file
+./sim6502 -I --preset c64
+
+# Enable execution trace
+./sim6502 --trace examples/hello.asm
+./sim6502 --trace trace.log examples/hello.asm
+
+# Set a breakpoint and view memory on exit
+./sim6502 -b 0x0210 -m 0x0200:0x0220 examples/hello.asm
+
+# Load C64 symbols and display them
+./sim6502 --preset c64 --show-symbols examples/hello.asm
+```
+
+---
+
+## Command-Line Options
+
+```
+PROCESSOR SELECTION
+  -p, --processor <CPU>    6502 | 6502-undoc | 65c02 | 65ce02 | 45gs02
+  -l, --list               List all available processor types
+  -o, --opcodes <CPU>      List all opcodes for a processor
+  --info <MNEMONIC>        Show addressing modes and cycle counts for one opcode
+
+EXECUTION
+  -a, --address <ADDR>     Override start address (hex $xxxx, or a label name)
+
+DEBUGGING
+  -I, --interactive        Enter interactive monitor (no source file required)
+  -b, --break <ADDR>       Set a breakpoint (hex address, e.g. 0x1000 or $1000)
+  -t, --trace [FILE]       Enable execution trace; optional output file
+
+MEMORY
+  -m, --mem <START:END>    Hex-dump memory range on exit (e.g. 0x0200:0x0300)
+  -s, --stats              Show memory write statistics on exit
+
+SYMBOL TABLES
+  --symbols <FILE>         Load a custom symbol table file
+  --preset <ARCH>          Load a built-in preset: c64 | c128 | mega65 | x16
+  --show-symbols           Print the loaded symbol table on exit
+
+INTERRUPTS
+  -i, --irq <CYCLES>       Fire an IRQ at the given cycle count
+  -n, --nmi <CYCLES>       Fire an NMI at the given cycle count
+
+OTHER
+  -h, --help               Show help and exit
+```
+
+Programs run from address `$0200` by default unless overridden with `-a`.
+
+Execution stops at a `BRK` instruction, `STP`, a breakpoint, or after 100 000 cycles.
+
+---
+
+## Assembler Syntax
+
+### Literal Formats
+
+```asm
+LDA #$FF        ; hex
+LDA #%11111111  ; binary
+LDA #'A'        ; character (ASCII 65)
+LDA #255        ; decimal
+```
+
+All four formats work everywhere a value is expected: immediate operands, addresses, and pseudo-op arguments.
+
+### Labels
+
+```asm
+loop:
+    DEX
+    BNE loop        ; backward and forward references both work
+
+    JSR my_routine
+
+my_routine:
+    RTS
+```
+
+Labels followed by a colon may also appear on the same line as a pseudo-op:
+
+```asm
+data: .byte 1, 2, 3
+```
+
+### Pseudo-ops
+
+#### `.processor <variant>`
+Select the processor before assembly begins.
+```asm
+.processor 45gs02
+```
+Accepted values: `6502`, `6502 undoc`, `65c02`, `65ce02`, `45gs02`.
+
+#### `.org <addr>`
+Set the program counter to an absolute address.
+```asm
+.org $C000
+```
+
+#### `.byte <val>[, <val>…]`
+Emit one byte per value. Accepts all literal formats and label names (emits the low byte of the label address).
+```asm
+.byte $48, 'e', 108, %01101100, 'o'   ; H e l l o
+```
+
+#### `.word <val>[, <val>…]`
+Emit 16-bit little-endian words. Accepts all literal formats and label names.
+```asm
+vectors:
+    .word reset_handler, irq_handler
+```
+
+#### `.text "string"`
+Emit raw string bytes. No implicit null terminator. Supports escape sequences `\n \r \t \0 \\ \"`.
+```asm
+message: .text "Hello, World!\n"
+```
+
+#### `.align <n>`
+Advance the PC to the next multiple of `n`, padding with zero bytes.
+```asm
+.align 256      ; align to a page boundary
+```
+
+#### `.bin "filename"`
+Include a raw binary file at the current PC. The file is opened relative to the working directory. The assembler reads the file in both passes so that the PC is advanced correctly for forward-reference resolution.
+```asm
+sprite_data: .bin "assets/sprite.bin"
+```
+
+### Processor Directive
+
+`.processor` may appear anywhere in the file and takes effect immediately during assembly. It is most useful on the first line:
+
+```asm
+.processor 45gs02
+.org $2000
+
+    LDQ $10         ; 45GS02 quad load
+    BRK
+```
+
+---
+
+## Interactive Monitor
+
+Enter the monitor with `-I`. A source file is optional — you can start from blank memory and use `bload` or `write` to load code manually.
+
+```bash
+./sim6502 -I                        # blank memory
+./sim6502 -I program.asm            # pre-load and assemble a file
+./sim6502 -I -p 45gs02 --preset mega65   # processor + symbols, no file
+```
+
+**Pressing Enter on a blank line executes a single step** (equivalent to `step`).
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `step [n]` | Execute `n` instructions (default 1). Blank line also steps once. |
+| `run` | Run until BRK, STP, or a breakpoint |
+| `break <addr>` | Set a breakpoint at hex address |
+| `clear <addr>` | Remove a breakpoint |
+| `list` | List all breakpoints |
+| `regs` | Show all registers (A X Y Z B S P PC Cycles) |
+| `mem <addr> [len]` | Hex dump starting at address (default 16 bytes) |
+| `write <addr> <val>` | Write one byte to memory |
+| `bload "file" $addr` | Load a raw binary file into memory at address |
+| `jump <addr>` | Set the Program Counter |
+| `set <reg> <val>` | Set a register (A X Y Z B S P PC) |
+| `flag <flag> <0\|1>` | Set a flag (N V B D I Z C) |
+| `reset` | Reset CPU to program start address |
+| `processor <type>` | Switch active processor type |
+| `processors` | List all processor types |
+| `info <mnemonic>` | Show addressing modes and cycles for an opcode |
+| `help` | Show command summary |
+| `quit` / `exit` | Exit the simulator |
+
+### Example Session
+
+```
+$ ./sim6502 -I
+6502 Simulator Interactive Mode
+Type 'help' for commands.
+> bload "tests/data/three_bytes.bin" $0200
+Loaded 3 bytes at $0200
+> regs
+REGS A=00 X=00 Y=00 S=FF P=00 PC=0200 Cycles=0
+>              <- blank line: single step
+STOP 0201
+>              <- another step
+STOP 0202
+> regs
+REGS A=00 X=00 Y=00 S=FF P=00 PC=0202 Cycles=0
+> mem 200 4
+0200: 42 AB FF 00
+> quit
+```
+
+---
+
+## Symbol Tables
+
+### Preset Architectures
+
+Load with `--preset <name>`:
+
+| Preset | Coverage |
+|--------|----------|
+| `c64` | VIC-II, SID, CIA 1/2, full Kernal jump table (as TRAPs) |
+| `c128` | All C64 symbols plus MMU, VDC, second SID, extended Kernal |
+| `mega65` | 45GS02, Hypervisor, HyperRAM, MEGA65 I/O |
+| `x16` | VERA, PSG, SPI, RTC, GPIO, Commander X16 Kernal |
+
+### Custom Symbol Files
+
+```
+; Format: ADDRESS  NAME  TYPE  [COMMENT]
+; Types: LABEL VAR CONST FUNC IO REGION TRAP
+
+0200  main        LABEL  Program entry point
+1000  data_buf    VAR    256-byte scratch buffer
+d000  vic_base    IO     VIC-II register base
+ffd2  CHROUT      TRAP   Output char in A to current channel
+ffe4  GETIN       TRAP   Get char from keyboard -> A
+```
+
+Load with `--symbols myfile.sym`.
+
+### TRAP Symbols
+
+When the CPU executes `JSR` to a TRAP address the simulator:
+
+1. Prints the register state at the moment of the call
+2. Simulates `RTS` (pops the JSR return address from the stack)
+3. Adds 6 cycles
+
+This lets you test programs that call Kernal/ROM routines without loading actual ROM. If a TRAP address is reached by `JMP` or fall-through instead of `JSR`, the simulator halts with a diagnostic.
+
+```
+[TRAP] CHROUT               $FFD2  A=48 X=00 Y=00 S=FD P=00  ; Output char A to current channel
+[TRAP] CHROUT               $FFD2  A=65 X=00 Y=00 S=FD P=00  ; Output char A to current channel
+```
+
+---
+
+## MCP Server
+
+`plugin-gemini/server.js` is a Node.js MCP server that exposes the simulator to LLMs.
+
+### Setup
+
+```bash
+make                        # build sim6502 first
+cd plugin-gemini
+npm install
+node server.js
+```
+
+### Claude Code Integration
+
+```bash
+# Add via CLI
+claude mcp add 6502-simulator node /path/to/plugin-gemini/server.js
+```
+
+Or add to `~/.claude/settings.json`:
 
 ```json
 {
@@ -83,471 +368,87 @@ Alternatively, you can manually add it to your Gemini CLI configuration (`.gemin
 }
 ```
 
-### MCP Tools
-The server exposes the following tools:
-- `load_program(code)`: Compile and load ASM into the simulator.
-- `step_instruction(count)`: Execute `count` instructions.
-- `read_registers()`: Returns A, X, Y, SP, PC, and Flags.
-- `read_memory(address, length)`: Hex dump of memory range.
-- `write_memory(address, value)`: Write byte to memory.
-- `reset_cpu()`: Reset to initial state.
-- `run_program()`: Run until a breakpoint, BRK, or STP instruction.
-- `set_breakpoint(address)`: Set a breakpoint at the given address.
-- `clear_breakpoint(address)`: Remove a breakpoint.
-- `list_breakpoints()`: List all active breakpoints.
-- `list_processors()`: List all supported processor types.
-- `set_processor(type)`: Switch processor architecture (e.g. `45gs02`).
-- `get_opcode_info(mnemonic)`: Show addressing modes and cycles for an opcode.
-
-## Installation
-
-### Build from Source
-
-```bash
-# Extract archive
-tar -xzf 6502-simulator.tar.gz
-cd 6502-simulator
-
-# Build
-make
-
-# Run
-./sim6502 examples/hello.asm
-```
-
-### Requirements
-- GCC or compatible C compiler
-- Make
-- Linux/macOS/Windows (with appropriate build tools)
-
-## Quick Start
-
-### Basic Execution
-```bash
-./sim6502 program.asm
-```
-
-### With Debugging
-```bash
-./sim6502 -b 0x1000 -t trace.log program.asm
-```
-
-### With Memory View
-```bash
-./sim6502 -m 0x1000:0x1100 program.asm
-```
-
-### With Symbol Table (C64)
-```bash
-./sim6502 --preset c64 --show-symbols program.asm
-```
-
-### With Interrupts
-```bash
-./sim6502 -i 5000 -n 3000 program.asm
-```
-
-### Full Debug Session
-```bash
-./sim6502 \
-  -b 0x2000 \
-  -i 1000 \
-  -m 0x1000:0x2000 \
-  -t trace.log \
-  --preset c64 \
-  --show-symbols \
-  program.asm
-```
-
-### Interactive Debugging
-```bash
-./sim6502 -I program.asm
-```
-
-## Symbol Tables
-
-### Preset Architectures
-
-The simulator includes predefined symbol tables for Commodore systems:
-
-#### Commodore 64 (`--preset c64`)
-- **VIC-II**: Video Controller (sprites, colors, control registers)
-- **SID**: Sound Interface Device (all 3 voices)
-- **CIA 1**: Keyboard and Joystick controller
-- **CIA 2**: Serial and NMI controller
-- **Kernal**: BIOS routines (CHROUT, CHRIN, LOAD, SAVE, etc.)
-- **BASIC**: ROM area
-- **Memory Regions**: Screen, color, stack
-
-#### Commodore 128 (`--preset c128`)
-- **All C64 symbols** (extended)
-- **MMU**: Memory Management Unit
-- **VDC**: Video Display Controller (80-column mode)
-- **Second SID**: Stereo sound support
-- **Banking**: Multiple RAM banks (64KB+)
-- **Extended Kernal**: C128-specific routines
-
-#### Mega65 (`--preset mega65`)
-- **45GS02 CPU**: Extended processor with Z register
-- **Hypervisor**: System management interface
-- **HyperRAM**: Extended memory controller
-- **VERA**: Modern graphics engine (partial)
-- **Bitplanes**: Extended video modes
-- **Fast I/O**: High-speed peripheral access
-
-#### Commander X16 (`--preset x16`)
-- **VERA**: Full Video Retro Architecture
-- **Layers**: Sprite engine, tilemap layers
-- **SPI**: SD card interface
-- **RTC**: Real-time clock
-- **PSG**: Programmable Sound Generator
-- **GPIO**: General Purpose I/O
-- **Modern I/O**: All X16 peripherals
-
-### Custom Symbol Tables
-
-Create your own symbol table file (format: ADDRESS NAME TYPE COMMENT):
-
-```
-; My Symbol Table
-; Format: ADDRESS NAME TYPE COMMENT
-; Types: LABEL, VAR, CONST, FUNC, IO, REGION, TRAP
-
-1000 my_routine FUNC My custom function
-2000 my_data VAR My data area
-d000 vic_base IO VIC controller base
-ffd2 CHROUT TRAP Output char A to current channel
-```
-
-Load with:
-```bash
-./sim6502 --symbols mysymbols.sym program.asm
-```
-
-### TRAP — Intercepting ROM Routines
-
-The `TRAP` symbol type lets you write programs that call ROM addresses (e.g. C64 Kernal routines) without needing actual ROM code loaded. When the PC reaches a TRAPped address, the simulator:
-
-1. Prints a register dump showing the CPU state at the point of call
-2. Simulates an `RTS` — pops the return address left by the caller's `JSR` and resumes execution there
-3. Adds 6 cycles (nominal RTS cost)
-
-If the trap is reached via a `JMP` or fall-through rather than `JSR` (stack return address is `$0000`), execution halts with a diagnostic message.
-
-#### Example output
-
-```
-[TRAP] CHROUT               $FFD2  A=41 X=00 Y=00 S=FD P=00  ; Output char A to current channel
-[TRAP] CHROUT               $FFD2  A=42 X=00 Y=00 S=FD P=00  ; Output char A to current channel
-```
-
-Each line shows the name, address, and full register state at the moment `JSR` transferred control — making it easy to see exactly what arguments your code passed to a ROM routine.
-
-#### Defining TRAPs in a symbol file
-
-```
-; Stub out two C64 Kernal routines
-ffd2 CHROUT TRAP Output char A to current channel
-ffe4 GETIN  TRAP Get char from keyboard queue -> A
-```
-
-The preset `--preset c64` (and `c128`, `mega65`) ship with the full Kernal jump table already defined as TRAPs, so any program that calls standard routines will produce readable intercept output without real ROM.
-
-## Command-Line Options
-
-### Processor Selection
-```
--p, --processor <CPU>    6502, 6502-undoc, 65c02, 65ce02, 45gs02
--l, --list              List available processors
--o, --opcodes <CPU>     List opcodes for processor
-```
-
-### Debugging
-```
--b, --break <ADDR>      Set breakpoint (hex address)
--t, --trace [FILE]      Enable trace (optional: to file)
-```
-
-### Memory
-```
--m, --mem <RANGE>       View memory (0x1000:0x1100)
--s, --stats             Show memory statistics
-```
-
-### Symbol Tables
-```
---symbols <FILE>        Load custom symbol table
---preset <arch>         Load preset: c64, c128, mega65, x16
---show-symbols          Display loaded symbol table
-```
-
-### Interrupts
-```
--i, --irq <CYCLES>      Trigger IRQ at cycle count
--n, --nmi <CYCLES>      Trigger NMI at cycle count
-```
-
-### Other
-```
--I, --interactive       Start in interactive debug mode
--h, --help              Show help message
-```
-
-## Interactive Mode
-
-The simulator provides an interactive debug shell for stepping through code and inspecting state.
-
-### Commands
-- `step [n]`         : Execute `n` instructions (default: 1)
-- `run`              : Execute instructions until a breakpoint or stop condition is met
-- `break <addr>`     : Set a breakpoint at address `addr`
-- `clear <addr>`     : Clear a breakpoint at address `addr`
-- `list`             : List all active breakpoints
-- `regs`             : Show all CPU registers and flags (shows Z and B for 45GS02)
-- `mem <addr> [len]` : Dump memory hex starting at `addr`
-- `write <addr> <val>`: Write byte `val` to memory `addr`
-- `jump <addr>`      : Set Program Counter (PC) to address `addr`
-- `set <reg> <val>`  : Set register `reg` (A, X, Y, Z, B, S, P, PC) to `val`
-- `flag <flag> <0|1>`: Set flag `flag` (C, Z, I, D, B, V, N) to 0 or 1
-- `reset`            : Reset CPU to program start address
-- `processors`       : List all supported processor types
-- `processor <type>` : Change active processor type (e.g., `65c02`)
-- `info <mnemonic>`  : Show addressing modes and cycles for an opcode
-- `help`             : Show command help
-- `quit` / `exit`    : Exit the simulator
-
-### Usage Example
-```bash
-$ ./sim6502 -I examples/hello.asm
-6502 Simulator Interactive Mode
-Type 'help' for commands.
-> regs
-REGS A=00 X=00 Y=00 S=FF P=00 PC=0200 Cycles=0
-FLAGS N=0 V=0 B=0 D=0 I=0 Z=0 C=0
-> step
-STOP 0202
-> regs
-REGS A=41 X=00 Y=00 S=FF P=00 PC=0202 Cycles=2
-...
-```
-
-## Output Examples
-
-### Execution Summary
-```
-6502 Simulator - 6502
-═════════════════════════════════════════════════
-Registers:
-  A: 0x42     X: 0x00     Y: 0x00     S: 0xFF
-  PC: 0x0005   P: 0x00
-
-Processor Flags: N=0 V=0 B=0 D=0 I=0 Z=0 C=0
-
-Execution Statistics:
-  Instructions: 2
-  Cycles: 6
-  Avg: 3.0 cycles/instr
-
-Memory Writes: 1
-  [0x1000] = 0x42
-```
-
-### Memory Dump
-```
-Memory Dump: 0x1000 to 0x1010
-═════════════════════════════════════════════════════════
-Address  | Hex Values                    | ASCII
-1000     | 41 42 43 44 45 46 47 48 | ABCDEFGH
-```
-
-### Symbol Table
-```
-╔════════════════════════════════════════════════════════╗
-║  Symbol Table: symbols/c64.sym                         ║
-╠════════════════════════════════════════════════════════╣
-║ Address  | Name                | Type          | Comment ║
-║ $D000    │ vic_sprite_0_x      │ I/O Port      │ VIC Sprite 0 X ║
-║ $D001    │ vic_sprite_0_y      │ I/O Port      │ VIC Sprite 0 Y ║
-...
-```
-
-## Example Programs
-
-### hello.asm
-```asm
-.processor 6502
-LDA #$41    ; Load 'A'
-STA $1000   ; Store at 0x1000
-LDA #$42    ; Load 'B'
-STA $1001   ; Store at 0x1001
-```
-
-Run:
-```bash
-./sim6502 -m 0x1000:0x1010 hello.asm
-```
-
-Output shows memory containing 0x41, 0x42 (ASCII 'A', 'B').
-
-## Architecture Memory Maps
-
-### Commodore 64
-```
-$0000-$00FF : Zero Page
-$0100-$01FF : Stack
-$0200-$03FF : Input Buffer / Workspace
-$0400-$07FF : Screen Memory
-$0800-$9FFF : BASIC Program Space
-$A000-$BFFF : BASIC ROM
-$C000-$CFFF : BASIC Continuation
-$D000-$DFFF : I/O (VIC, SID, CIA, etc.)
-$E000-$FFFF : Kernal ROM
-```
-
-### Commander X16
-```
-$0000-$00FF : Zero Page
-$0100-$01FF : Stack
-$0200-$03FF : Input Buffer
-$0400-$07FF : Screen Memory (C64 compat)
-$0800-$9EFF : BASIC Program Space
-$9F00-$9FFF : I/O Ports (VERA, SPI, RTC, etc.)
-$A000-$BFFF : BASIC ROM
-$C000-$CFFF : BASIC Extensions
-$D000-$DFFF : Reserved
-$E000-$FFFF : Kernal ROM
-$A0000-$BFFFF : VERA Video RAM (128KB)
-```
-
-## Performance
-
-- **Speed**: 1000s of instructions per second
-- **Accuracy**: Cycle-exact timing
-- **Memory**: < 1 MB runtime
-- **Overhead**: Negligible (<1%) with all features enabled
-
-## Documentation
-
-- **QUICK_START.md** - 5-minute quick start guide
-- **FINAL_SUMMARY.md** - Complete feature overview
-- **PHASE2_COMPLETE_GUIDE.md** - Memory and interrupt details
-- **DEBUGGING_GUIDE.md** - Phase 1 debugging features
-- **MEMORY_INTERRUPT_GUIDE.md** - Phase 2 analysis features
+### Available MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `load_program(code)` | Assemble and load a source string |
+| `step_instruction(count)` | Execute `count` instructions |
+| `read_registers()` | Return all registers |
+| `read_memory(address, length)` | Hex dump |
+| `write_memory(address, value)` | Write one byte |
+| `reset_cpu()` | Reset to initial state |
+| `run_program()` | Run until BRK / STP / breakpoint |
+| `set_breakpoint(address)` | Add a breakpoint |
+| `clear_breakpoint(address)` | Remove a breakpoint |
+| `list_breakpoints()` | List all breakpoints |
+| `list_processors()` | List processor variants |
+| `set_processor(type)` | Switch processor |
+| `get_opcode_info(mnemonic)` | Addressing modes and cycle counts |
+
+---
 
 ## File Structure
 
 ```
 6502-simulator/
 ├── src/
-│   ├── cpu.h              CPU definitions
-│   ├── memory.h           Memory management
-│   ├── opcodes.h          Opcode definitions
-│   ├── breakpoint.h       Breakpoint system
-│   ├── trace.h            Execution trace
-│   ├── memory_viewer.h    Memory inspector
-│   ├── interrupt_manager.h Interrupt handler
-│   ├── symbol_table.h     Symbol table support
-│   ├── sim6502.c          Main simulator
-│   └── opcodes_*.c        Processor implementations
+│   ├── sim6502.c               Main: assembler, executor, monitor, main()
+│   ├── cpu.h                   cpu_t struct, flag/mode constants, BCD helpers
+│   ├── memory.h                64KB + 28-bit sparse memory, MAP translation
+│   ├── opcodes.h               opcode_handler_t struct, extern table declarations
+│   ├── opcodes_6502.c          NMOS 6502 opcode table
+│   ├── opcodes_6502_undoc.c    Undocumented NMOS opcodes
+│   ├── opcodes_65c02.c         CMOS 65C02 extensions
+│   ├── opcodes_65ce02.c        CSG 65CE02 extensions
+│   ├── opcodes_45gs02.c        MEGA65 45GS02 (quad/flat instructions)
+│   ├── breakpoint.h            Breakpoint list
+│   ├── trace.h                 Execution trace
+│   ├── memory_viewer.h         Memory hex dump
+│   ├── interrupt_manager.h     IRQ/NMI injection
+│   └── symbol_table.h          Symbol table (load, lookup, display)
 ├── symbols/
-│   ├── c64.sym            Commodore 64 symbols
-│   ├── c128.sym           Commodore 128 symbols
-│   ├── mega65.sym         Mega65 symbols
-│   └── x16.sym            Commander X16 symbols
-├── examples/
-│   ├── hello.asm          Hello world example
-│   ├── interrupt_demo.asm Interrupt test
-│   └── ... more examples
-├── README.md              This file
-├── Makefile               Build script
-└── LICENSE
+│   ├── c64.sym                 Commodore 64
+│   ├── c128.sym                Commodore 128
+│   ├── mega65.sym              MEGA65
+│   └── x16.sym                 Commander X16
+├── examples/                   Sample assembly programs
+├── tests/                      Regression tests (.asm + expected register output)
+│   └── data/                   Binary fixture files for .bin tests
+├── tools/
+│   └── run_tests.py            Test runner (parses ; EXPECT: comments)
+├── plugin-gemini/              MCP server (Node.js)
+├── Makefile
+└── README.md
 ```
-
-## Creating Your Own Symbol Tables
-
-### Symbol File Format
-```
-; Comment line starts with ; or #
-; Format: ADDRESS NAME TYPE [COMMENT]
-; Types: LABEL, VAR, CONST, FUNC, IO, REGION, TRAP
-
-1000 main_loop LABEL Main program loop
-2000 data_area VAR Data storage area
-d000 vic_base IO VIC-II controller base
-fffa nmi_vector REGION NMI interrupt vector
-ffd2 CHROUT TRAP Output char A to current channel
-```
-
-`TRAP` intercepts any `JSR` to that address: the simulator prints the current register state and simulates an `RTS`, resuming the caller. No ROM code is needed. See the [TRAP section](#trap--intercepting-rom-routines) above for details.
-
-### Loading Symbol Tables
-```bash
-# Custom symbols
-./sim6502 --symbols myarch.sym program.asm
-
-# Preset architectures
-./sim6502 --preset c64 program.asm
-./sim6502 --preset x16 program.asm
-
-# Display symbols
-./sim6502 --preset c64 --show-symbols program.asm
-```
-
-## Known Limitations
-
-- Simple assembler syntax (not full-featured)
-- No macro support
-- Limited error messages
-- Single-file programs only
-
-### Decimal Mode (BCD) Note
-
-ADC and SBC always perform correct BCD arithmetic when the D (Decimal) flag is set, across all supported processor variants (6502, 65C02, 65CE02, 45GS02). The NMOS 6502 hardware has undefined N, V, and Z flag behavior in decimal mode, but this simulator produces well-defined, correct flag values for all variants. Programs relying on the exact undefined 6502 flag state in decimal mode may see different results.
-
-## Future Enhancements
-
-- [ ] Conditional breakpoints
-- [ ] Watchpoints (memory monitoring)
-- [ ] Step-through mode
-- [ ] Profiling information
-- [ ] Symbolic debugging (source-level)
-- [ ] More predefined symbol tables
-- [ ] Custom processor definitions
-
-## TODO
-
-- [ ] Address `unused variable` and `unused parameter` compiler warnings.
-- [ ] Address `__builtin_strncpy` output may be truncated` compiler warnings.
-
-## Contributing
-
-Contributions welcome! Areas of interest:
-- Additional symbol tables
-- Better error messages
-- Assembly language extensions
-- Performance improvements
-
-## License
-
-Proprietary - See LICENSE file (for now). At some future point the license will go back to open source.
-
-## Credits
-
-Developed as a comprehensive 6502 development tool for learning and hobby projects.
-
-## Support
-
-For issues, questions, or feature requests, please create an issue or consult the documentation.
 
 ---
 
-**Version**: 2.0  
-**Last Updated**: 2026-02-28
-**Status**: Production Ready ✅
+## Test Format
 
-Perfect for:
-- Learning 6502 assembly
-- Debugging programs
-- Understanding interrupt handling
-- Analyzing Commodore system memory maps
-- Modern 8-bit computer development
+Every test file starts with an expectation comment:
+
+```asm
+; EXPECT: A=42 X=10 Y=20 S=FF PC=0206
+; PROCESSOR: 45gs02        <- optional, defaults to 6502
+```
+
+`make test` runs `tools/run_tests.py`, which compares the `Registers:` line from the simulator's stdout against the expectation.
+
+---
+
+## Known Limitations
+
+- Assembler syntax is simple (no macros, no expressions, no local labels)
+- Only the low byte of a label address is emitted by `.byte label`
+- Cycle counts are not accurate for all addressing modes and all processor variants
+- The 64 KB `memory_t` struct is stack-allocated; very deep call stacks may be an issue on some platforms
+- Decimal mode (BCD) flag behaviour matches correct output but does not emulate NMOS undefined N/V/Z quirks
+
+---
+
+## License
+
+Proprietary — see `LICENSE`. Will move to open source at a future date.
+
+**Last Updated**: 2026-02-28

@@ -58,6 +58,7 @@ This document outlines suggested next steps, feature enhancements, and technical
 5. User Interface (CLI/Web/MCP)
 --------------------------
 *   [X] Interactive CLI Mode: A "monitor" style interface where users can type commands (step, continue, examine, modify) without restarting. (Required for MCP).
+    *   [X] Interactive mode can now be entered without specifying a source file (`./sim6502 -I`); pressing Enter on a blank line steps one instruction.
 *   [X] MCP Server Implementation: Wrap the simulator in a Model Context Protocol server to expose execution control to LLMs.
 *   [ ] Web-based UI: Use the existing plugin-gemini structure or similar to create a visual representation of the CPU state and memory.
 *   [ ] Configuration Files: Support for .ini or .json files to specify CPU type, memory maps, and pre-loaded binaries.
