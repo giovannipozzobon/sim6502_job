@@ -1413,6 +1413,7 @@ static void run_interactive_mode(cpu_t *cpu, memory_t *mem, instruction_t *rom,
     }
 }
 
+#ifndef SIM_LIBRARY_BUILD
 int main(int argc, char *argv[]) {
 	cpu_type_t cpu_type = CPU_6502;
 	const char *filename = NULL;
@@ -1650,4 +1651,381 @@ int main(int argc, char *argv[]) {
 	if (show_memory) memory_dump(&mem, mem_start, mem_end);
 	if (show_symbols) symbol_display(&symbols);
 	return 0;
+}
+#endif /* SIM_LIBRARY_BUILD */
+
+/* ============================================================================
+ * sim_api.h implementation
+ *
+ * These functions appear after the #endif so they can call all the static
+ * helpers defined above (parse_line, encode_to_mem, execute_from_mem, etc.).
+ * They are compiled in BOTH the CLI and GUI builds; the CLI binary simply
+ * doesn't call them.
+ * ============================================================================ */
+
+#include "sim_api.h"
+
+/* Full definition of the opaque sim_session_t handle. */
+struct sim_session {
+    cpu_t             cpu;
+    memory_t          mem;
+    dispatch_table_t  dt;
+    symbol_table_t    symbols;
+    breakpoint_list_t breakpoints;
+    cpu_type_t        cpu_type;
+    sim_state_t       state;
+    unsigned short    start_addr;
+    instruction_t     session_rom[65536]; /* debug overlay (parallel to mem) */
+    char              filename[512];
+    sim_event_cb      event_cb;
+    void             *event_userdata;
+    /* Handler pointers cached after load; rebuilt on processor change */
+    opcode_handler_t *handlers;
+    int               num_handlers;
+};
+
+/* --------------------------------------------------------------------------
+ * Internal helper: select handler set for cpu_type
+ * -------------------------------------------------------------------------- */
+static void api_select_handlers(sim_session_t *s)
+{
+    switch (s->cpu_type) {
+    case CPU_65C02:          s->handlers = opcodes_65c02;    s->num_handlers = OPCODES_65C02_COUNT;    break;
+    case CPU_65CE02:         s->handlers = opcodes_65ce02;   s->num_handlers = OPCODES_65CE02_COUNT;   break;
+    case CPU_45GS02:         s->handlers = opcodes_45gs02;   s->num_handlers = OPCODES_45GS02_COUNT;   break;
+    case CPU_6502_UNDOCUMENTED: s->handlers = opcodes_6502_undoc; s->num_handlers = OPCODES_6502_UNDOC_COUNT; break;
+    default:                 s->handlers = opcodes_6502;     s->num_handlers = OPCODES_6502_COUNT;     break;
+    }
+}
+
+/* --------------------------------------------------------------------------
+ * Lifecycle
+ * -------------------------------------------------------------------------- */
+
+sim_session_t *sim_create(const char *processor)
+{
+    sim_session_t *s = (sim_session_t *)calloc(1, sizeof(*s));
+    if (!s) return NULL;
+
+    s->cpu_type = CPU_6502;
+    if (processor) {
+        if      (strcmp(processor, "6502-undoc") == 0) s->cpu_type = CPU_6502_UNDOCUMENTED;
+        else if (strcmp(processor, "65c02")      == 0) s->cpu_type = CPU_65C02;
+        else if (strcmp(processor, "65ce02")     == 0) s->cpu_type = CPU_65CE02;
+        else if (strcmp(processor, "45gs02")     == 0) s->cpu_type = CPU_45GS02;
+    }
+
+    api_select_handlers(s);
+    cpu_init(&s->cpu);
+    memset(&s->mem, 0, sizeof(s->mem));
+    symbol_table_init(&s->symbols, "Session");
+    breakpoint_init(&s->breakpoints);
+    s->state = SIM_IDLE;
+    s->start_addr = 0x0200;
+
+    return s;
+}
+
+void sim_destroy(sim_session_t *s)
+{
+    if (!s) return;
+    /* Free any far-memory pages */
+    for (int i = 0; i < FAR_NUM_PAGES; i++) {
+        if (s->mem.far_pages[i]) {
+            free(s->mem.far_pages[i]);
+            s->mem.far_pages[i] = NULL;
+        }
+    }
+    free(s);
+}
+
+/* --------------------------------------------------------------------------
+ * Program loading — two-pass assembler (mirrors main())
+ * -------------------------------------------------------------------------- */
+
+int sim_load_asm(sim_session_t *s, const char *path)
+{
+    if (!s || !path) return -1;
+
+    FILE *f = fopen(path, "r");
+    if (!f) return -1;
+
+    /* Reset session state for a fresh load */
+    memset(&s->mem, 0, sizeof(s->mem));
+    memset(s->session_rom, 0, sizeof(s->session_rom));
+    symbol_table_init(&s->symbols, "Session");
+    breakpoint_init(&s->breakpoints);
+
+    /* Use the session's cpu_type (may have been set via sim_set_processor) */
+    cpu_type_t cpu_type = s->cpu_type;
+    api_select_handlers(s);
+
+    char line[512];
+    int pc = 0x0200;
+
+    /* --- First pass: collect labels, advance PC --- */
+    while (fgets(line, sizeof(line), f)) {
+        char *ptr = line;
+        while (*ptr && isspace(*ptr)) ptr++;
+        if (!*ptr || *ptr == ';') continue;
+        if (*ptr == '.') { handle_pseudo_op(ptr, &cpu_type, &pc, NULL, NULL); continue; }
+        char *colon = strchr(ptr, ':');
+        if (colon) {
+            char label_name[64];
+            int len = (int)(colon - ptr);
+            if (len >= 64) len = 63;
+            strncpy(label_name, ptr, len);
+            label_name[len] = 0;
+            symbol_add(&s->symbols, label_name, (unsigned short)pc, SYM_LABEL, "Source");
+            const char *after = colon + 1;
+            while (*after && isspace(*after)) after++;
+            if (*after == '.') { handle_pseudo_op(after, &cpu_type, &pc, NULL, NULL); continue; }
+        }
+        instruction_t instr;
+        parse_line(line, &instr, NULL, pc);
+        if (instr.op[0]) {
+            int len;
+            if (strcmp(instr.op, "BRK") == 0) {
+                len = 2;
+            } else {
+                len = get_encoded_length(instr.op, instr.mode, s->handlers, s->num_handlers);
+                if (len < 0) len = get_instruction_length(instr.mode);
+            }
+            pc += len;
+        }
+    }
+
+    /* Finalise handler selection (may have changed via .processor directive) */
+    s->cpu_type = cpu_type;
+    api_select_handlers(s);
+
+    /* Initialise CPU for execution */
+    cpu_init(&s->cpu);
+    s->cpu.pc = 0x0200;
+    s->start_addr = 0x0200;
+    if (s->cpu_type == CPU_45GS02)
+        set_flag(&s->cpu, FLAG_E, 1);
+
+    /* --- Second pass: encode bytes into mem[], fill session_rom[] --- */
+    rewind(f);
+    pc = 0x0200;
+    while (fgets(line, sizeof(line), f)) {
+        const char *ptr = line;
+        while (*ptr && isspace(*ptr)) ptr++;
+        if (!*ptr || *ptr == ';') continue;
+        if (*ptr == '.') { handle_pseudo_op(ptr, &s->cpu_type, &pc, &s->mem, &s->symbols); continue; }
+        const char *colon = strchr(ptr, ':');
+        if (colon) {
+            const char *after = colon + 1;
+            while (*after && isspace(*after)) after++;
+            if (*after == '.') { handle_pseudo_op(after, &s->cpu_type, &pc, &s->mem, &s->symbols); continue; }
+        }
+        instruction_t instr;
+        parse_line(line, &instr, &s->symbols, pc);
+        if (instr.op[0]) {
+            s->session_rom[pc] = instr;
+            int enc = encode_to_mem(&s->mem, pc, &instr, s->handlers, s->num_handlers);
+            if (strcmp(instr.op, "BRK") == 0)
+                pc += 2;
+            else if (enc > 0)
+                pc += enc;
+            else
+                pc += get_instruction_length(instr.mode);
+        }
+    }
+    fclose(f);
+
+    /* Rebuild dispatch table */
+    dispatch_build(&s->dt, s->handlers, s->num_handlers, s->cpu_type);
+
+    /* Store filename */
+    strncpy(s->filename, path, sizeof(s->filename) - 1);
+    s->filename[sizeof(s->filename) - 1] = 0;
+
+    s->state = SIM_READY;
+    return 0;
+}
+
+/* --------------------------------------------------------------------------
+ * Execution control
+ * -------------------------------------------------------------------------- */
+
+int sim_step(sim_session_t *s, int count)
+{
+    if (!s) return -1;
+    if (s->state == SIM_IDLE || s->state == SIM_FINISHED)
+        return -1;
+
+    for (int i = 0; i < count; i++) {
+        /* Trap handler (SYM_TRAP symbol intercepts) */
+        int tr = handle_trap(&s->symbols, &s->cpu, &s->mem, s->handlers);
+        if (tr < 0) {
+            s->state = SIM_FINISHED;
+            if (s->event_cb) s->event_cb(s, SIM_EVENT_BRK, s->event_userdata);
+            return SIM_EVENT_BRK;
+        }
+        if (tr > 0) continue;
+
+        /* Breakpoint check */
+        if (breakpoint_hit(&s->breakpoints, &s->cpu)) {
+            s->state = SIM_PAUSED;
+            if (s->event_cb) s->event_cb(s, SIM_EVENT_BREAK, s->event_userdata);
+            return SIM_EVENT_BREAK;
+        }
+
+        unsigned char opc = mem_read(&s->mem, s->cpu.pc);
+        if (opc == 0x00) {
+            /* BRK — advance PC past it so display shows next address */
+            s->cpu.pc += 2;
+            s->state = SIM_FINISHED;
+            if (s->event_cb) s->event_cb(s, SIM_EVENT_BRK, s->event_userdata);
+            return SIM_EVENT_BRK;
+        }
+
+        const dispatch_entry_t *te = peek_dispatch(&s->cpu, &s->mem, &s->dt, s->cpu_type);
+        if (te->mnemonic && strcmp(te->mnemonic, "STP") == 0) {
+            s->state = SIM_FINISHED;
+            if (s->event_cb) s->event_cb(s, SIM_EVENT_STP, s->event_userdata);
+            return SIM_EVENT_STP;
+        }
+
+        execute_from_mem(&s->cpu, &s->mem, &s->dt, s->cpu_type);
+    }
+
+    s->state = SIM_PAUSED;
+    return 0;
+}
+
+void sim_reset(sim_session_t *s)
+{
+    if (!s) return;
+    cpu_init(&s->cpu);
+    s->cpu.pc = s->start_addr;
+    if (s->cpu_type == CPU_45GS02)
+        set_flag(&s->cpu, FLAG_E, 1);
+    s->state = (s->filename[0] != '\0') ? SIM_READY : SIM_IDLE;
+}
+
+/* --------------------------------------------------------------------------
+ * Disassembler
+ * -------------------------------------------------------------------------- */
+
+int sim_disassemble_one(sim_session_t *s, uint16_t addr, char *buf, size_t len)
+{
+    if (!s || !buf || len == 0) return 1;
+    if (s->state == SIM_IDLE) {
+        snprintf(buf, len, "%04X: --", addr);
+        return 1;
+    }
+    return disasm_one(&s->mem, &s->dt, s->cpu_type, addr, buf, (int)len);
+}
+
+/* --------------------------------------------------------------------------
+ * State inspection
+ * -------------------------------------------------------------------------- */
+
+cpu_t *sim_get_cpu(sim_session_t *s)
+{
+    return s ? &s->cpu : NULL;
+}
+
+uint8_t sim_mem_read_byte(sim_session_t *s, uint16_t addr)
+{
+    if (!s) return 0;
+    return mem_read(&s->mem, addr);
+}
+
+void sim_mem_write_byte(sim_session_t *s, uint16_t addr, uint8_t val)
+{
+    if (!s) return;
+    mem_write(&s->mem, addr, val);
+}
+
+/* --------------------------------------------------------------------------
+ * Session metadata
+ * -------------------------------------------------------------------------- */
+
+sim_state_t sim_get_state(sim_session_t *s)
+{
+    return s ? s->state : SIM_IDLE;
+}
+
+const char *sim_get_filename(sim_session_t *s)
+{
+    return (s && s->filename[0]) ? s->filename : "(none)";
+}
+
+const char *sim_processor_name(sim_session_t *s)
+{
+    if (!s) return "6502";
+    return processor_name(s->cpu_type);
+}
+
+const char *sim_state_name(sim_state_t state)
+{
+    switch (state) {
+    case SIM_IDLE:     return "IDLE";
+    case SIM_READY:    return "READY";
+    case SIM_PAUSED:   return "PAUSED";
+    case SIM_FINISHED: return "FINISHED";
+    default:           return "UNKNOWN";
+    }
+}
+
+void sim_set_processor(sim_session_t *s, const char *name)
+{
+    if (!s || !name) return;
+    cpu_type_t t = CPU_6502;
+    if      (strcmp(name, "6502-undoc") == 0) t = CPU_6502_UNDOCUMENTED;
+    else if (strcmp(name, "65c02")      == 0) t = CPU_65C02;
+    else if (strcmp(name, "65ce02")     == 0) t = CPU_65CE02;
+    else if (strcmp(name, "45gs02")     == 0) t = CPU_45GS02;
+    s->cpu_type = t;
+    api_select_handlers(s);
+    dispatch_build(&s->dt, s->handlers, s->num_handlers, s->cpu_type);
+}
+
+cpu_type_t sim_get_cpu_type(sim_session_t *s)
+{
+    return s ? s->cpu_type : CPU_6502;
+}
+
+/* --------------------------------------------------------------------------
+ * Event callbacks
+ * -------------------------------------------------------------------------- */
+
+void sim_set_event_callback(sim_session_t *s, sim_event_cb cb, void *userdata)
+{
+    if (!s) return;
+    s->event_cb = cb;
+    s->event_userdata = userdata;
+}
+
+/* --------------------------------------------------------------------------
+ * Breakpoints
+ * -------------------------------------------------------------------------- */
+
+int sim_break_set(sim_session_t *s, uint16_t addr, const char *cond)
+{
+    if (!s) return 0;
+    return breakpoint_add(&s->breakpoints, addr, cond);
+}
+
+void sim_break_clear(sim_session_t *s, uint16_t addr)
+{
+    if (!s) return;
+    breakpoint_remove(&s->breakpoints, addr);
+}
+
+/* --------------------------------------------------------------------------
+ * Symbol table
+ * -------------------------------------------------------------------------- */
+
+const char *sim_sym_by_addr(sim_session_t *s, uint16_t addr)
+{
+    if (!s) return NULL;
+    static char sym_name_buf[MAX_SYMBOL_NAME];
+    if (symbol_lookup_addr(&s->symbols, addr, sym_name_buf))
+        return sym_name_buf;
+    return NULL;
 }
