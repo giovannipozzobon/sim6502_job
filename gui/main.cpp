@@ -86,6 +86,25 @@ static bool     g_disasm_follow = true;
 static uint16_t g_last_writes[256];
 static int      g_last_write_count = 0;
 
+/* ---- Phase 3 pane visibility ---- */
+static bool show_breakpoints = false;
+static bool show_trace       = false;
+static bool show_stack       = false;
+static bool show_watches     = false;
+
+/* ---- Watch list (GUI-side only) ---- */
+#define WATCH_MAX 16
+struct WatchEntry {
+    uint16_t addr;
+    char     name[32];
+    uint8_t  cur_val;
+    uint8_t  prev_val;
+    bool     changed;
+    bool     valid;   /* false = not yet read */
+};
+static WatchEntry g_watches[WATCH_MAX];
+static int        g_watch_count = 0;
+
 /* Console */
 #define CON_MAX_LINES   1024
 #define CON_MAX_HISTORY   64
@@ -184,14 +203,21 @@ static void setup_default_layout(ImGuiID dockspace_id, ImVec2 size)
 /* --------------------------------------------------------------------------
  * do_load: assemble and load the file named in g_filename_buf
  * -------------------------------------------------------------------------- */
+static void update_watches(void); /* forward declaration — defined before draw_toolbar */
 static void do_load(void)
 {
     if (g_filename_buf[0] == '\0') return;
     g_running = false;
-    if (sim_load_asm(g_sim, g_filename_buf) != 0)
+    if (sim_load_asm(g_sim, g_filename_buf) != 0) {
         fprintf(stderr, "sim6502-gui: failed to load '%s'\n", g_filename_buf);
-    else
+    } else {
         fprintf(stdout, "sim6502-gui: loaded '%s'\n", g_filename_buf);
+        g_prev_cpu_valid   = false;
+        g_last_write_count = 0;
+        /* Re-seed watch values from the newly loaded program */
+        for (int i = 0; i < g_watch_count; i++) g_watches[i].valid = false;
+        update_watches();
+    }
 }
 
 /* --------------------------------------------------------------------------
@@ -348,6 +374,8 @@ static void con_exec(const char *cmd)
         sim_reset(g_sim);
         g_prev_cpu_valid   = false;
         g_last_write_count = 0;
+        for (int i = 0; i < g_watch_count; i++) g_watches[i].valid = false;
+        update_watches();
         con_add(CON_COL_OK, "CPU reset. State: %s", sim_state_name(sim_get_state(g_sim)));
         return;
     }
@@ -489,6 +517,415 @@ static void con_exec(const char *cmd)
 }
 
 /* --------------------------------------------------------------------------
+ * Helper: refresh all watch values from memory
+ * -------------------------------------------------------------------------- */
+static void update_watches(void)
+{
+    if (sim_get_state(g_sim) == SIM_IDLE) return;
+    for (int i = 0; i < g_watch_count; i++) {
+        uint8_t v = sim_mem_read_byte(g_sim, g_watches[i].addr);
+        if (!g_watches[i].valid) {
+            g_watches[i].cur_val  = v;
+            g_watches[i].prev_val = v;
+            g_watches[i].valid    = true;
+            g_watches[i].changed  = false;
+        } else {
+            g_watches[i].changed  = (v != g_watches[i].cur_val);
+            g_watches[i].prev_val = g_watches[i].cur_val;
+            g_watches[i].cur_val  = v;
+        }
+    }
+}
+
+/* --------------------------------------------------------------------------
+ * Pane: Breakpoint Manager (Phase 3)
+ *
+ * Lists all breakpoints with enable toggle and delete button.
+ * Inline add-row at the top for fast entry.
+ * -------------------------------------------------------------------------- */
+static void draw_pane_breakpoints(void)
+{
+    if (!show_breakpoints) return;
+    ImGui::Begin("Breakpoints", &show_breakpoints);
+
+    /* Add row */
+    static char bp_addr_buf[8] = "";
+    static char bp_cond_buf[64] = "";
+    ImGui::SetNextItemWidth(60);
+    ImGui::InputText("Addr##bpa", bp_addr_buf, sizeof(bp_addr_buf),
+                     ImGuiInputTextFlags_CharsHexadecimal);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(130);
+    ImGui::InputText("if##bpc", bp_cond_buf, sizeof(bp_cond_buf));
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Add") && bp_addr_buf[0]) {
+        uint16_t addr = (uint16_t)strtol(bp_addr_buf, NULL, 16);
+        const char *cond = bp_cond_buf[0] ? bp_cond_buf : NULL;
+        if (sim_break_set(g_sim, addr, cond)) {
+            bp_addr_buf[0] = '\0';
+            bp_cond_buf[0] = '\0';
+        }
+    }
+    ImGui::Separator();
+
+    int cnt = sim_break_count(g_sim);
+    if (cnt == 0) {
+        ImGui::TextDisabled("No breakpoints set.");
+        ImGui::End();
+        return;
+    }
+
+    const ImGuiTableFlags tf =
+        ImGuiTableFlags_SizingFixedFit |
+        ImGuiTableFlags_BordersInnerV  |
+        ImGuiTableFlags_RowBg;
+
+    if (ImGui::BeginTable("##bptab", 4, tf)) {
+        ImGui::TableSetupColumn("En",        ImGuiTableColumnFlags_WidthFixed,   22.0f);
+        ImGui::TableSetupColumn("Address",   ImGuiTableColumnFlags_WidthFixed,   52.0f);
+        ImGui::TableSetupColumn("Condition", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("",          ImGuiTableColumnFlags_WidthFixed,   30.0f);
+        ImGui::TableHeadersRow();
+
+        int to_delete = -1;
+        for (int i = 0; i < cnt; i++) {
+            uint16_t addr = 0;
+            char cond[128] = "";
+            sim_break_get(g_sim, i, &addr, cond, sizeof(cond));
+            bool enabled = (sim_break_is_enabled(g_sim, i) != 0);
+
+            ImGui::TableNextRow();
+
+            /* Enable checkbox */
+            ImGui::TableSetColumnIndex(0);
+            char cb_id[16]; snprintf(cb_id, sizeof(cb_id), "##en%d", i);
+            if (ImGui::Checkbox(cb_id, &enabled))
+                sim_break_toggle(g_sim, i);
+
+            /* Address */
+            ImGui::TableSetColumnIndex(1);
+            if (!enabled) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+            ImGui::Text("$%04X", (unsigned)addr);
+            if (!enabled) ImGui::PopStyleColor();
+
+            /* Condition */
+            ImGui::TableSetColumnIndex(2);
+            if (cond[0]) {
+                if (!enabled) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+                ImGui::TextUnformatted(cond);
+                if (!enabled) ImGui::PopStyleColor();
+            } else {
+                ImGui::TextDisabled("(always)");
+            }
+
+            /* Delete */
+            ImGui::TableSetColumnIndex(3);
+            char del_id[16]; snprintf(del_id, sizeof(del_id), "Del##%d", i);
+            if (ImGui::SmallButton(del_id))
+                to_delete = i;
+        }
+        ImGui::EndTable();
+
+        if (to_delete >= 0) {
+            uint16_t addr = 0;
+            sim_break_get(g_sim, to_delete, &addr, NULL, 0);
+            sim_break_clear(g_sim, addr);
+        }
+    }
+
+    ImGui::End();
+}
+
+/* --------------------------------------------------------------------------
+ * Pane: Execution Trace Log (Phase 3)
+ *
+ * Ring buffer of the last SIM_TRACE_DEPTH instructions executed.
+ * Slot 0 = most recent.  Virtualised with ImGuiListClipper.
+ * -------------------------------------------------------------------------- */
+static void draw_pane_trace(void)
+{
+    if (!show_trace) return;
+    ImGui::Begin("Trace Log", &show_trace);
+
+    /* Controls */
+    bool rec = (sim_trace_is_enabled(g_sim) != 0);
+    if (ImGui::Checkbox("Record", &rec))
+        sim_trace_enable(g_sim, rec ? 1 : 0);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Clear"))
+        sim_trace_clear(g_sim);
+    int cnt = sim_trace_count(g_sim);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(%d / %d)", cnt, SIM_TRACE_DEPTH);
+    ImGui::Separator();
+
+    if (cnt == 0) {
+        ImGui::TextDisabled("No entries. Enable 'Record' then step or run.");
+        ImGui::End();
+        return;
+    }
+
+    const ImGuiTableFlags tf =
+        ImGuiTableFlags_SizingFixedFit |
+        ImGuiTableFlags_BordersInnerV  |
+        ImGuiTableFlags_ScrollY        |
+        ImGuiTableFlags_RowBg;
+
+    float avail_h = ImGui::GetContentRegionAvail().y;
+    if (ImGui::BeginTable("##trace", 5, tf, ImVec2(0, avail_h))) {
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableSetupColumn("#",     ImGuiTableColumnFlags_WidthFixed,   38.0f);
+        ImGui::TableSetupColumn("PC",    ImGuiTableColumnFlags_WidthFixed,   44.0f);
+        ImGui::TableSetupColumn("Instr", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("Cyc",   ImGuiTableColumnFlags_WidthFixed,   26.0f);
+        ImGui::TableSetupColumn("A  X  Y", ImGuiTableColumnFlags_WidthFixed, 66.0f);
+        ImGui::TableHeadersRow();
+
+        ImGuiListClipper clipper;
+        clipper.Begin(cnt);
+        while (clipper.Step()) {
+            for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++) {
+                sim_trace_entry_t e;
+                if (!sim_trace_get(g_sim, i, &e)) continue;
+
+                ImGui::TableNextRow();
+
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextDisabled("%d", i);
+
+                ImGui::TableSetColumnIndex(1);
+                ImGui::Text("%04X", (unsigned)e.pc);
+
+                ImGui::TableSetColumnIndex(2);
+                /* disasm = "$XXXX: %-18s %-6s %s"
+                 * Skip the 7-char "$XXXX: " address prefix. */
+                const char *ins = (strlen(e.disasm) > 7) ? e.disasm + 7 : e.disasm;
+                ImGui::TextUnformatted(ins);
+
+                ImGui::TableSetColumnIndex(3);
+                ImGui::TextDisabled("%d", e.cycles_delta);
+
+                ImGui::TableSetColumnIndex(4);
+                ImGui::Text("%02X %02X %02X",
+                            (unsigned)e.cpu.a,
+                            (unsigned)e.cpu.x,
+                            (unsigned)e.cpu.y);
+            }
+        }
+        ImGui::EndTable();
+    }
+
+    ImGui::End();
+}
+
+/* --------------------------------------------------------------------------
+ * Pane: Stack Inspector (Phase 3)
+ *
+ * Shows the 6502 stack page ($0100–$01FF).
+ * The current SP row is highlighted; values above SP are active stack data.
+ * -------------------------------------------------------------------------- */
+static void draw_pane_stack(void)
+{
+    if (!show_stack) return;
+    ImGui::Begin("Stack", &show_stack);
+
+    sim_state_t state = sim_get_state(g_sim);
+    if (state == SIM_IDLE) {
+        ImGui::TextDisabled("(no program loaded)");
+        ImGui::End();
+        return;
+    }
+
+    cpu_t *cpu = sim_get_cpu(g_sim);
+    if (!cpu) { ImGui::End(); return; }
+
+    uint8_t sp = (uint8_t)(cpu->s & 0xFF);   /* low byte = page offset */
+    uint16_t sp_addr = (uint16_t)(0x0100 | sp);
+
+    ImGui::Text("SP = $%04X  (depth %d)", (unsigned)sp_addr, (int)(0xFF - sp));
+    ImGui::Separator();
+
+    const ImGuiTableFlags tf =
+        ImGuiTableFlags_SizingFixedFit |
+        ImGuiTableFlags_BordersInnerV  |
+        ImGuiTableFlags_ScrollY        |
+        ImGuiTableFlags_RowBg;
+
+    float avail_h = ImGui::GetContentRegionAvail().y;
+    if (ImGui::BeginTable("##stk", 3, tf, ImVec2(0, avail_h))) {
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableSetupColumn("Addr",  ImGuiTableColumnFlags_WidthFixed,   52.0f);
+        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed,   38.0f);
+        ImGui::TableSetupColumn("Note",  ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableHeadersRow();
+
+        /* Walk from $01FF down to $0101 (skip $0100 = SP=0xFF = empty) */
+        bool need_scroll = false;
+        for (int offset = 0xFF; offset >= 0x01; offset--) {
+            uint16_t addr = (uint16_t)(0x0100 | offset);
+            uint8_t  val  = sim_mem_read_byte(g_sim, addr);
+            bool is_sp    = (offset == (sp + 1) % 0x100); /* top of stack */
+            bool active   = (offset > sp);                 /* pushed data */
+
+            ImGui::TableNextRow();
+
+            /* Highlight the top-of-stack row */
+            if (is_sp) {
+                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
+                    ImGui::GetColorU32(ImVec4(0.3f, 0.6f, 0.3f, 0.25f)));
+                need_scroll = true;
+            }
+
+            ImGui::TableSetColumnIndex(0);
+            if (active)
+                ImGui::Text("$%04X", (unsigned)addr);
+            else
+                ImGui::TextDisabled("$%04X", (unsigned)addr);
+
+            ImGui::TableSetColumnIndex(1);
+            if (active)
+                ImGui::Text("%02X", (unsigned)val);
+            else
+                ImGui::TextDisabled("%02X", (unsigned)val);
+
+            ImGui::TableSetColumnIndex(2);
+            if (is_sp)
+                ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "<-- SP+1");
+            else if (offset == sp)
+                ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.2f, 1.0f), "<-- SP");
+            else if (active && offset < 0xFF && offset > sp) {
+                /* Pair check: every two pushed bytes may be a return address */
+                if ((offset & 1) == 1 && offset + 1 <= 0xFF) {
+                    uint8_t lo = sim_mem_read_byte(g_sim, addr);
+                    uint8_t hi = sim_mem_read_byte(g_sim, (uint16_t)(addr + 1));
+                    uint16_t ret_addr = (uint16_t)((hi << 8) | lo);
+                    /* RTS pops (stored_val+1) */
+                    ImGui::TextDisabled("->$%04X ?", (unsigned)((ret_addr + 1) & 0xFFFF));
+                }
+            }
+        }
+
+        /* Scroll the table so SP row is visible */
+        if (need_scroll) {
+            float row_h = ImGui::GetTextLineHeightWithSpacing();
+            int row_idx = 0xFF - (sp + 1);
+            ImGui::SetScrollY((float)row_idx * row_h);
+        }
+
+        ImGui::EndTable();
+    }
+
+    ImGui::End();
+}
+
+/* --------------------------------------------------------------------------
+ * Pane: I/O Watch (Phase 3)
+ *
+ * User-defined address watch list.  Values are refreshed after each step.
+ * Changed values are highlighted yellow.
+ * -------------------------------------------------------------------------- */
+static void draw_pane_watches(void)
+{
+    if (!show_watches) return;
+    ImGui::Begin("Watch", &show_watches);
+
+    /* Add row */
+    static char w_addr_buf[8] = "";
+    static char w_name_buf[32] = "";
+    ImGui::SetNextItemWidth(60);
+    ImGui::InputText("Addr##wa", w_addr_buf, sizeof(w_addr_buf),
+                     ImGuiInputTextFlags_CharsHexadecimal);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(100);
+    ImGui::InputText("Name##wn", w_name_buf, sizeof(w_name_buf));
+    ImGui::SameLine();
+    bool can_add = (g_watch_count < WATCH_MAX && w_addr_buf[0]);
+    if (!can_add) ImGui::BeginDisabled();
+    if (ImGui::SmallButton("Add")) {
+        WatchEntry &w = g_watches[g_watch_count++];
+        w.addr    = (uint16_t)strtol(w_addr_buf, NULL, 16);
+        snprintf(w.name, sizeof(w.name), "%s", w_name_buf[0] ? w_name_buf : "?");
+        w.cur_val = w.prev_val = 0;
+        w.changed = false;
+        w.valid   = false;
+        w_addr_buf[0] = '\0';
+        w_name_buf[0] = '\0';
+        update_watches();  /* seed the initial value */
+    }
+    if (!can_add) ImGui::EndDisabled();
+    ImGui::Separator();
+
+    if (g_watch_count == 0) {
+        ImGui::TextDisabled("No watches. Enter address and click Add.");
+        ImGui::End();
+        return;
+    }
+
+    const ImGuiTableFlags tf =
+        ImGuiTableFlags_SizingFixedFit |
+        ImGuiTableFlags_BordersInnerV  |
+        ImGuiTableFlags_RowBg;
+
+    if (ImGui::BeginTable("##wtab", 5, tf)) {
+        ImGui::TableSetupColumn("Addr",  ImGuiTableColumnFlags_WidthFixed,   52.0f);
+        ImGui::TableSetupColumn("Name",  ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("Hex",   ImGuiTableColumnFlags_WidthFixed,   30.0f);
+        ImGui::TableSetupColumn("Dec",   ImGuiTableColumnFlags_WidthFixed,   28.0f);
+        ImGui::TableSetupColumn("",      ImGuiTableColumnFlags_WidthFixed,   30.0f);
+        ImGui::TableHeadersRow();
+
+        int to_del = -1;
+        for (int i = 0; i < g_watch_count; i++) {
+            WatchEntry &w = g_watches[i];
+
+            /* Refresh if not yet read */
+            if (!w.valid && sim_get_state(g_sim) != SIM_IDLE) {
+                w.cur_val = sim_mem_read_byte(g_sim, w.addr);
+                w.prev_val = w.cur_val;
+                w.valid    = true;
+            }
+
+            ImGui::TableNextRow();
+
+            ImVec4 val_col = w.changed
+                ? ImVec4(1.0f, 1.0f, 0.2f, 1.0f)
+                : ImGui::GetStyleColorVec4(ImGuiCol_Text);
+
+            ImGui::TableSetColumnIndex(0);
+            ImGui::Text("$%04X", (unsigned)w.addr);
+
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(w.name);
+
+            ImGui::TableSetColumnIndex(2);
+            ImGui::PushStyleColor(ImGuiCol_Text, val_col);
+            ImGui::Text("%02X", (unsigned)w.cur_val);
+            ImGui::PopStyleColor();
+
+            ImGui::TableSetColumnIndex(3);
+            ImGui::PushStyleColor(ImGuiCol_Text, val_col);
+            ImGui::Text("%3d", (int)w.cur_val);
+            ImGui::PopStyleColor();
+
+            ImGui::TableSetColumnIndex(4);
+            char del_id[16]; snprintf(del_id, sizeof(del_id), "Del##w%d", i);
+            if (ImGui::SmallButton(del_id))
+                to_del = i;
+        }
+        ImGui::EndTable();
+
+        if (to_del >= 0) {
+            /* Remove by shifting */
+            for (int i = to_del; i < g_watch_count - 1; i++)
+                g_watches[i] = g_watches[i + 1];
+            g_watch_count--;
+        }
+    }
+
+    ImGui::End();
+}
+
+/* --------------------------------------------------------------------------
  * Toolbar
  * -------------------------------------------------------------------------- */
 static void draw_toolbar(void)
@@ -536,6 +973,7 @@ static void draw_toolbar(void)
         if (cpu) { g_prev_cpu = *cpu; g_prev_cpu_valid = true; }
         sim_step(g_sim, 1);
         g_last_write_count = sim_get_last_writes(g_sim, g_last_writes, 256);
+        update_watches();
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Step 1 instruction (F7)");
     if (!can_step) ImGui::EndDisabled();
@@ -565,6 +1003,8 @@ static void draw_toolbar(void)
         sim_reset(g_sim);
         g_prev_cpu_valid   = false;
         g_last_write_count = 0;
+        for (int i = 0; i < g_watch_count; i++) g_watches[i].valid = false;
+        update_watches();
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset CPU (Ctrl+R)");
     if (!can_reset) ImGui::EndDisabled();
@@ -1277,6 +1717,7 @@ int main(int /*argc*/, char ** /*argv*/)
                     if (cpu) { g_prev_cpu = *cpu; g_prev_cpu_valid = true; }
                     sim_step(g_sim, 1);
                     g_last_write_count = sim_get_last_writes(g_sim, g_last_writes, 256);
+                    update_watches();
                 }
             }
             if (ImGui::IsKeyDown(ImGuiKey_LeftCtrl) ||
@@ -1286,6 +1727,8 @@ int main(int /*argc*/, char ** /*argv*/)
                     sim_reset(g_sim);
                     g_prev_cpu_valid   = false;
                     g_last_write_count = 0;
+                    for (int i = 0; i < g_watch_count; i++) g_watches[i].valid = false;
+                    update_watches();
                 }
                 if (ImGui::IsKeyPressed(ImGuiKey_L))
                     g_focus_filename = true;
@@ -1298,6 +1741,7 @@ int main(int /*argc*/, char ** /*argv*/)
             if (cpu) { g_prev_cpu = *cpu; g_prev_cpu_valid = true; }
             int ev_code = sim_step(g_sim, g_speed);
             g_last_write_count = sim_get_last_writes(g_sim, g_last_writes, 256);
+            update_watches();
             if (ev_code > 0)
                 g_running = false;
             else if (ev_code < 0)
@@ -1353,6 +1797,7 @@ int main(int /*argc*/, char ** /*argv*/)
                         if (cpu) { g_prev_cpu = *cpu; g_prev_cpu_valid = true; }
                         sim_step(g_sim, 1);
                         g_last_write_count = sim_get_last_writes(g_sim, g_last_writes, 256);
+                        update_watches();
                     }
                     if (ImGui::MenuItem("Run",   "F5"))  g_running = true;
                     if (ImGui::MenuItem("Pause", "F6"))  g_running = false;
@@ -1361,6 +1806,8 @@ int main(int /*argc*/, char ** /*argv*/)
                         sim_reset(g_sim);
                         g_prev_cpu_valid   = false;
                         g_last_write_count = 0;
+                        for (int i = 0; i < g_watch_count; i++) g_watches[i].valid = false;
+                        update_watches();
                     }
                     ImGui::EndMenu();
                 }
@@ -1369,6 +1816,11 @@ int main(int /*argc*/, char ** /*argv*/)
                     ImGui::MenuItem("Disassembly", nullptr, &show_disassembly);
                     ImGui::MenuItem("Memory",      nullptr, &show_memory);
                     ImGui::MenuItem("Console",     nullptr, &show_console);
+                    ImGui::Separator();
+                    ImGui::MenuItem("Breakpoints", nullptr, &show_breakpoints);
+                    ImGui::MenuItem("Trace Log",   nullptr, &show_trace);
+                    ImGui::MenuItem("Stack",       nullptr, &show_stack);
+                    ImGui::MenuItem("Watch",       nullptr, &show_watches);
                     ImGui::Separator();
                     if (ImGui::BeginMenu("Font Size")) {
                         static const int sizes[] = { 10, 11, 12, 13, 14, 15, 16, 18, 20, 24 };
@@ -1415,11 +1867,17 @@ int main(int /*argc*/, char ** /*argv*/)
             ImGui::End();
         }
 
-        /* Panes */
+        /* Phase 1+2 panes */
         draw_pane_registers();
         draw_pane_disassembly();
         draw_pane_memory();
         draw_pane_console();
+
+        /* Phase 3 panes */
+        draw_pane_breakpoints();
+        draw_pane_trace();
+        draw_pane_stack();
+        draw_pane_watches();
 
         /* Render */
         ImGui::Render();

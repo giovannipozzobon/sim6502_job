@@ -1682,6 +1682,11 @@ struct sim_session {
     /* Handler pointers cached after load; rebuilt on processor change */
     opcode_handler_t *handlers;
     int               num_handlers;
+    /* Trace ring buffer (Phase 3) */
+    sim_trace_entry_t trace_buf[SIM_TRACE_DEPTH];
+    int               trace_head;    /* index of next write slot */
+    int               trace_count;   /* valid entries (0..SIM_TRACE_DEPTH) */
+    int               trace_enabled; /* 0=off, 1=recording */
 };
 
 /* --------------------------------------------------------------------------
@@ -1891,7 +1896,21 @@ int sim_step(sim_session_t *s, int count)
             return SIM_EVENT_STP;
         }
 
+        uint16_t      pre_pc     = s->cpu.pc;
+        unsigned long pre_cycles = s->cpu.cycles;
         execute_from_mem(&s->cpu, &s->mem, &s->dt, s->cpu_type);
+
+        if (s->trace_enabled) {
+            sim_trace_entry_t *tr = &s->trace_buf[s->trace_head];
+            tr->pc           = pre_pc;
+            tr->cpu          = s->cpu;
+            tr->cycles_delta = (int)(s->cpu.cycles - pre_cycles);
+            disasm_one(&s->mem, &s->dt, s->cpu_type, pre_pc,
+                       tr->disasm, (int)sizeof(tr->disasm));
+            s->trace_head = (s->trace_head + 1) % SIM_TRACE_DEPTH;
+            if (s->trace_count < SIM_TRACE_DEPTH)
+                s->trace_count++;
+        }
     }
 
     s->state = SIM_PAUSED;
@@ -2097,5 +2116,51 @@ int sim_break_get(sim_session_t *s, int idx, uint16_t *addr, char *cond, int con
         strncpy(cond, s->breakpoints.breakpoints[idx].condition, cond_sz - 1);
         cond[cond_sz - 1] = '\0';
     }
+    return 1;
+}
+
+/* --------------------------------------------------------------------------
+ * Phase 3 extensions
+ * -------------------------------------------------------------------------- */
+
+int sim_break_is_enabled(sim_session_t *s, int idx)
+{
+    if (!s || idx < 0 || idx >= s->breakpoints.count) return 0;
+    return s->breakpoints.breakpoints[idx].enabled;
+}
+
+int sim_break_toggle(sim_session_t *s, int idx)
+{
+    if (!s || idx < 0 || idx >= s->breakpoints.count) return -1;
+    s->breakpoints.breakpoints[idx].enabled ^= 1;
+    return s->breakpoints.breakpoints[idx].enabled;
+}
+
+void sim_trace_enable(sim_session_t *s, int enable)
+{
+    if (s) s->trace_enabled = enable;
+}
+
+int sim_trace_is_enabled(sim_session_t *s)
+{
+    return s ? s->trace_enabled : 0;
+}
+
+void sim_trace_clear(sim_session_t *s)
+{
+    if (s) { s->trace_head = 0; s->trace_count = 0; }
+}
+
+int sim_trace_count(sim_session_t *s)
+{
+    return s ? s->trace_count : 0;
+}
+
+int sim_trace_get(sim_session_t *s, int slot, sim_trace_entry_t *entry)
+{
+    if (!s || !entry || slot < 0 || slot >= s->trace_count) return 0;
+    /* slot 0 = most recent → index trace_head-1, wrapping backwards */
+    int idx = (s->trace_head - 1 - slot + SIM_TRACE_DEPTH) % SIM_TRACE_DEPTH;
+    *entry = s->trace_buf[idx];
     return 1;
 }

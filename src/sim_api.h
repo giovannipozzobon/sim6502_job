@@ -143,6 +143,44 @@ const char *sim_sym_by_addr(sim_session_t *s, uint16_t addr);
  * Phase 2 extensions
  * -------------------------------------------------------------------------- */
 
+/* --------------------------------------------------------------------------
+ * Phase 3 extensions
+ * -------------------------------------------------------------------------- */
+
+/* Returns 1 if the idx-th breakpoint is enabled, 0 if disabled or OOB.    */
+int sim_break_is_enabled(sim_session_t *s, int idx);
+
+/* Toggle the enabled flag for the idx-th breakpoint.
+ * Returns the new state (1=enabled, 0=disabled), or -1 if OOB.            */
+int sim_break_toggle(sim_session_t *s, int idx);
+
+/* ---- Execution trace ---- */
+
+#define SIM_TRACE_DEPTH 256
+
+typedef struct {
+    uint16_t pc;           /* instruction address (pre-execution)  */
+    char     disasm[64];   /* full disasm string from disasm_one() */
+    cpu_t    cpu;          /* CPU state AFTER execution             */
+    int      cycles_delta; /* clock cycles consumed                 */
+} sim_trace_entry_t;
+
+/* Enable (enable=1) or disable (enable=0) per-instruction trace recording. */
+void sim_trace_enable(sim_session_t *s, int enable);
+
+/* Return 1 if trace recording is enabled, 0 otherwise. */
+int sim_trace_is_enabled(sim_session_t *s);
+
+/* Clear the trace ring buffer. */
+void sim_trace_clear(sim_session_t *s);
+
+/* Return the number of entries in the trace buffer (0..SIM_TRACE_DEPTH).   */
+int sim_trace_count(sim_session_t *s);
+
+/* Fill *entry for slot (0 = most recent, count-1 = oldest).
+ * Returns 1 on success, 0 if slot is out of range.                        */
+int sim_trace_get(sim_session_t *s, int slot, sim_trace_entry_t *entry);
+
 /* Returns 1 if a breakpoint is set at addr, 0 otherwise. */
 int sim_has_breakpoint(sim_session_t *s, uint16_t addr);
 
