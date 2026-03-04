@@ -1687,6 +1687,10 @@ struct sim_session {
     int               trace_head;    /* index of next write slot */
     int               trace_count;   /* valid entries (0..SIM_TRACE_DEPTH) */
     int               trace_enabled; /* 0=off, 1=recording */
+    /* Profiler (Phase 4) */
+    uint32_t  prof_exec[65536];   /* instruction execution count per address */
+    uint32_t  prof_cycles[65536]; /* accumulated cycles per address           */
+    int       prof_enabled;       /* 0=off, 1=recording                       */
 };
 
 /* --------------------------------------------------------------------------
@@ -1910,6 +1914,10 @@ int sim_step(sim_session_t *s, int count)
             s->trace_head = (s->trace_head + 1) % SIM_TRACE_DEPTH;
             if (s->trace_count < SIM_TRACE_DEPTH)
                 s->trace_count++;
+        }
+        if (s->prof_enabled) {
+            s->prof_exec[pre_pc]++;
+            s->prof_cycles[pre_pc] += (uint32_t)(s->cpu.cycles - pre_cycles);
         }
     }
 
@@ -2163,4 +2171,198 @@ int sim_trace_get(sim_session_t *s, int slot, sim_trace_entry_t *entry)
     int idx = (s->trace_head - 1 - slot + SIM_TRACE_DEPTH) % SIM_TRACE_DEPTH;
     *entry = s->trace_buf[idx];
     return 1;
+}
+
+/* --------------------------------------------------------------------------
+ * Phase 4 extensions
+ * -------------------------------------------------------------------------- */
+
+const char *sim_mode_name(unsigned char mode)
+{
+    return mode_name(mode);
+}
+
+int sim_opcode_count(sim_session_t *s)
+{
+    return s ? s->num_handlers : 0;
+}
+
+int sim_opcode_get(sim_session_t *s, int idx, sim_opcode_info_t *info)
+{
+    if (!s || !info || idx < 0 || idx >= s->num_handlers) return 0;
+    const opcode_handler_t *h = &s->handlers[idx];
+    memset(info, 0, sizeof(*info));
+    strncpy(info->mnemonic, h->mnemonic, sizeof(info->mnemonic) - 1);
+    info->mode = h->mode;
+    memcpy(info->opcode_bytes, h->opcode_bytes, sizeof(info->opcode_bytes));
+    info->opcode_len = h->opcode_len;
+    switch (s->cpu_type) {
+    case CPU_65C02:          info->cycles = h->cycles_65c02;  break;
+    case CPU_65CE02:         info->cycles = h->cycles_65ce02; break;
+    case CPU_45GS02:         info->cycles = h->cycles_45gs02; break;
+    default:                 info->cycles = h->cycles_6502;   break;
+    }
+    info->instr_bytes = get_encoded_length(h->mnemonic, h->mode,
+                                           s->handlers, s->num_handlers);
+    if (info->instr_bytes < 0)
+        info->instr_bytes = get_instruction_length(h->mode);
+    return 1;
+}
+
+int sim_opcode_by_byte(sim_session_t *s, uint8_t byte_val, sim_opcode_info_t *info)
+{
+    if (!s || !info) return 0;
+    for (int i = 0; i < s->num_handlers; i++) {
+        const opcode_handler_t *h = &s->handlers[i];
+        if (h->opcode_len == 1 && h->opcode_bytes[0] == byte_val)
+            return sim_opcode_get(s, i, info);
+    }
+    return 0;
+}
+
+int sim_sym_count(sim_session_t *s)
+{
+    return s ? s->symbols.count : 0;
+}
+
+int sim_sym_get_idx(sim_session_t *s, int idx,
+                    uint16_t *addr,
+                    char *name_buf,    int name_sz,
+                    int  *type_out,
+                    char *comment_buf, int comment_sz)
+{
+    if (!s || idx < 0 || idx >= s->symbols.count) return 0;
+    const symbol_t *sym = &s->symbols.symbols[idx];
+    if (addr)     *addr     = sym->address;
+    if (type_out) *type_out = (int)sym->type;
+    if (name_buf && name_sz > 0) {
+        strncpy(name_buf, sym->name, name_sz - 1);
+        name_buf[name_sz - 1] = '\0';
+    }
+    if (comment_buf && comment_sz > 0) {
+        strncpy(comment_buf, sym->comment, comment_sz - 1);
+        comment_buf[comment_sz - 1] = '\0';
+    }
+    return 1;
+}
+
+const char *sim_sym_type_name(int type)
+{
+    switch ((symbol_type_t)type) {
+    case SYM_LABEL:         return "Label";
+    case SYM_VARIABLE:      return "Variable";
+    case SYM_CONSTANT:      return "Constant";
+    case SYM_FUNCTION:      return "Function";
+    case SYM_IO_PORT:       return "I/O Port";
+    case SYM_MEMORY_REGION: return "Region";
+    case SYM_TRAP:          return "Trap";
+    default:                return "Unknown";
+    }
+}
+
+int sim_sym_remove_idx(sim_session_t *s, int idx)
+{
+    if (!s || idx < 0 || idx >= s->symbols.count) return 0;
+    memmove(&s->symbols.symbols[idx],
+            &s->symbols.symbols[idx + 1],
+            sizeof(symbol_t) * (size_t)(s->symbols.count - idx - 1));
+    s->symbols.count--;
+    return 1;
+}
+
+int sim_sym_add(sim_session_t *s, uint16_t addr,
+                const char *name, const char *type_str)
+{
+    if (!s || !name) return 0;
+    symbol_type_t type = SYM_LABEL;
+    if (type_str) {
+        if      (strcmp(type_str, "VAR")    == 0 || strcmp(type_str, "VARIABLE") == 0) type = SYM_VARIABLE;
+        else if (strcmp(type_str, "CONST")  == 0 || strcmp(type_str, "CONSTANT") == 0) type = SYM_CONSTANT;
+        else if (strcmp(type_str, "FUNC")   == 0 || strcmp(type_str, "FUNCTION") == 0) type = SYM_FUNCTION;
+        else if (strcmp(type_str, "IO")     == 0 || strcmp(type_str, "PORT")     == 0) type = SYM_IO_PORT;
+        else if (strcmp(type_str, "REGION") == 0 || strcmp(type_str, "MEMORY")   == 0) type = SYM_MEMORY_REGION;
+        else if (strcmp(type_str, "TRAP")   == 0)                                       type = SYM_TRAP;
+    }
+    return symbol_add(&s->symbols, name, addr, type, NULL);
+}
+
+int sim_sym_load_file(sim_session_t *s, const char *path)
+{
+    if (!s || !path) return 0;
+    int before = s->symbols.count;
+    symbol_load_file(&s->symbols, path);
+    return s->symbols.count - before;
+}
+
+void sim_profiler_enable(sim_session_t *s, int enable)
+{
+    if (s) s->prof_enabled = enable;
+}
+
+int sim_profiler_is_enabled(sim_session_t *s)
+{
+    return s ? s->prof_enabled : 0;
+}
+
+void sim_profiler_clear(sim_session_t *s)
+{
+    if (!s) return;
+    memset(s->prof_exec,   0, sizeof(s->prof_exec));
+    memset(s->prof_cycles, 0, sizeof(s->prof_cycles));
+}
+
+uint32_t sim_profiler_get_exec(sim_session_t *s, uint16_t addr)
+{
+    return s ? s->prof_exec[addr] : 0;
+}
+
+uint32_t sim_profiler_get_cycles(sim_session_t *s, uint16_t addr)
+{
+    return s ? s->prof_cycles[addr] : 0;
+}
+
+int sim_profiler_top_exec(sim_session_t *s,
+                          uint16_t *out_addrs, uint32_t *out_counts,
+                          int max_n)
+{
+    if (!s || !out_addrs || !out_counts || max_n <= 0) return 0;
+    if (max_n > 64) max_n = 64;
+
+    int      found     = 0;
+    uint32_t min_count = 0;
+
+    for (int addr = 0; addr < 65536; addr++) {
+        uint32_t c = s->prof_exec[addr];
+        if (c == 0) continue;
+        if (found < max_n) {
+            out_addrs[found]  = (uint16_t)addr;
+            out_counts[found] = c;
+            found++;
+            if (found == max_n) {
+                min_count = out_counts[0];
+                for (int i = 1; i < found; i++)
+                    if (out_counts[i] < min_count) min_count = out_counts[i];
+            }
+        } else if (c > min_count) {
+            int min_idx = 0;
+            for (int i = 1; i < found; i++)
+                if (out_counts[i] < out_counts[min_idx]) min_idx = i;
+            out_addrs[min_idx]  = (uint16_t)addr;
+            out_counts[min_idx] = c;
+            min_count = out_counts[0];
+            for (int i = 1; i < found; i++)
+                if (out_counts[i] < min_count) min_count = out_counts[i];
+        }
+    }
+
+    /* Sort descending */
+    for (int i = 0; i < found - 1; i++) {
+        for (int j = i + 1; j < found; j++) {
+            if (out_counts[j] > out_counts[i]) {
+                uint32_t tc = out_counts[i]; out_counts[i] = out_counts[j]; out_counts[j] = tc;
+                uint16_t ta = out_addrs[i];  out_addrs[i]  = out_addrs[j];  out_addrs[j]  = ta;
+            }
+        }
+    }
+    return found;
 }

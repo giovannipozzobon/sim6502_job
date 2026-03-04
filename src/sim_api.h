@@ -209,6 +209,87 @@ int sim_break_count(sim_session_t *s);
 int sim_break_get(sim_session_t *s, int idx, uint16_t *addr,
                   char *cond, int cond_sz);
 
+/* --------------------------------------------------------------------------
+ * Phase 4 extensions
+ * -------------------------------------------------------------------------- */
+
+/* ---- Opcode browser ---- */
+
+typedef struct {
+    char          mnemonic[8];
+    unsigned char mode;
+    unsigned char opcode_bytes[4];
+    unsigned char opcode_len;
+    int           cycles;       /* cycles for the active processor variant */
+    int           instr_bytes;  /* total encoded bytes (prefix + operand)  */
+} sim_opcode_info_t;
+
+/* Return the addressing-mode name string for a MODE_* constant.             */
+const char *sim_mode_name(unsigned char mode);
+
+/* Number of opcodes in the active handler table.                            */
+int sim_opcode_count(sim_session_t *s);
+
+/* Fill *info for the idx-th handler entry. Returns 1 on success, 0 if OOB. */
+int sim_opcode_get(sim_session_t *s, int idx, sim_opcode_info_t *info);
+
+/* Fill *info for the single-byte opcode whose base byte == byte_val.
+ * Returns 1 if found, 0 if no matching handler.                            */
+int sim_opcode_by_byte(sim_session_t *s, uint8_t byte_val, sim_opcode_info_t *info);
+
+/* ---- Symbol table browser ---- */
+
+/* Number of symbols in the session's symbol table.                          */
+int sim_sym_count(sim_session_t *s);
+
+/* Fill details for the idx-th symbol.  name_buf / comment_buf may be NULL.
+ * Returns 1 on success, 0 if idx is out of range.                          */
+int sim_sym_get_idx(sim_session_t *s, int idx,
+                    uint16_t *addr,
+                    char *name_buf,    int name_sz,
+                    int  *type_out,
+                    char *comment_buf, int comment_sz);
+
+/* Human-readable name for a symbol_type_t integer value.                   */
+const char *sim_sym_type_name(int type);
+
+/* Remove the idx-th symbol (remaining symbols shift down).
+ * Returns 1 on success, 0 if OOB.                                          */
+int sim_sym_remove_idx(sim_session_t *s, int idx);
+
+/* Add a symbol.  type_str: "LABEL","VAR","CONST","FUNC","IO","REGION","TRAP".
+ * Returns 1 on success, 0 if table full or duplicate name.                 */
+int sim_sym_add(sim_session_t *s, uint16_t addr,
+                const char *name, const char *type_str);
+
+/* Load symbols from a .sym file into the session symbol table.
+ * Returns the count of symbols successfully added.                          */
+int sim_sym_load_file(sim_session_t *s, const char *path);
+
+/* ---- Profiler ---- */
+
+/* Enable (1) or disable (0) per-instruction profiling.                      */
+void sim_profiler_enable(sim_session_t *s, int enable);
+
+/* Return 1 if profiling is currently enabled, 0 otherwise.                  */
+int sim_profiler_is_enabled(sim_session_t *s);
+
+/* Reset all profiling counters to zero.                                     */
+void sim_profiler_clear(sim_session_t *s);
+
+/* Return the instruction execution count for addr.                          */
+uint32_t sim_profiler_get_exec(sim_session_t *s, uint16_t addr);
+
+/* Return the total cycles accumulated at addr.                              */
+uint32_t sim_profiler_get_cycles(sim_session_t *s, uint16_t addr);
+
+/* Fill out_addrs[] / out_counts[] with the top-N most-executed addresses,
+ * sorted descending by execution count.  max_n is capped at 64 internally.
+ * Returns the actual count filled (≤ max_n).                               */
+int sim_profiler_top_exec(sim_session_t *s,
+                          uint16_t *out_addrs, uint32_t *out_counts,
+                          int max_n);
+
 #ifdef __cplusplus
 }
 #endif

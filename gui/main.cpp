@@ -1,5 +1,5 @@
 /*
- * sim6502-gui — Phase 2
+ * sim6502-gui — Phase 4
  *
  * Main entry point for the GUI binary.  Integrates with the simulator core
  * via the sim_api.h library interface (sim_session_t *).
@@ -105,6 +105,32 @@ struct WatchEntry {
 static WatchEntry g_watches[WATCH_MAX];
 static int        g_watch_count = 0;
 
+/* ---- Phase 4 pane visibility ---- */
+static bool show_iref     = false;
+static bool show_symbols  = false;
+static bool show_source   = false;
+static bool show_profiler = false;
+
+/* ---- Instruction Reference ---- */
+static char g_iref_filter[32] = "";
+static int  g_iref_sel_idx    = -1;
+
+/* ---- Symbol Browser ---- */
+static char g_sym_filter[64] = "";
+
+/* ---- Source Viewer ---- */
+#define SRC_MAX_LINES    4096
+#define SRC_MAX_LINE_LEN  256
+static char g_src_lines[SRC_MAX_LINES][SRC_MAX_LINE_LEN];
+static int  g_src_line_count    = 0;
+static char g_src_loaded_file[512] = "";
+static char g_src_search[64]    = "";
+static int  g_src_search_hit    = -1;
+
+/* ---- Heatmap texture (profiler) ---- */
+static GLuint g_heatmap_tex   = 0;
+static bool   g_heatmap_dirty = true;
+
 /* Console */
 #define CON_MAX_LINES   1024
 #define CON_MAX_HISTORY   64
@@ -203,7 +229,8 @@ static void setup_default_layout(ImGuiID dockspace_id, ImVec2 size)
 /* --------------------------------------------------------------------------
  * do_load: assemble and load the file named in g_filename_buf
  * -------------------------------------------------------------------------- */
-static void update_watches(void); /* forward declaration — defined before draw_toolbar */
+static void update_watches(void); /* forward declarations — defined before draw_toolbar */
+static void src_load(const char *path);
 static void do_load(void)
 {
     if (g_filename_buf[0] == '\0') return;
@@ -217,6 +244,9 @@ static void do_load(void)
         /* Re-seed watch values from the newly loaded program */
         for (int i = 0; i < g_watch_count; i++) g_watches[i].valid = false;
         update_watches();
+        /* Phase 4: load source text + reset profiler view */
+        src_load(g_filename_buf);
+        g_heatmap_dirty = true;
     }
 }
 
@@ -535,6 +565,52 @@ static void update_watches(void)
             g_watches[i].cur_val  = v;
         }
     }
+}
+
+/* --------------------------------------------------------------------------
+ * Phase 4 helpers: source loader and heatmap texture update
+ * -------------------------------------------------------------------------- */
+static void src_load(const char *path)
+{
+    g_src_line_count = 0;
+    g_src_loaded_file[0] = '\0';
+    g_src_search_hit = -1;
+    if (!path || !path[0]) return;
+    FILE *f = fopen(path, "r");
+    if (!f) return;
+    char line[SRC_MAX_LINE_LEN];
+    while (g_src_line_count < SRC_MAX_LINES) {
+        if (!fgets(line, sizeof(line), f)) break;
+        int len = (int)strlen(line);
+        while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r')) line[--len] = '\0';
+        snprintf(g_src_lines[g_src_line_count++], SRC_MAX_LINE_LEN, "%s", line);
+    }
+    fclose(f);
+    snprintf(g_src_loaded_file, sizeof(g_src_loaded_file), "%s", path);
+}
+
+static void update_heatmap_tex(void)
+{
+    if (!g_sim || !g_heatmap_tex) return;
+    static uint8_t pixels[256 * 256 * 3];
+    uint32_t max_val = 1;
+    for (int i = 0; i < 65536; i++) {
+        uint32_t v = sim_profiler_get_exec(g_sim, (uint16_t)i);
+        if (v > max_val) max_val = v;
+    }
+    for (int i = 0; i < 65536; i++) {
+        uint32_t v = sim_profiler_get_exec(g_sim, (uint16_t)i);
+        float t = (float)v / (float)max_val;
+        if (t > 0.0f) t = logf(1.0f + t * 255.0f) / logf(256.0f);
+        uint8_t val = (uint8_t)(t * 255.0f);
+        pixels[i * 3 + 0] = val;
+        pixels[i * 3 + 1] = (uint8_t)(val / 3);
+        pixels[i * 3 + 2] = 0;
+    }
+    glBindTexture(GL_TEXTURE_2D, g_heatmap_tex);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256, 256, GL_RGB, GL_UNSIGNED_BYTE, pixels);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    g_heatmap_dirty = false;
 }
 
 /* --------------------------------------------------------------------------
@@ -922,6 +998,705 @@ static void draw_pane_watches(void)
         }
     }
 
+    ImGui::End();
+}
+
+/* --------------------------------------------------------------------------
+ * Pane: Instruction Reference (Phase 4)
+ *
+ * Two tabs: By Mnemonic (filterable table) and By Opcode (16×16 grid).
+ * Selecting a row/cell shows a detail strip below.
+ * -------------------------------------------------------------------------- */
+static void draw_pane_iref(void)
+{
+    if (!show_iref) return;
+    ImGui::Begin("Instruction Ref", &show_iref);
+
+    int n = sim_opcode_count(g_sim);
+    if (n == 0) {
+        ImGui::TextDisabled("(no processor loaded)");
+        ImGui::End();
+        return;
+    }
+
+    ImGui::SetNextItemWidth(150.0f);
+    ImGui::InputText("Filter##ir", g_iref_filter, sizeof(g_iref_filter));
+    ImGui::SameLine();
+    ImGui::TextDisabled("%d opcodes  %s", n, sim_processor_name(g_sim));
+
+    if (ImGui::BeginTabBar("##irtabs")) {
+        /* ---- By Mnemonic tab ---- */
+        if (ImGui::BeginTabItem("By Mnemonic")) {
+            const ImGuiTableFlags tf =
+                ImGuiTableFlags_SizingFixedFit |
+                ImGuiTableFlags_BordersOuter   |
+                ImGuiTableFlags_BordersInnerV  |
+                ImGuiTableFlags_ScrollY        |
+                ImGuiTableFlags_RowBg;
+
+            float detail_h = (g_iref_sel_idx >= 0) ? ImGui::GetTextLineHeightWithSpacing() * 3.0f : 0.0f;
+            float table_h  = ImGui::GetContentRegionAvail().y - detail_h - 4.0f;
+            if (table_h < 40.0f) table_h = 40.0f;
+
+            if (ImGui::BeginTable("##irtab", 5, tf, ImVec2(0.0f, table_h))) {
+                ImGui::TableSetupScrollFreeze(0, 1);
+                ImGui::TableSetupColumn("Opcode", ImGuiTableColumnFlags_WidthFixed,   68.0f);
+                ImGui::TableSetupColumn("Mnem",   ImGuiTableColumnFlags_WidthFixed,   48.0f);
+                ImGui::TableSetupColumn("Mode",   ImGuiTableColumnFlags_WidthFixed,   50.0f);
+                ImGui::TableSetupColumn("Bytes",  ImGuiTableColumnFlags_WidthFixed,   40.0f);
+                ImGui::TableSetupColumn("Cycles", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+                ImGui::TableHeadersRow();
+
+                for (int i = 0; i < n; i++) {
+                    sim_opcode_info_t info;
+                    if (!sim_opcode_get(g_sim, i, &info)) continue;
+
+                    if (g_iref_filter[0]) {
+                        bool match = false;
+                        const char *f = g_iref_filter;
+                        size_t flen   = strlen(f);
+                        const char *m = info.mnemonic;
+                        size_t mlen   = strlen(m);
+                        for (size_t j = 0; j + flen <= mlen && !match; j++) {
+                            bool ok = true;
+                            for (size_t k = 0; k < flen; k++)
+                                if (toupper((unsigned char)m[j+k]) != toupper((unsigned char)f[k]))
+                                    { ok = false; break; }
+                            if (ok) match = true;
+                        }
+                        if (!match) continue;
+                    }
+
+                    ImGui::TableNextRow();
+                    bool selected = (g_iref_sel_idx == i);
+
+                    /* Format opcode byte sequence */
+                    char opbuf[16] = "";
+                    int  op_pos    = 0;
+                    for (int b = 0; b < (int)info.opcode_len && b < 4; b++)
+                        op_pos += snprintf(opbuf + op_pos, sizeof(opbuf) - op_pos,
+                                           b ? " %02X" : "%02X", info.opcode_bytes[b]);
+
+                    ImGui::TableSetColumnIndex(0);
+                    if (ImGui::Selectable(opbuf, selected,
+                            ImGuiSelectableFlags_SpanAllColumns, ImVec2(0, 0)))
+                        g_iref_sel_idx = selected ? -1 : i;
+
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", info.mnemonic);
+
+                    ImGui::TableSetColumnIndex(2);
+                    ImGui::TextDisabled("%s", sim_mode_name(info.mode));
+
+                    ImGui::TableSetColumnIndex(3);
+                    ImGui::Text("%d", info.instr_bytes);
+
+                    ImGui::TableSetColumnIndex(4);
+                    if (info.cycles > 0) ImGui::Text("%d", info.cycles);
+                    else ImGui::TextDisabled("?");
+                }
+                ImGui::EndTable();
+            }
+
+            /* Detail strip */
+            if (g_iref_sel_idx >= 0) {
+                ImGui::Separator();
+                sim_opcode_info_t info;
+                if (sim_opcode_get(g_sim, g_iref_sel_idx, &info)) {
+                    char opbuf[32] = "";
+                    int  p = 0;
+                    for (int b = 0; b < (int)info.opcode_len && b < 4; b++)
+                        p += snprintf(opbuf + p, sizeof(opbuf) - p,
+                                      b ? " $%02X" : "$%02X", info.opcode_bytes[b]);
+                    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%-6s", info.mnemonic);
+                    ImGui::SameLine();
+                    ImGui::Text("mode=%-5s  bytes=%d  cycles=%d  opcode=%s",
+                        sim_mode_name(info.mode), info.instr_bytes, info.cycles, opbuf);
+                }
+            }
+            ImGui::EndTabItem();
+        }
+
+        /* ---- By Opcode tab: 16×16 grid ---- */
+        if (ImGui::BeginTabItem("By Opcode")) {
+            ImGui::TextDisabled("$00–$FF grid  (click a cell for details)");
+
+            static int by_opcode_sel = -1;
+            const float cell_w = 44.0f;
+            const float cell_h = ImGui::GetTextLineHeight() + ImGui::GetStyle().CellPadding.y * 2.0f;
+
+            if (ImGui::BeginTable("##opgrid", 17,
+                    ImGuiTableFlags_BordersOuter |
+                    ImGuiTableFlags_SizingFixedFit |
+                    ImGuiTableFlags_ScrollY,
+                    ImVec2(0.0f, cell_h * 18.0f + ImGui::GetStyle().ScrollbarSize))) {
+
+                ImGui::TableSetupColumn("##rh", ImGuiTableColumnFlags_WidthFixed, 26.0f);
+                for (int c = 0; c < 16; c++) {
+                    char hdr[4]; snprintf(hdr, sizeof(hdr), "_%X", c);
+                    ImGui::TableSetupColumn(hdr, ImGuiTableColumnFlags_WidthFixed, cell_w);
+                }
+                ImGui::TableHeadersRow();
+
+                for (int r = 0; r < 16; r++) {
+                    ImGui::TableNextRow(ImGuiTableRowFlags_None, cell_h);
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::TextDisabled("%X_", r);
+                    for (int c = 0; c < 16; c++) {
+                        ImGui::TableSetColumnIndex(c + 1);
+                        uint8_t bv = (uint8_t)(r * 16 + c);
+                        sim_opcode_info_t info;
+                        if (sim_opcode_by_byte(g_sim, bv, &info)) {
+                            bool sel = (by_opcode_sel == (int)bv);
+                            char lbl[16];
+                            snprintf(lbl, sizeof(lbl), "%-3s##%02X", info.mnemonic, bv);
+                            ImGui::PushStyleColor(ImGuiCol_Text,
+                                sel ? ImVec4(1.0f, 1.0f, 0.3f, 1.0f)
+                                    : ImVec4(0.4f, 0.8f, 1.0f, 1.0f));
+                            if (ImGui::Selectable(lbl, sel, 0,
+                                    ImVec2(cell_w - ImGui::GetStyle().CellPadding.x * 2, 0)))
+                                by_opcode_sel = sel ? -1 : (int)bv;
+                            ImGui::PopStyleColor();
+                        } else {
+                            ImGui::TextDisabled("---");
+                        }
+                    }
+                }
+                ImGui::EndTable();
+            }
+
+            if (by_opcode_sel >= 0) {
+                ImGui::Separator();
+                sim_opcode_info_t info;
+                if (sim_opcode_by_byte(g_sim, (uint8_t)by_opcode_sel, &info)) {
+                    ImGui::Text("$%02X  ", by_opcode_sel);
+                    ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%-6s", info.mnemonic);
+                    ImGui::SameLine();
+                    ImGui::Text("mode=%-5s  bytes=%d  cycles=%d",
+                        sim_mode_name(info.mode), info.instr_bytes, info.cycles);
+                }
+            }
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
+    ImGui::End();
+}
+
+/* --------------------------------------------------------------------------
+ * Pane: Symbol Table Browser (Phase 4)
+ *
+ * Shows all symbols in the session's symbol table.
+ * Filter by name prefix.  Click an address to navigate disassembly.
+ * Inline add-row at top; per-row delete button.
+ * -------------------------------------------------------------------------- */
+static void draw_pane_symbols(void)
+{
+    if (!show_symbols) return;
+    ImGui::Begin("Symbols", &show_symbols);
+
+    int count = sim_sym_count(g_sim);
+
+    /* Filter bar */
+    ImGui::SetNextItemWidth(160.0f);
+    ImGui::InputText("Filter##sf", g_sym_filter, sizeof(g_sym_filter));
+    ImGui::SameLine();
+    ImGui::TextDisabled("%d symbols", count);
+
+    /* Add row */
+    ImGui::Separator();
+    static char sym_new_addr[8]  = "";
+    static char sym_new_name[32] = "";
+    static int  sym_new_type_idx = 0;
+    static const char *sym_types[] = { "LABEL","VAR","CONST","FUNC","IO","REGION","TRAP" };
+    ImGui::SetNextItemWidth(60.0f);
+    ImGui::InputText("Addr##sna", sym_new_addr, sizeof(sym_new_addr),
+                     ImGuiInputTextFlags_CharsHexadecimal);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(120.0f);
+    ImGui::InputText("Name##snn", sym_new_name, sizeof(sym_new_name));
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(75.0f);
+    ImGui::Combo("##snt", &sym_new_type_idx, sym_types, IM_ARRAYSIZE(sym_types));
+    ImGui::SameLine();
+    bool can_add_sym = (sym_new_addr[0] && sym_new_name[0]);
+    if (!can_add_sym) ImGui::BeginDisabled();
+    if (ImGui::SmallButton("Add##sna2")) {
+        uint16_t addr = (uint16_t)strtol(sym_new_addr, NULL, 16);
+        sim_sym_add(g_sim, addr, sym_new_name, sym_types[sym_new_type_idx]);
+        sym_new_addr[0] = '\0';
+        sym_new_name[0] = '\0';
+    }
+    if (!can_add_sym) ImGui::EndDisabled();
+    ImGui::Separator();
+
+    if (count == 0 && !can_add_sym) {
+        ImGui::TextDisabled("No symbols loaded.");
+        ImGui::End();
+        return;
+    }
+
+    const ImGuiTableFlags tf =
+        ImGuiTableFlags_SizingFixedFit |
+        ImGuiTableFlags_BordersInnerV  |
+        ImGuiTableFlags_ScrollY        |
+        ImGuiTableFlags_RowBg;
+
+    float avail_h = ImGui::GetContentRegionAvail().y;
+    if (ImGui::BeginTable("##symtab", 5, tf, ImVec2(0.0f, avail_h))) {
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableSetupColumn("Addr",    ImGuiTableColumnFlags_WidthFixed,   52.0f);
+        ImGui::TableSetupColumn("Name",    ImGuiTableColumnFlags_WidthStretch, 2.0f);
+        ImGui::TableSetupColumn("Type",    ImGuiTableColumnFlags_WidthFixed,   62.0f);
+        ImGui::TableSetupColumn("Comment", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("",        ImGuiTableColumnFlags_WidthFixed,   22.0f);
+        ImGui::TableHeadersRow();
+
+        int to_del = -1;
+        for (int i = 0; i < count; i++) {
+            uint16_t addr;
+            char     name[64], comment[128];
+            int      type;
+            if (!sim_sym_get_idx(g_sim, i, &addr, name, sizeof(name),
+                                 &type, comment, sizeof(comment))) continue;
+
+            if (g_sym_filter[0]) {
+                bool match = false;
+                const char *f = g_sym_filter;
+                size_t flen   = strlen(f);
+                const char *m = name;
+                size_t mlen   = strlen(m);
+                for (size_t j = 0; j + flen <= mlen && !match; j++) {
+                    bool ok = true;
+                    for (size_t k = 0; k < flen; k++)
+                        if (tolower((unsigned char)m[j+k]) != tolower((unsigned char)f[k]))
+                            { ok = false; break; }
+                    if (ok) match = true;
+                }
+                if (!match) continue;
+            }
+
+            ImGui::TableNextRow();
+
+            ImGui::TableSetColumnIndex(0);
+            /* Clicking navigates the disassembly pane */
+            char addr_id[24];
+            snprintf(addr_id, sizeof(addr_id), "$%04X##sy%d", (unsigned)addr, i);
+            if (ImGui::Selectable(addr_id, false, ImGuiSelectableFlags_SpanAllColumns)) {
+                g_disasm_addr   = addr;
+                g_disasm_follow = false;
+            }
+
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(name);
+
+            ImGui::TableSetColumnIndex(2);
+            ImGui::TextDisabled("%s", sim_sym_type_name(type));
+
+            ImGui::TableSetColumnIndex(3);
+            ImGui::TextDisabled("%s", comment);
+
+            ImGui::TableSetColumnIndex(4);
+            char del_id[16]; snprintf(del_id, sizeof(del_id), "X##sy%d", i);
+            if (ImGui::SmallButton(del_id)) to_del = i;
+        }
+        ImGui::EndTable();
+        if (to_del >= 0) sim_sym_remove_idx(g_sim, to_del);
+    }
+    ImGui::End();
+}
+
+/* --------------------------------------------------------------------------
+ * Pane: Source Viewer (Phase 4)
+ *
+ * View mode: shows the loaded .asm source with syntax colouring.
+ * Comments = green, labels/defs = yellow, mnemonics = cyan.
+ * Search-and-highlight with jump-to-line.
+ * -------------------------------------------------------------------------- */
+static void draw_pane_source(void)
+{
+    if (!show_source) return;
+    ImGui::Begin("Source", &show_source);
+
+    /* Reload if filename changed */
+    const char *cur_file = sim_get_filename(g_sim);
+    if (cur_file && cur_file[0] && strcmp(cur_file, g_src_loaded_file) != 0)
+        src_load(cur_file);
+
+    if (g_src_line_count == 0) {
+        ImGui::TextDisabled("(no source loaded — load a .asm file first)");
+        ImGui::End();
+        return;
+    }
+
+    /* Search bar */
+    bool do_search = false, do_goto = false;
+    ImGui::SetNextItemWidth(180.0f);
+    if (ImGui::InputText("##srcsearch", g_src_search, sizeof(g_src_search),
+                         ImGuiInputTextFlags_EnterReturnsTrue))
+        do_search = true;
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Find")) do_search = true;
+    ImGui::SameLine();
+    static char goto_buf[8] = "";
+    ImGui::SetNextItemWidth(56.0f);
+    if (ImGui::InputText("Line##srgl", goto_buf, sizeof(goto_buf),
+                         ImGuiInputTextFlags_CharsDecimal |
+                         ImGuiInputTextFlags_EnterReturnsTrue))
+        do_goto = true;
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Go##srgg")) do_goto = true;
+    ImGui::SameLine();
+    ImGui::TextDisabled("%d lines", g_src_line_count);
+    ImGui::Separator();
+
+    /* Search logic */
+    if (do_search && g_src_search[0]) {
+        size_t nlen  = strlen(g_src_search);
+        int    start = (g_src_search_hit >= 0) ? g_src_search_hit + 1 : 0;
+        int    found = -1;
+        for (int i = 0; i < g_src_line_count && found < 0; i++) {
+            int         idx = (start + i) % g_src_line_count;
+            const char *h   = g_src_lines[idx];
+            size_t      hlen = strlen(h);
+            for (size_t j = 0; j + nlen <= hlen && found < 0; j++) {
+                bool ok = true;
+                for (size_t k = 0; k < nlen; k++)
+                    if (tolower((unsigned char)h[j+k]) != tolower((unsigned char)g_src_search[k]))
+                        { ok = false; break; }
+                if (ok) found = idx;
+            }
+        }
+        g_src_search_hit = found;
+    }
+    if (do_goto && goto_buf[0]) {
+        int ln = atoi(goto_buf) - 1;
+        if (ln >= 0 && ln < g_src_line_count) g_src_search_hit = ln;
+    }
+
+    /* Source table */
+    const ImGuiTableFlags tf =
+        ImGuiTableFlags_SizingFixedFit |
+        ImGuiTableFlags_ScrollY        |
+        ImGuiTableFlags_RowBg;
+
+    float avail_h = ImGui::GetContentRegionAvail().y;
+    if (ImGui::BeginTable("##srctab", 2, tf, ImVec2(0.0f, avail_h))) {
+        ImGui::TableSetupScrollFreeze(0, 0);
+        ImGui::TableSetupColumn("##ln",  ImGuiTableColumnFlags_WidthFixed,   38.0f);
+        ImGui::TableSetupColumn("##src", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+
+        /* Scroll to highlighted line */
+        static int scroll_to = -1;
+        if (g_src_search_hit >= 0 && (do_search || do_goto))
+            scroll_to = g_src_search_hit;
+
+        ImGuiListClipper clipper;
+        clipper.Begin(g_src_line_count);
+        while (clipper.Step()) {
+            for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++) {
+                ImGui::TableNextRow();
+
+                if (i == g_src_search_hit)
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
+                        ImGui::GetColorU32(ImVec4(0.3f, 0.4f, 0.8f, 0.35f)));
+
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextDisabled("%4d", i + 1);
+
+                ImGui::TableSetColumnIndex(1);
+                const char *line = g_src_lines[i];
+                const char *p    = line;
+                while (*p == ' ' || *p == '\t') p++;
+
+                if (!*p) {
+                    ImGui::Text(" ");
+                } else if (*p == ';') {
+                    /* Full comment line */
+                    ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f), "%s", line);
+                } else if (p == line) {
+                    /* Label / definition at column 0 */
+                    const char *semi = strchr(line, ';');
+                    if (semi) {
+                        char lbuf[SRC_MAX_LINE_LEN];
+                        int ll = (int)(semi - line);
+                        if (ll >= SRC_MAX_LINE_LEN) ll = SRC_MAX_LINE_LEN - 1;
+                        memcpy(lbuf, line, ll); lbuf[ll] = '\0';
+                        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "%s", lbuf);
+                        ImGui::SameLine(0, 0);
+                        ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f), "%s", semi);
+                    } else {
+                        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "%s", line);
+                    }
+                } else {
+                    /* Indented instruction: indent(dim) + mnemonic(cyan) + operand + comment(green) */
+                    const char *mnem_s = p;
+                    while (*p && *p != ' ' && *p != '\t' && *p != ';') p++;
+                    const char *mnem_e = p;
+                    const char *semi   = strchr(mnem_e, ';');
+                    const char *tail_e = semi ? semi : (line + strlen(line));
+                    int piece = 0;
+
+                    /* Leading indent */
+                    if (mnem_s > line) {
+                        char ibuf[64];
+                        int il = (int)(mnem_s - line);
+                        if (il > 63) il = 63;
+                        memcpy(ibuf, line, il); ibuf[il] = '\0';
+                        ImGui::TextDisabled("%s", ibuf);
+                        if (mnem_e > mnem_s || tail_e > mnem_e || semi)
+                            ImGui::SameLine(0, 0);
+                        piece++;
+                    }
+                    /* Mnemonic in cyan */
+                    if (mnem_e > mnem_s) {
+                        char mbuf[16];
+                        int ml = (int)(mnem_e - mnem_s);
+                        if (ml > 15) ml = 15;
+                        memcpy(mbuf, mnem_s, ml); mbuf[ml] = '\0';
+                        if (piece) ImGui::SameLine(0, 0);
+                        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", mbuf);
+                        piece++;
+                    }
+                    /* Operand */
+                    if (tail_e > mnem_e) {
+                        char obuf[SRC_MAX_LINE_LEN];
+                        int ol = (int)(tail_e - mnem_e);
+                        if (ol >= SRC_MAX_LINE_LEN) ol = SRC_MAX_LINE_LEN - 1;
+                        memcpy(obuf, mnem_e, ol); obuf[ol] = '\0';
+                        if (piece) ImGui::SameLine(0, 0);
+                        ImGui::TextUnformatted(obuf);
+                        piece++;
+                    }
+                    /* Inline comment */
+                    if (semi) {
+                        if (piece) ImGui::SameLine(0, 0);
+                        ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f), "%s", semi);
+                        piece++;
+                    }
+                    if (!piece) ImGui::Text(" ");
+                }
+            }
+        }
+
+        /* Scroll to hit */
+        if (scroll_to >= 0) {
+            float lh = ImGui::GetTextLineHeightWithSpacing();
+            ImGui::SetScrollY((float)scroll_to * lh - avail_h * 0.4f);
+            scroll_to = -1;
+        }
+
+        ImGui::EndTable();
+    }
+    ImGui::End();
+}
+
+/* --------------------------------------------------------------------------
+ * Pane: Statistics / Profiler (Phase 4)
+ *
+ * Three tabs: Histogram (top-N by exec count), Heatmap (65536-byte grid),
+ * Cycles (execution budget by instruction category).
+ * -------------------------------------------------------------------------- */
+static void draw_pane_profiler(void)
+{
+    if (!show_profiler) return;
+    ImGui::Begin("Profiler", &show_profiler);
+
+    bool enabled = (sim_profiler_is_enabled(g_sim) != 0);
+    if (ImGui::Checkbox("Record##prec", &enabled))
+        sim_profiler_enable(g_sim, enabled ? 1 : 0);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Clear##pclr")) {
+        sim_profiler_clear(g_sim);
+        g_heatmap_dirty = true;
+    }
+    ImGui::Separator();
+
+    if (ImGui::BeginTabBar("##proftabs")) {
+        /* ---- Histogram tab ---- */
+        if (ImGui::BeginTabItem("Histogram")) {
+            uint16_t top_addrs[32];
+            uint32_t top_counts[32];
+            int top_n = sim_profiler_top_exec(g_sim, top_addrs, top_counts, 32);
+
+            if (top_n == 0) {
+                ImGui::TextDisabled("No data — enable Record and run the program.");
+            } else {
+                uint32_t max_c = top_counts[0] > 0 ? top_counts[0] : 1;
+                const ImGuiTableFlags tf =
+                    ImGuiTableFlags_SizingFixedFit |
+                    ImGuiTableFlags_BordersInnerV  |
+                    ImGuiTableFlags_ScrollY        |
+                    ImGuiTableFlags_RowBg;
+                float avail_h = ImGui::GetContentRegionAvail().y;
+                if (ImGui::BeginTable("##histtab", 5, tf, ImVec2(0.0f, avail_h))) {
+                    ImGui::TableSetupScrollFreeze(0, 1);
+                    ImGui::TableSetupColumn("Addr",   ImGuiTableColumnFlags_WidthFixed,   52.0f);
+                    ImGui::TableSetupColumn("Instr",  ImGuiTableColumnFlags_WidthFixed,   90.0f);
+                    ImGui::TableSetupColumn("Count",  ImGuiTableColumnFlags_WidthFixed,   65.0f);
+                    ImGui::TableSetupColumn("Cycles", ImGuiTableColumnFlags_WidthFixed,   65.0f);
+                    ImGui::TableSetupColumn("Bar",    ImGuiTableColumnFlags_WidthStretch, 1.0f);
+                    ImGui::TableHeadersRow();
+
+                    for (int i = 0; i < top_n; i++) {
+                        uint16_t addr  = top_addrs[i];
+                        uint32_t count = top_counts[i];
+                        uint32_t cycs  = sim_profiler_get_cycles(g_sim, addr);
+
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::Text("$%04X", (unsigned)addr);
+
+                        ImGui::TableSetColumnIndex(1);
+                        char dbuf[64];
+                        sim_disassemble_one(g_sim, addr, dbuf, sizeof(dbuf));
+                        /* dbuf = "$XXXX: 18-char-hexdump mnemonic operand"
+                         * mnemonic starts at offset 7+19 = 26 from the string.
+                         * Simpler: skip the 7-char address prefix and show ~20 chars */
+                        const char *ins = (strlen(dbuf) > 7) ? dbuf + 7 : dbuf;
+                        /* Skip the hex dump field (18 chars) + 1 space */
+                        const char *mn  = (strlen(ins) > 19) ? ins + 19 : ins;
+                        while (*mn == ' ') mn++;
+                        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f),
+                                           "%-16.16s", mn);
+
+                        ImGui::TableSetColumnIndex(2);
+                        ImGui::Text("%u", (unsigned)count);
+
+                        ImGui::TableSetColumnIndex(3);
+                        ImGui::Text("%u", (unsigned)cycs);
+
+                        ImGui::TableSetColumnIndex(4);
+                        float frac = (float)count / (float)max_c;
+                        char overlay[24];
+                        snprintf(overlay, sizeof(overlay), "%.1f%%", frac * 100.0f);
+                        ImGui::ProgressBar(frac, ImVec2(-1.0f, 0.0f), overlay);
+                    }
+                    ImGui::EndTable();
+                }
+            }
+            ImGui::EndTabItem();
+        }
+
+        /* ---- Heatmap tab ---- */
+        if (ImGui::BeginTabItem("Heatmap")) {
+            if (g_heatmap_dirty && g_heatmap_tex)
+                update_heatmap_tex();
+
+            ImGui::TextDisabled("Execution density — X=low byte, Y=page (high byte)");
+            ImGui::Separator();
+
+            if (g_heatmap_tex) {
+                float avail_w = ImGui::GetContentRegionAvail().x;
+                float sz = (avail_w < 512.0f) ? avail_w : 512.0f;
+                sz -= sz * fmodf(sz, 1.0f); /* keep integer size */
+                ImVec2 img_size(sz, sz);
+                ImGui::Image((ImTextureID)(uintptr_t)g_heatmap_tex, img_size);
+
+                if (ImGui::IsItemHovered()) {
+                    ImVec2 mp   = ImGui::GetMousePos();
+                    ImVec2 rmin = ImGui::GetItemRectMin();
+                    ImVec2 rmax = ImGui::GetItemRectMax();
+                    float  fx   = (mp.x - rmin.x) / (rmax.x - rmin.x);
+                    float  fy   = (mp.y - rmin.y) / (rmax.y - rmin.y);
+                    if (fx >= 0.0f && fx < 1.0f && fy >= 0.0f && fy < 1.0f) {
+                        int      bx = (int)(fx * 256);
+                        int      by = (int)(fy * 256);
+                        uint16_t ha = (uint16_t)(by * 256 + bx);
+                        uint32_t hc = sim_profiler_get_exec(g_sim, ha);
+                        ImGui::BeginTooltip();
+                        ImGui::Text("$%04X : %u exec", (unsigned)ha, (unsigned)hc);
+                        ImGui::EndTooltip();
+                    }
+                }
+            } else {
+                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                                   "Heatmap texture not initialised.");
+            }
+            ImGui::EndTabItem();
+        }
+
+        /* ---- Cycle Budget tab ---- */
+        if (ImGui::BeginTabItem("Cycles")) {
+            struct Bucket { const char *name; uint64_t cycles; uint32_t count; };
+            Bucket buckets[10] = {
+                { "Load",      0, 0 }, { "Store",     0, 0 },
+                { "Branch",    0, 0 }, { "Jump/Call", 0, 0 },
+                { "Stack",     0, 0 }, { "Arithmetic",0, 0 },
+                { "Logic",     0, 0 }, { "Compare",   0, 0 },
+                { "Transfer",  0, 0 }, { "Other",     0, 0 },
+            };
+            uint64_t total_cycles = 0;
+            uint32_t total_exec   = 0;
+
+            for (int addr = 0; addr < 65536; addr++) {
+                uint32_t ec = sim_profiler_get_exec(g_sim, (uint16_t)addr);
+                if (!ec) continue;
+                uint32_t cc = sim_profiler_get_cycles(g_sim, (uint16_t)addr);
+                total_exec   += ec;
+                total_cycles += cc;
+
+                /* Classify by opcode mnemonic */
+                sim_opcode_info_t info;
+                char m0 = 0, m1 = 0;
+                uint8_t opbyte = sim_mem_read_byte(g_sim, (uint16_t)addr);
+                if (sim_opcode_by_byte(g_sim, opbyte, &info)) {
+                    m0 = (char)toupper((unsigned char)info.mnemonic[0]);
+                    m1 = (char)toupper((unsigned char)info.mnemonic[1]);
+                }
+                int b = 9; /* Other */
+                if      (m0=='L' && m1=='D')                   b = 0;
+                else if (m0=='S' && m1=='T')                   b = 1;
+                else if (m0=='B' && m1!='I' && m1!='R')        b = 2;
+                else if (m0=='J' || (m0=='R' && (m1=='T'||m1=='E'))) b = 3;
+                else if (m0=='P' && (m1=='H' || m1=='L'))      b = 4;
+                else if ((m0=='A'&&m1=='D') || (m0=='S'&&m1=='B')
+                         || m0=='I' || m0=='D')                b = 5;
+                else if ((m0=='A'&&m1=='N') || m0=='O' || (m0=='E'&&m1=='O')) b = 6;
+                else if (m0=='C' && (m1=='M'||m1=='P'))        b = 7;
+                else if (m0=='T')                              b = 8;
+
+                buckets[b].cycles += cc;
+                buckets[b].count  += ec;
+            }
+
+            if (total_exec == 0) {
+                ImGui::TextDisabled("No data — enable Record and run the program.");
+            } else {
+                ImGui::Text("Total: %u instructions, %llu cycles",
+                    (unsigned)total_exec, (unsigned long long)total_cycles);
+                ImGui::Separator();
+
+                const ImGuiTableFlags tf =
+                    ImGuiTableFlags_SizingFixedFit |
+                    ImGuiTableFlags_BordersInnerV  |
+                    ImGuiTableFlags_RowBg;
+                if (ImGui::BeginTable("##cycbud", 4, tf)) {
+                    ImGui::TableSetupColumn("Category",  ImGuiTableColumnFlags_WidthFixed,   90.0f);
+                    ImGui::TableSetupColumn("Count",     ImGuiTableColumnFlags_WidthFixed,   65.0f);
+                    ImGui::TableSetupColumn("Cycles",    ImGuiTableColumnFlags_WidthFixed,   80.0f);
+                    ImGui::TableSetupColumn("Share",     ImGuiTableColumnFlags_WidthStretch, 1.0f);
+                    ImGui::TableHeadersRow();
+
+                    for (int i = 0; i < 10; i++) {
+                        if (!buckets[i].count) continue;
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted(buckets[i].name);
+                        ImGui::TableSetColumnIndex(1); ImGui::Text("%u", (unsigned)buckets[i].count);
+                        ImGui::TableSetColumnIndex(2); ImGui::Text("%llu", (unsigned long long)buckets[i].cycles);
+                        ImGui::TableSetColumnIndex(3);
+                        float frac = total_cycles ? (float)buckets[i].cycles / (float)total_cycles : 0.0f;
+                        char overlay[16]; snprintf(overlay, sizeof(overlay), "%.1f%%", frac * 100.0f);
+                        ImGui::ProgressBar(frac, ImVec2(-1.0f, 0.0f), overlay);
+                    }
+                    ImGui::EndTable();
+                }
+            }
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
     ImGui::End();
 }
 
@@ -1669,6 +2444,14 @@ int main(int /*argc*/, char ** /*argv*/)
     ImGui_ImplSDL2_InitForOpenGL(window, gl_ctx);
     ImGui_ImplOpenGL3_Init("#version 330");
 
+    /* Create heatmap texture for profiler (256×256 RGB, nearest-filter) */
+    glGenTextures(1, &g_heatmap_tex);
+    glBindTexture(GL_TEXTURE_2D, g_heatmap_tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 256, 256, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
     fprintf(stdout, "sim6502-gui: display %d  scale=%.2fx  font=%.0fpx  window=%dx%d%s\n",
             display_index, ui_scale, font_cfg.SizePixels,
             win_w, win_h, first_run ? "  (first run)" : "");
@@ -1681,7 +2464,7 @@ int main(int /*argc*/, char ** /*argv*/)
     }
 
     /* Console welcome message */
-    con_add(CON_COL_OK,     "sim6502-gui Phase 2 ready.  Type 'help' for commands.");
+    con_add(CON_COL_OK,     "sim6502-gui Phase 4 ready.  Type 'help' for commands.");
     con_add(CON_COL_NORMAL, "Processor: %s", sim_processor_name(g_sim));
 
     bool running        = true;
@@ -1742,6 +2525,7 @@ int main(int /*argc*/, char ** /*argv*/)
             int ev_code = sim_step(g_sim, g_speed);
             g_last_write_count = sim_get_last_writes(g_sim, g_last_writes, 256);
             update_watches();
+            if (sim_profiler_is_enabled(g_sim)) g_heatmap_dirty = true;
             if (ev_code > 0)
                 g_running = false;
             else if (ev_code < 0)
@@ -1822,6 +2606,11 @@ int main(int /*argc*/, char ** /*argv*/)
                     ImGui::MenuItem("Stack",       nullptr, &show_stack);
                     ImGui::MenuItem("Watch",       nullptr, &show_watches);
                     ImGui::Separator();
+                    ImGui::MenuItem("Instr Ref",   nullptr, &show_iref);
+                    ImGui::MenuItem("Symbols",     nullptr, &show_symbols);
+                    ImGui::MenuItem("Source",      nullptr, &show_source);
+                    ImGui::MenuItem("Profiler",    nullptr, &show_profiler);
+                    ImGui::Separator();
                     if (ImGui::BeginMenu("Font Size")) {
                         static const int sizes[] = { 10, 11, 12, 13, 14, 15, 16, 18, 20, 24 };
                         for (int sz : sizes) {
@@ -1879,6 +2668,12 @@ int main(int /*argc*/, char ** /*argv*/)
         draw_pane_stack();
         draw_pane_watches();
 
+        /* Phase 4 panes */
+        draw_pane_iref();
+        draw_pane_symbols();
+        draw_pane_source();
+        draw_pane_profiler();
+
         /* Render */
         ImGui::Render();
         int fb_w = 0, fb_h = 0;
@@ -1890,6 +2685,7 @@ int main(int /*argc*/, char ** /*argv*/)
         SDL_GL_SwapWindow(window);
     }
 
+    if (g_heatmap_tex) { glDeleteTextures(1, &g_heatmap_tex); g_heatmap_tex = 0; }
     sim_destroy(g_sim);
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplSDL2_Shutdown();
