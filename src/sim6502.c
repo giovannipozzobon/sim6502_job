@@ -1856,6 +1856,8 @@ int sim_step(sim_session_t *s, int count)
     if (s->state == SIM_IDLE || s->state == SIM_FINISHED)
         return -1;
 
+    s->mem.mem_writes = 0;   /* clear per-step write log */
+
     for (int i = 0; i < count; i++) {
         /* Trap handler (SYM_TRAP symbol intercepts) */
         int tr = handle_trap(&s->symbols, &s->cpu, &s->mem, s->handlers);
@@ -2028,4 +2030,72 @@ const char *sim_sym_by_addr(sim_session_t *s, uint16_t addr)
     if (symbol_lookup_addr(&s->symbols, addr, sym_name_buf))
         return sym_name_buf;
     return NULL;
+}
+
+/* --------------------------------------------------------------------------
+ * Phase 2 extensions
+ * -------------------------------------------------------------------------- */
+
+int sim_has_breakpoint(sim_session_t *s, uint16_t addr)
+{
+    if (!s) return 0;
+    for (int i = 0; i < s->breakpoints.count; i++)
+        if (s->breakpoints.breakpoints[i].enabled &&
+            s->breakpoints.breakpoints[i].address == addr)
+            return 1;
+    return 0;
+}
+
+int sim_get_opcode_cycles(sim_session_t *s, uint16_t addr)
+{
+    if (!s || s->state == SIM_IDLE) return 0;
+    cpu_t tmp = s->cpu;
+    tmp.pc = addr;
+    const dispatch_entry_t *te = peek_dispatch(&tmp, &s->mem, &s->dt, s->cpu_type);
+    return te ? (int)te->cycles : 0;
+}
+
+int sim_get_last_writes(sim_session_t *s, uint16_t *addrs, int max_count)
+{
+    if (!s || !addrs || max_count <= 0) return 0;
+    int n = s->mem.mem_writes;
+    if (n > 256)       n = 256;
+    if (n > max_count) n = max_count;
+    for (int i = 0; i < n; i++)
+        addrs[i] = s->mem.mem_addr[i];
+    return n;
+}
+
+void sim_set_pc(sim_session_t *s, uint16_t pc)
+{
+    if (!s) return;
+    s->cpu.pc = pc;
+}
+
+void sim_set_reg_byte(sim_session_t *s, const char *name, uint8_t val)
+{
+    if (!s || !name) return;
+    if      (strcmp(name, "A") == 0) s->cpu.a = val;
+    else if (strcmp(name, "X") == 0) s->cpu.x = val;
+    else if (strcmp(name, "Y") == 0) s->cpu.y = val;
+    else if (strcmp(name, "Z") == 0) s->cpu.z = val;
+    else if (strcmp(name, "B") == 0) s->cpu.b = val;
+    else if (strcmp(name, "S") == 0) s->cpu.s = (unsigned short)val;
+    else if (strcmp(name, "P") == 0) s->cpu.p = val;
+}
+
+int sim_break_count(sim_session_t *s)
+{
+    return s ? s->breakpoints.count : 0;
+}
+
+int sim_break_get(sim_session_t *s, int idx, uint16_t *addr, char *cond, int cond_sz)
+{
+    if (!s || idx < 0 || idx >= s->breakpoints.count) return 0;
+    if (addr) *addr = s->breakpoints.breakpoints[idx].address;
+    if (cond && cond_sz > 0) {
+        strncpy(cond, s->breakpoints.breakpoints[idx].condition, cond_sz - 1);
+        cond[cond_sz - 1] = '\0';
+    }
+    return 1;
 }

@@ -1,17 +1,21 @@
 /*
- * sim6502-gui — Phase 1
+ * sim6502-gui — Phase 2
  *
  * Main entry point for the GUI binary.  Integrates with the simulator core
  * via the sim_api.h library interface (sim_session_t *).
  *
  * Phase 1 features:
- *   - Toolbar: Load (filename input), Step, Run/Pause, Reset, Processor selector
+ *   - Toolbar: Load, Step, Run/Pause, Reset, Processor selector
  *   - Status bar: state / PC+registers / filename
- *   - Registers pane: live CPU data, colour-coded flags
- *   - Disassembly pane: follow-PC disassembly
- *   - Memory pane: hex dump with address navigation
- *   - Console pane: session information
- *   - Keyboard shortcuts: F5 run, F6/Esc pause, F7 step, Ctrl+R reset, Ctrl+L focus load
+ *   - Default docking layout: Registers | Disassembly / Memory | Console
+ *   - Keyboard shortcuts: F5 run, F6/Esc pause, F7 step, Ctrl+R reset, Ctrl+L load
+ *   - Persistent font size, window position and size
+ *
+ * Phase 2 additions:
+ *   - Register pane: compact/expanded modes, diff highlighting, click-to-edit
+ *   - Disassembly pane: table layout, clickable BP gutter, cycle counts, symbols
+ *   - Memory pane: last-write byte highlighting, follow-PC/SP buttons
+ *   - Console pane: scrollable log, command history, full CLI interpreter
  *
  * Build: make gui
  * Dependencies: SDL2, OpenGL 3.3, Dear ImGui (docking branch)
@@ -23,6 +27,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "imgui_impl_sdl2.h"
@@ -34,27 +39,27 @@ extern "C" {
 }
 
 /* --------------------------------------------------------------------------
- * Globals
+ * Core globals
  * -------------------------------------------------------------------------- */
-static sim_session_t *g_sim        = NULL;
-static bool           g_running    = false;   /* true = run mode (call sim_step each frame) */
-static int            g_speed      = 5000;    /* instructions per frame when running */
+static sim_session_t *g_sim     = NULL;
+static bool  g_running          = false;  /* true = run mode each frame */
+static int   g_speed            = 5000;   /* instructions per frame */
 
 /* Font / DPI state */
-static float g_ui_scale      = 1.0f;  /* set once from detect_ui_scale() */
-static int   g_base_font_size = 13;   /* logical font size in pixels (before scale) */
-static bool  g_font_rebuild   = false;
+static float g_ui_scale         = 1.0f;
+static int   g_base_font_size   = 13;
+static bool  g_font_rebuild     = false;
 
-/* SDL window handle — accessible from the INI write callback */
+/* SDL window handle — used by INI write callback */
 static SDL_Window *g_window = nullptr;
 
 /* Toolbar state */
-static char g_filename_buf[512]    = "";
-static bool g_focus_filename       = false;   /* Ctrl+L sets this */
+static char g_filename_buf[512] = "";
+static bool g_focus_filename    = false;
 
 static const char *g_proc_labels[] = { "6502", "6502-undoc", "65C02", "65CE02", "45GS02" };
 static const char *g_proc_ids[]    = { "6502", "6502-undoc", "65c02", "65ce02", "45gs02" };
-static int         g_proc_idx      = 0;
+static int  g_proc_idx             = 0;
 
 /* Pane visibility */
 static bool show_registers   = true;
@@ -63,18 +68,50 @@ static bool show_memory      = true;
 static bool show_console     = true;
 
 /* --------------------------------------------------------------------------
+ * Phase 2 state
+ * -------------------------------------------------------------------------- */
+
+/* Register diff — snapshot CPU before each sim_step call */
+static cpu_t g_prev_cpu       = {};
+static bool  g_prev_cpu_valid = false;
+
+/* Registers pane */
+static bool g_regs_expanded = false;
+
+/* Disassembly view */
+static uint16_t g_disasm_addr   = 0x0200;
+static bool     g_disasm_follow = true;
+
+/* Memory view — last-write log (populated after each sim_step) */
+static uint16_t g_last_writes[256];
+static int      g_last_write_count = 0;
+
+/* Console */
+#define CON_MAX_LINES   1024
+#define CON_MAX_HISTORY   64
+
+struct ConLine { char text[256]; ImVec4 color; };
+
+static ConLine g_con_lines[CON_MAX_LINES];
+static int     g_con_line_count    = 0;
+static char    g_con_input[256]    = "";
+static bool    g_con_scroll_bottom = true;
+static int     g_con_history_pos   = -1;
+static char    g_con_history_buf[CON_MAX_HISTORY][256];
+static int     g_con_history_count = 0;
+
+/* Console text colours */
+static const ImVec4 CON_COL_NORMAL = ImVec4(0.85f, 0.85f, 0.85f, 1.0f);
+static const ImVec4 CON_COL_CMD    = ImVec4(0.6f,  0.8f,  1.0f,  1.0f);
+static const ImVec4 CON_COL_OK     = ImVec4(0.4f,  1.0f,  0.4f,  1.0f);
+static const ImVec4 CON_COL_ERR    = ImVec4(1.0f,  0.4f,  0.4f,  1.0f);
+static const ImVec4 CON_COL_WARN   = ImVec4(1.0f,  0.85f, 0.3f,  1.0f);
+
+/* --------------------------------------------------------------------------
  * Font rebuild
- *
- * Clears the font atlas, re-adds the default font at the current base size
- * (multiplied by the DPI scale factor), and re-uploads the GL texture.
- * Must be called outside an ImGui frame (before ImGui_ImplOpenGL3_NewFrame).
  * -------------------------------------------------------------------------- */
 static void rebuild_font(void)
 {
-    /* This backend sets ImGuiBackendFlags_RendererHasTextures.
-     * Clearing and rebuilding the atlas marks the old texture for deletion
-     * and queues the new one; ImGui_ImplOpenGL3_RenderDrawData handles the
-     * actual GL upload/teardown automatically on the next render call.    */
     ImGuiIO &io = ImGui::GetIO();
     io.Fonts->Clear();
     ImFontConfig font_cfg;
@@ -85,9 +122,6 @@ static void rebuild_font(void)
 
 /* --------------------------------------------------------------------------
  * UI scale detection
- *
- * Priority: SIM6502_SCALE > GDK_SCALE > QT_SCALE_FACTOR > SDL DPI > resolution.
- * Result is snapped to 0.25 steps for crisp rasterisation.
  * -------------------------------------------------------------------------- */
 static float detect_ui_scale(int display_index)
 {
@@ -148,11 +182,10 @@ static void setup_default_layout(ImGuiID dockspace_id, ImVec2 size)
 }
 
 /* --------------------------------------------------------------------------
- * Toolbar
+ * do_load: assemble and load the file named in g_filename_buf
  * -------------------------------------------------------------------------- */
 static void do_load(void)
 {
-    /* Attempt to load the file path in g_filename_buf */
     if (g_filename_buf[0] == '\0') return;
     g_running = false;
     if (sim_load_asm(g_sim, g_filename_buf) != 0)
@@ -161,12 +194,308 @@ static void do_load(void)
         fprintf(stdout, "sim6502-gui: loaded '%s'\n", g_filename_buf);
 }
 
+/* --------------------------------------------------------------------------
+ * Console helpers
+ * -------------------------------------------------------------------------- */
+static void con_add(ImVec4 color, const char *fmt, ...)
+{
+    if (g_con_line_count >= CON_MAX_LINES) {
+        memmove(g_con_lines, g_con_lines + 1,
+                sizeof(g_con_lines[0]) * (CON_MAX_LINES - 1));
+        g_con_line_count = CON_MAX_LINES - 1;
+    }
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(g_con_lines[g_con_line_count].text,
+              sizeof(g_con_lines[0].text), fmt, ap);
+    va_end(ap);
+    g_con_lines[g_con_line_count].color = color;
+    g_con_line_count++;
+    g_con_scroll_bottom = true;
+}
+
+/* InputText history callback */
+static int con_input_cb(ImGuiInputTextCallbackData *data)
+{
+    if (data->EventFlag == ImGuiInputTextFlags_CallbackHistory) {
+        const int prev = g_con_history_pos;
+        if (data->EventKey == ImGuiKey_UpArrow) {
+            if (g_con_history_pos == -1)
+                g_con_history_pos = g_con_history_count - 1;
+            else if (g_con_history_pos > 0)
+                g_con_history_pos--;
+        } else if (data->EventKey == ImGuiKey_DownArrow) {
+            if (g_con_history_pos != -1)
+                if (++g_con_history_pos >= g_con_history_count)
+                    g_con_history_pos = -1;
+        }
+        if (prev != g_con_history_pos) {
+            const char *h = (g_con_history_pos >= 0)
+                            ? g_con_history_buf[g_con_history_pos] : "";
+            data->DeleteChars(0, data->BufTextLen);
+            data->InsertChars(0, h);
+        }
+    }
+    return 0;
+}
+
+/* Command interpreter */
+static void con_exec(const char *cmd)
+{
+    con_add(CON_COL_CMD, "> %s", cmd);
+
+    /* Add to history (deduplicate consecutive identical) */
+    if (cmd[0] != '\0') {
+        if (g_con_history_count == 0 ||
+                strcmp(g_con_history_buf[g_con_history_count - 1], cmd) != 0) {
+            if (g_con_history_count >= CON_MAX_HISTORY) {
+                memmove(g_con_history_buf, g_con_history_buf + 1,
+                        sizeof(g_con_history_buf[0]) * (CON_MAX_HISTORY - 1));
+                g_con_history_count = CON_MAX_HISTORY - 1;
+            }
+            snprintf(g_con_history_buf[g_con_history_count],
+                     sizeof(g_con_history_buf[0]), "%s", cmd);
+            g_con_history_count++;
+        }
+    }
+    g_con_history_pos = -1;
+
+    /* Parse verb (first word) and args_rest (remainder of line) */
+    char buf[256];
+    strncpy(buf, cmd, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+
+    char *verb = buf;
+    while (*verb == ' ' || *verb == '\t') verb++;
+    char *verb_end = verb;
+    while (*verb_end && *verb_end != ' ' && *verb_end != '\t') verb_end++;
+    char *args_rest = verb_end;
+    while (*args_rest == ' ' || *args_rest == '\t') args_rest++;
+    if (*verb_end) *verb_end = '\0';
+    if (verb[0] == '\0') return;
+
+    /* ---- Commands ---- */
+
+    if (strcmp(verb, "help") == 0) {
+        con_add(CON_COL_NORMAL, "Commands:");
+        con_add(CON_COL_NORMAL, "  step [n]              step n instructions (default 1)");
+        con_add(CON_COL_NORMAL, "  run                   run continuously");
+        con_add(CON_COL_NORMAL, "  pause                 pause execution");
+        con_add(CON_COL_NORMAL, "  reset                 reset CPU to start address");
+        con_add(CON_COL_NORMAL, "  regs                  print CPU registers");
+        con_add(CON_COL_NORMAL, "  mem [addr] [n]        hex dump n bytes at addr");
+        con_add(CON_COL_NORMAL, "  disasm [addr] [n]     disassemble n instructions");
+        con_add(CON_COL_NORMAL, "  break <addr> [cond]   set breakpoint");
+        con_add(CON_COL_NORMAL, "  del <addr>            remove breakpoint");
+        con_add(CON_COL_NORMAL, "  breaks                list all breakpoints");
+        con_add(CON_COL_NORMAL, "  load <path>           assemble and load .asm file");
+        con_add(CON_COL_NORMAL, "  cls                   clear console output");
+        return;
+    }
+
+    if (strcmp(verb, "cls") == 0) {
+        g_con_line_count = 0;
+        return;
+    }
+
+    if (strcmp(verb, "step") == 0) {
+        int n = args_rest[0] ? atoi(args_rest) : 1;
+        if (n < 1) n = 1;
+        sim_state_t st = sim_get_state(g_sim);
+        if (st != SIM_READY && st != SIM_PAUSED) {
+            con_add(CON_COL_ERR, "Cannot step (state: %s)", sim_state_name(st));
+            return;
+        }
+        cpu_t *cpu = sim_get_cpu(g_sim);
+        if (cpu) { g_prev_cpu = *cpu; g_prev_cpu_valid = true; }
+        sim_step(g_sim, n);
+        g_last_write_count = sim_get_last_writes(g_sim, g_last_writes, 256);
+        cpu = sim_get_cpu(g_sim);
+        if (cpu) {
+            bool is45 = (sim_get_cpu_type(g_sim) == CPU_45GS02);
+            if (is45)
+                con_add(CON_COL_NORMAL,
+                    "A=%02X X=%02X Y=%02X Z=%02X B=%02X  S=%04X PC=%04X  P=%02X  Cycles=%lu",
+                    cpu->a, cpu->x, cpu->y, cpu->z, cpu->b,
+                    cpu->s, cpu->pc, cpu->p, cpu->cycles);
+            else
+                con_add(CON_COL_NORMAL,
+                    "A=%02X X=%02X Y=%02X  S=%04X PC=%04X  P=%02X  Cycles=%lu",
+                    cpu->a, cpu->x, cpu->y, cpu->s, cpu->pc, cpu->p, cpu->cycles);
+        }
+        return;
+    }
+
+    if (strcmp(verb, "run") == 0) {
+        sim_state_t st = sim_get_state(g_sim);
+        if (st == SIM_READY || st == SIM_PAUSED) {
+            g_running = true;
+            con_add(CON_COL_OK, "Running...");
+        } else {
+            con_add(CON_COL_ERR, "Cannot run (state: %s)", sim_state_name(st));
+        }
+        return;
+    }
+
+    if (strcmp(verb, "pause") == 0) {
+        g_running = false;
+        con_add(CON_COL_WARN, "Paused.");
+        return;
+    }
+
+    if (strcmp(verb, "reset") == 0) {
+        g_running = false;
+        sim_reset(g_sim);
+        g_prev_cpu_valid   = false;
+        g_last_write_count = 0;
+        con_add(CON_COL_OK, "CPU reset. State: %s", sim_state_name(sim_get_state(g_sim)));
+        return;
+    }
+
+    if (strcmp(verb, "regs") == 0) {
+        if (sim_get_state(g_sim) == SIM_IDLE) {
+            con_add(CON_COL_ERR, "No program loaded.");
+            return;
+        }
+        cpu_t *cpu = sim_get_cpu(g_sim);
+        if (!cpu) return;
+        bool is45 = (sim_get_cpu_type(g_sim) == CPU_45GS02);
+        if (is45)
+            con_add(CON_COL_NORMAL,
+                "A=%02X X=%02X Y=%02X Z=%02X B=%02X  S=%04X PC=%04X  P=%02X  Cycles=%lu",
+                cpu->a, cpu->x, cpu->y, cpu->z, cpu->b,
+                cpu->s, cpu->pc, cpu->p, cpu->cycles);
+        else
+            con_add(CON_COL_NORMAL,
+                "A=%02X X=%02X Y=%02X  S=%04X PC=%04X  P=%02X  Cycles=%lu",
+                cpu->a, cpu->x, cpu->y, cpu->s, cpu->pc, cpu->p, cpu->cycles);
+        return;
+    }
+
+    if (strcmp(verb, "mem") == 0) {
+        if (sim_get_state(g_sim) == SIM_IDLE) {
+            con_add(CON_COL_ERR, "No program loaded.");
+            return;
+        }
+        cpu_t *cpu = sim_get_cpu(g_sim);
+        uint16_t addr = cpu ? cpu->pc : 0x0200;
+        int n = 128;
+        if (args_rest[0]) {
+            char *endp;
+            addr = (uint16_t)strtol(args_rest, &endp, 16);
+            while (*endp == ' ' || *endp == '\t') endp++;
+            if (*endp) n = atoi(endp);
+        }
+        if (n < 1) n = 1;
+        if (n > 256) n = 256;
+        for (int row = 0; row * 16 < n; row++) {
+            uint16_t ra = (uint16_t)(addr + row * 16);
+            int bytes = ((row + 1) * 16 <= n) ? 16 : n - row * 16;
+            char ln[80];
+            int pos = snprintf(ln, sizeof(ln), "%04X:", ra);
+            for (int c = 0; c < bytes; c++) {
+                uint8_t v = sim_mem_read_byte(g_sim, (uint16_t)(ra + c));
+                pos += snprintf(ln + pos, (int)sizeof(ln) - pos, " %02X", v);
+            }
+            con_add(CON_COL_NORMAL, "%s", ln);
+        }
+        return;
+    }
+
+    if (strcmp(verb, "disasm") == 0) {
+        if (sim_get_state(g_sim) == SIM_IDLE) {
+            con_add(CON_COL_ERR, "No program loaded.");
+            return;
+        }
+        cpu_t *cpu = sim_get_cpu(g_sim);
+        uint16_t addr = cpu ? cpu->pc : 0x0200;
+        int n = 8;
+        if (args_rest[0]) {
+            char *endp;
+            addr = (uint16_t)strtol(args_rest, &endp, 16);
+            while (*endp == ' ' || *endp == '\t') endp++;
+            if (*endp) n = atoi(endp);
+        }
+        if (n < 1) n = 1;
+        if (n > 64) n = 64;
+        char dbuf[128];
+        for (int i = 0; i < n; i++) {
+            int consumed = sim_disassemble_one(g_sim, addr, dbuf, sizeof(dbuf));
+            con_add(CON_COL_NORMAL, "%s", dbuf);
+            if (consumed < 1) consumed = 1;
+            addr = (uint16_t)(addr + consumed);
+        }
+        return;
+    }
+
+    if (strcmp(verb, "break") == 0) {
+        if (!args_rest[0]) { con_add(CON_COL_ERR, "Usage: break <addr> [cond]"); return; }
+        char *endp;
+        uint16_t addr = (uint16_t)strtol(args_rest, &endp, 16);
+        while (*endp == ' ' || *endp == '\t') endp++;
+        const char *cond = *endp ? endp : NULL;
+        if (sim_break_set(g_sim, addr, cond))
+            con_add(CON_COL_OK, "Breakpoint set at $%04X%s%s",
+                    addr, cond ? " if " : "", cond ? cond : "");
+        else
+            con_add(CON_COL_ERR, "Breakpoint table full (max 16).");
+        return;
+    }
+
+    if (strcmp(verb, "del") == 0) {
+        if (!args_rest[0]) { con_add(CON_COL_ERR, "Usage: del <addr>"); return; }
+        uint16_t addr = (uint16_t)strtol(args_rest, NULL, 16);
+        sim_break_clear(g_sim, addr);
+        con_add(CON_COL_OK, "Breakpoint at $%04X removed.", addr);
+        return;
+    }
+
+    if (strcmp(verb, "breaks") == 0) {
+        int cnt = sim_break_count(g_sim);
+        if (cnt == 0) { con_add(CON_COL_NORMAL, "No breakpoints set."); return; }
+        con_add(CON_COL_NORMAL, "%d breakpoint(s):", cnt);
+        for (int i = 0; i < cnt; i++) {
+            uint16_t addr = 0;
+            char cond[128] = "";
+            sim_break_get(g_sim, i, &addr, cond, sizeof(cond));
+            if (cond[0])
+                con_add(CON_COL_NORMAL, "  %d: $%04X  if %s", i, addr, cond);
+            else
+                con_add(CON_COL_NORMAL, "  %d: $%04X", i, addr);
+        }
+        return;
+    }
+
+    if (strcmp(verb, "load") == 0) {
+        if (!args_rest[0]) { con_add(CON_COL_ERR, "Usage: load <path>"); return; }
+        char path[512];
+        strncpy(path, args_rest, sizeof(path) - 1);
+        path[sizeof(path) - 1] = '\0';
+        int len = (int)strlen(path);
+        while (len > 0 && (path[len-1] == '\n' || path[len-1] == '\r' ||
+                           path[len-1] == ' '  || path[len-1] == '\t'))
+            path[--len] = '\0';
+        g_running = false;
+        snprintf(g_filename_buf, sizeof(g_filename_buf), "%s", path);
+        do_load();
+        if (sim_get_state(g_sim) != SIM_IDLE)
+            con_add(CON_COL_OK, "Loaded: %s", path);
+        else
+            con_add(CON_COL_ERR, "Failed to load: %s", path);
+        return;
+    }
+
+    con_add(CON_COL_ERR, "Unknown command '%s'. Type 'help' for list.", verb);
+}
+
+/* --------------------------------------------------------------------------
+ * Toolbar
+ * -------------------------------------------------------------------------- */
 static void draw_toolbar(void)
 {
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6, 4));
 
-    /* Filename input — takes most of the row width */
-    float btn_w   = 60.0f;          /* approximate button width */
+    float btn_w   = 60.0f;
     float combo_w = 110.0f;
     float avail   = ImGui::GetContentRegionAvail().x;
     float input_w = avail - combo_w - btn_w * 5.0f
@@ -186,8 +515,13 @@ static void draw_toolbar(void)
         ImGui::SetTooltip("Path to .asm file (Ctrl+L to focus)");
 
     ImGui::SameLine();
-    if (ImGui::Button("Load") || enter_pressed)
+    if (ImGui::Button("Load") || enter_pressed) {
         do_load();
+        if (sim_get_state(g_sim) != SIM_IDLE)
+            con_add(CON_COL_OK, "Loaded: %s", g_filename_buf);
+        else
+            con_add(CON_COL_ERR, "Failed to load: %s", g_filename_buf);
+    }
 
     ImGui::SameLine();
     ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
@@ -197,8 +531,12 @@ static void draw_toolbar(void)
     bool can_step = (sim_get_state(g_sim) == SIM_READY ||
                      sim_get_state(g_sim) == SIM_PAUSED);
     if (!can_step) ImGui::BeginDisabled();
-    if (ImGui::Button("Step"))
+    if (ImGui::Button("Step")) {
+        cpu_t *cpu = sim_get_cpu(g_sim);
+        if (cpu) { g_prev_cpu = *cpu; g_prev_cpu_valid = true; }
         sim_step(g_sim, 1);
+        g_last_write_count = sim_get_last_writes(g_sim, g_last_writes, 256);
+    }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Step 1 instruction (F7)");
     if (!can_step) ImGui::EndDisabled();
 
@@ -225,6 +563,8 @@ static void draw_toolbar(void)
     if (ImGui::Button("Reset")) {
         g_running = false;
         sim_reset(g_sim);
+        g_prev_cpu_valid   = false;
+        g_last_write_count = 0;
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset CPU (Ctrl+R)");
     if (!can_reset) ImGui::EndDisabled();
@@ -263,19 +603,17 @@ static void draw_statusbar(void)
     sim_state_t state = sim_get_state(g_sim);
     cpu_t *cpu        = sim_get_cpu(g_sim);
 
-    /* Left: execution state */
     if (g_running)
         ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "RUNNING");
     else {
         const char *sname = sim_state_name(state);
-        if (state == SIM_IDLE)     ImGui::TextDisabled("%s", sname);
+        if      (state == SIM_IDLE)     ImGui::TextDisabled("%s", sname);
         else if (state == SIM_FINISHED) ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "%s", sname);
         else                            ImGui::Text("%s", sname);
     }
 
     ImGui::SameLine(0, 20);
 
-    /* Centre: register snapshot */
     if (state != SIM_IDLE && cpu) {
         ImGui::Text("PC=%04X  A=%02X  X=%02X  Y=%02X  S=%04X  Cycles=%lu",
                     cpu->pc, cpu->a, cpu->x, cpu->y, cpu->s, cpu->cycles);
@@ -283,7 +621,6 @@ static void draw_statusbar(void)
         ImGui::TextDisabled("PC=----  A=--  X=--  Y=--  S=----  Cycles=0");
     }
 
-    /* Right: filename — right-aligned */
     const char *fname = sim_get_filename(g_sim);
     float fname_w = ImGui::CalcTextSize(fname).x + ImGui::GetStyle().ItemSpacing.x;
     ImGui::SameLine(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - fname_w);
@@ -293,16 +630,19 @@ static void draw_statusbar(void)
 }
 
 /* --------------------------------------------------------------------------
- * Pane: Registers
+ * Pane: Registers (Phase 2)
+ *
+ * Compact mode: coloured diff highlighting per register, flags row, cycles.
+ * Expanded mode: InputScalar fields for live editing of each register.
+ * Yellow text = value changed since last sim_step.
  * -------------------------------------------------------------------------- */
 static void draw_pane_registers(void)
 {
     if (!show_registers) return;
     ImGui::Begin("Registers", &show_registers);
 
-    cpu_t *cpu = sim_get_cpu(g_sim);
+    cpu_t *cpu        = sim_get_cpu(g_sim);
     sim_state_t state = sim_get_state(g_sim);
-
     if (state == SIM_IDLE || !cpu) {
         ImGui::TextDisabled("(no program loaded)");
         ImGui::End();
@@ -310,39 +650,172 @@ static void draw_pane_registers(void)
     }
 
     bool is_45gs02 = (sim_get_cpu_type(g_sim) == CPU_45GS02);
+    cpu_t *prev    = g_prev_cpu_valid ? &g_prev_cpu : NULL;
 
-    ImGui::Text("A  %02X    X  %02X    Y  %02X", cpu->a, cpu->x, cpu->y);
-    if (is_45gs02)
-        ImGui::Text("Z  %02X    B  %02X", cpu->z, cpu->b);
-    ImGui::Separator();
-    if (is_45gs02)
-        ImGui::Text("S  %04X   PC %04X", cpu->s, cpu->pc);
-    else
-        ImGui::Text("S  %04X   PC %04X", (unsigned)(0x0100 | (cpu->s & 0xFF)), cpu->pc);
+    /* Expand/Compact toggle button — right-aligned */
+    {
+        const char *btn = g_regs_expanded ? "Compact" : "Expand";
+        float bw = ImGui::CalcTextSize(btn).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - bw);
+        if (ImGui::SmallButton(btn)) g_regs_expanded = !g_regs_expanded;
+    }
     ImGui::Separator();
 
-    /* Status flags — green when set, dimmed when clear */
-    struct { const char *label; unsigned char mask; } flags[] = {
-        {"N", FLAG_N}, {"V", FLAG_V}, {"-", FLAG_U},
-        {"B", FLAG_B}, {"D", FLAG_D}, {"I", FLAG_I},
-        {"Z", FLAG_Z}, {"C", FLAG_C},
+    /* Yellow if changed, otherwise default */
+    auto diff_col = [&](bool changed) -> ImVec4 {
+        return changed ? ImVec4(1.0f, 1.0f, 0.2f, 1.0f)
+                       : ImGui::GetStyleColorVec4(ImGuiCol_Text);
     };
-    for (int i = 0; i < 8; i++) {
-        bool set = (cpu->p & flags[i].mask) != 0;
-        if (set)
-            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "%s", flags[i].label);
-        else
-            ImGui::TextDisabled("%s", flags[i].label);
-        if (i < 7) ImGui::SameLine();
+
+    if (!g_regs_expanded) {
+        /* ---- Compact mode ---- */
+        auto show_byte = [&](const char *name, uint8_t cur, uint8_t old_val) {
+            bool ch = prev && (old_val != cur);
+            ImGui::PushStyleColor(ImGuiCol_Text, diff_col(ch));
+            ImGui::Text("%s %02X", name, (unsigned)cur);
+            ImGui::PopStyleColor();
+        };
+
+        show_byte("A", cpu->a, prev ? prev->a : cpu->a);
+        ImGui::SameLine(0, 10);
+        show_byte("X", cpu->x, prev ? prev->x : cpu->x);
+        ImGui::SameLine(0, 10);
+        show_byte("Y", cpu->y, prev ? prev->y : cpu->y);
+
+        if (is_45gs02) {
+            show_byte("Z", cpu->z, prev ? prev->z : cpu->z);
+            ImGui::SameLine(0, 10);
+            show_byte("B", cpu->b, prev ? prev->b : cpu->b);
+        }
+
+        ImGui::Separator();
+
+        {
+            bool ch_s  = prev && prev->s  != cpu->s;
+            bool ch_pc = prev && prev->pc != cpu->pc;
+            ImGui::PushStyleColor(ImGuiCol_Text, diff_col(ch_s));
+            if (is_45gs02)
+                ImGui::Text("S  %04X", (unsigned)cpu->s);
+            else
+                ImGui::Text("S  %04X", (unsigned)(0x0100 | (cpu->s & 0xFF)));
+            ImGui::PopStyleColor();
+            ImGui::SameLine(0, 10);
+            ImGui::PushStyleColor(ImGuiCol_Text, diff_col(ch_pc));
+            ImGui::Text("PC %04X", (unsigned)cpu->pc);
+            ImGui::PopStyleColor();
+        }
+
+        ImGui::Separator();
+
+        /* Flags — green=set, dim=clear, yellow=changed */
+        struct { const char *lbl; uint8_t mask; } flags[] = {
+            {"N", FLAG_N}, {"V", FLAG_V}, {"-", FLAG_U},
+            {"B", FLAG_B}, {"D", FLAG_D}, {"I", FLAG_I},
+            {"Z", FLAG_Z}, {"C", FLAG_C},
+        };
+        for (int i = 0; i < 8; i++) {
+            bool set     = (cpu->p & flags[i].mask) != 0;
+            bool changed = prev && ((prev->p & flags[i].mask) != (cpu->p & flags[i].mask));
+            ImVec4 col;
+            if      (changed) col = ImVec4(1.0f, 1.0f, 0.2f, 1.0f);
+            else if (set)     col = ImVec4(0.3f, 1.0f, 0.3f, 1.0f);
+            else              col = ImVec4(0.35f, 0.35f, 0.35f, 1.0f);
+            ImGui::PushStyleColor(ImGuiCol_Text, col);
+            ImGui::Text("%s", flags[i].lbl);
+            ImGui::PopStyleColor();
+            if (i < 7) ImGui::SameLine();
+        }
+
+        ImGui::Separator();
+
+        bool ch_cy = prev && prev->cycles != cpu->cycles;
+        ImGui::PushStyleColor(ImGuiCol_Text, diff_col(ch_cy));
+        ImGui::Text("Cycles  %lu", cpu->cycles);
+        ImGui::PopStyleColor();
+
+        if (is_45gs02 && cpu->eom_prefix)
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "[EOM]");
+
+    } else {
+        /* ---- Expanded / editable mode ---- */
+        auto edit_byte = [&](const char *name, uint8_t cur, uint8_t prev_val) {
+            bool ch = prev && (prev_val != cur);
+            if (ch) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.2f, 1.0f));
+            ImGui::Text("%-2s", name);
+            if (ch) ImGui::PopStyleColor();
+            ImGui::SameLine(45);
+            ImGui::SetNextItemWidth(56);
+            char id[8]; snprintf(id, sizeof(id), "##%s", name);
+            uint8_t edited = cur;
+            if (ImGui::InputScalar(id, ImGuiDataType_U8, &edited,
+                                   NULL, NULL, "%02X",
+                                   ImGuiInputTextFlags_CharsHexadecimal))
+                sim_set_reg_byte(g_sim, name, edited);
+        };
+
+        edit_byte("A", cpu->a, prev ? prev->a : cpu->a);
+        edit_byte("X", cpu->x, prev ? prev->x : cpu->x);
+        edit_byte("Y", cpu->y, prev ? prev->y : cpu->y);
+        if (is_45gs02) {
+            edit_byte("Z", cpu->z, prev ? prev->z : cpu->z);
+            edit_byte("B", cpu->b, prev ? prev->b : cpu->b);
+        }
+
+        ImGui::Separator();
+
+        /* S — 16-bit on 45GS02, 8-bit page 1 on others */
+        {
+            bool ch_s = prev && prev->s != cpu->s;
+            if (ch_s) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.2f, 1.0f));
+            ImGui::Text("S ");
+            if (ch_s) ImGui::PopStyleColor();
+            ImGui::SameLine(45);
+            ImGui::SetNextItemWidth(56);
+            if (is_45gs02) {
+                uint16_t s_edit = cpu->s;
+                if (ImGui::InputScalar("##S", ImGuiDataType_U16, &s_edit,
+                                       NULL, NULL, "%04X",
+                                       ImGuiInputTextFlags_CharsHexadecimal))
+                    sim_set_reg_byte(g_sim, "S", (uint8_t)(s_edit & 0xFF));
+            } else {
+                uint8_t s_edit = (uint8_t)(cpu->s & 0xFF);
+                if (ImGui::InputScalar("##S", ImGuiDataType_U8, &s_edit,
+                                       NULL, NULL, "%02X",
+                                       ImGuiInputTextFlags_CharsHexadecimal))
+                    sim_set_reg_byte(g_sim, "S", s_edit);
+            }
+        }
+
+        /* PC — 16-bit */
+        {
+            bool ch_pc = prev && prev->pc != cpu->pc;
+            if (ch_pc) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.2f, 1.0f));
+            ImGui::Text("PC");
+            if (ch_pc) ImGui::PopStyleColor();
+            ImGui::SameLine(45);
+            ImGui::SetNextItemWidth(56);
+            uint16_t pc_edit = cpu->pc;
+            if (ImGui::InputScalar("##PC", ImGuiDataType_U16, &pc_edit,
+                                   NULL, NULL, "%04X",
+                                   ImGuiInputTextFlags_CharsHexadecimal))
+                sim_set_pc(g_sim, pc_edit);
+        }
+
+        edit_byte("P", cpu->p, prev ? prev->p : cpu->p);
+
+        ImGui::Separator();
+        ImGui::Text("Cycles  %lu", cpu->cycles);
     }
 
-    ImGui::Separator();
-    ImGui::Text("Cycles  %lu", cpu->cycles);
     ImGui::End();
 }
 
 /* --------------------------------------------------------------------------
- * Pane: Disassembly
+ * Pane: Disassembly (Phase 2)
+ *
+ * Table columns: BP gutter (clickable) | PC arrow | disasm text | cycles
+ * Follow-PC mode: g_disasm_addr tracks cpu->pc each frame.
+ * Mouse wheel scrolls the view when not following PC.
  * -------------------------------------------------------------------------- */
 static void draw_pane_disassembly(void)
 {
@@ -356,34 +829,152 @@ static void draw_pane_disassembly(void)
         return;
     }
 
-    cpu_t *cpu   = sim_get_cpu(g_sim);
-    uint16_t pc  = cpu ? cpu->pc : 0;
-    uint16_t addr = pc;
-    char buf[128];
+    cpu_t *cpu  = sim_get_cpu(g_sim);
+    uint16_t pc = cpu ? cpu->pc : 0;
 
-    /* Show 24 instructions starting from PC (follow-PC mode for Phase 1) */
-    for (int i = 0; i < 24; i++) {
-        bool is_pc = (addr == pc) && (i == 0);
-        int consumed = sim_disassemble_one(g_sim, addr, buf, sizeof(buf));
+    /* Controls bar */
+    ImGui::Checkbox("Follow PC", &g_disasm_follow);
+    ImGui::SameLine();
+    {
+        char addr_buf[8];
+        snprintf(addr_buf, sizeof(addr_buf), "%04X", (unsigned)g_disasm_addr);
+        ImGui::SetNextItemWidth(60);
+        if (ImGui::InputText("##da", addr_buf, sizeof(addr_buf),
+                ImGuiInputTextFlags_CharsHexadecimal |
+                ImGuiInputTextFlags_EnterReturnsTrue)) {
+            g_disasm_addr   = (uint16_t)strtol(addr_buf, NULL, 16);
+            g_disasm_follow = false;
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("PC")) {
+        g_disasm_addr   = pc;
+        g_disasm_follow = true;
+    }
+    ImGui::Separator();
 
-        if (is_pc) {
-            /* Highlight current instruction row */
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.2f, 1.0f));
-            ImGui::Text("> %s", buf);
-            ImGui::PopStyleColor();
-        } else {
-            ImGui::Text("  %s", buf);
+    /* Follow PC: keep view aligned to current instruction */
+    if (g_disasm_follow)
+        g_disasm_addr = pc;
+
+    /* Mouse wheel scrolling (when not following PC) */
+    if (ImGui::IsWindowHovered() && !g_disasm_follow) {
+        float wheel = ImGui::GetIO().MouseWheel;
+        if (wheel < 0.0f) {
+            /* Scroll down: advance by instruction */
+            int ticks = (int)(-wheel + 0.5f);
+            char tmp[128];
+            uint16_t a = g_disasm_addr;
+            for (int i = 0; i < ticks; i++) {
+                int c = sim_disassemble_one(g_sim, a, tmp, sizeof(tmp));
+                if (c < 1) c = 1;
+                a = (uint16_t)(a + c);
+            }
+            g_disasm_addr = a;
+        } else if (wheel > 0.0f) {
+            /* Scroll up: approximate 3 bytes per instruction */
+            int ticks = (int)(wheel + 0.5f);
+            g_disasm_addr = (uint16_t)(g_disasm_addr - ticks * 3);
+        }
+    }
+
+    /* Estimate rows that fit */
+    float row_h  = ImGui::GetTextLineHeightWithSpacing();
+    float avail_h = ImGui::GetContentRegionAvail().y;
+    int rows = (avail_h > 0) ? (int)(avail_h / row_h) + 1 : 24;
+    if (rows < 4)  rows = 4;
+    if (rows > 80) rows = 80;
+
+    /* Table */
+    const ImGuiTableFlags tflags =
+        ImGuiTableFlags_SizingFixedFit |
+        ImGuiTableFlags_BordersInnerV;
+
+    if (ImGui::BeginTable("##dasm", 4, tflags)) {
+        ImGui::TableSetupColumn("BP",    ImGuiTableColumnFlags_WidthFixed, 18.0f);
+        ImGui::TableSetupColumn(" ",     ImGuiTableColumnFlags_WidthFixed, 14.0f);
+        ImGui::TableSetupColumn("Instr", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("Cyc",   ImGuiTableColumnFlags_WidthFixed, 24.0f);
+        ImGui::TableHeadersRow();
+
+        char buf[128];
+        uint16_t addr = g_disasm_addr;
+
+        for (int i = 0; i < rows; i++) {
+            bool is_pc = (addr == pc);
+            bool has_bp = (sim_has_breakpoint(g_sim, addr) != 0);
+            int consumed = sim_disassemble_one(g_sim, addr, buf, sizeof(buf));
+
+            ImGui::TableNextRow();
+
+            /* BP gutter — clickable to toggle */
+            ImGui::TableSetColumnIndex(0);
+            {
+                char btn_id[16];
+                snprintf(btn_id, sizeof(btn_id), "%s##%04X",
+                         has_bp ? "*" : ".", (unsigned)addr);
+                if (has_bp)
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
+                else
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.35f, 0.35f, 0.35f, 0.6f));
+                if (ImGui::SmallButton(btn_id)) {
+                    if (has_bp) sim_break_clear(g_sim, addr);
+                    else        sim_break_set(g_sim, addr, NULL);
+                }
+                ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip(has_bp ? "Remove breakpoint at $%04X"
+                                             : "Set breakpoint at $%04X",
+                                      (unsigned)addr);
+            }
+
+            /* PC arrow */
+            ImGui::TableSetColumnIndex(1);
+            if (is_pc)
+                ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.2f, 1.0f), ">");
+            else
+                ImGui::TextDisabled(" ");
+
+            /* Disassembly text */
+            ImGui::TableSetColumnIndex(2);
+            {
+                const char *sym = sim_sym_by_addr(g_sim, addr);
+                if (sym) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.9f, 0.5f, 1.0f));
+                    ImGui::Text("%s:", sym);
+                    ImGui::PopStyleColor();
+                    ImGui::SameLine(0, 6);
+                }
+                if (is_pc)
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.2f, 1.0f));
+                else if (has_bp)
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.6f, 0.6f, 1.0f));
+                ImGui::Text("%s", buf);
+                if (is_pc || has_bp)
+                    ImGui::PopStyleColor();
+            }
+
+            /* Cycles */
+            ImGui::TableSetColumnIndex(3);
+            int cyc = sim_get_opcode_cycles(g_sim, addr);
+            if (cyc > 0)
+                ImGui::TextDisabled("%d", cyc);
+
+            if (consumed < 1) consumed = 1;
+            addr = (uint16_t)(addr + consumed);
         }
 
-        if (consumed < 1) consumed = 1;
-        addr = (uint16_t)(addr + consumed);
+        ImGui::EndTable();
     }
 
     ImGui::End();
 }
 
 /* --------------------------------------------------------------------------
- * Pane: Memory View
+ * Pane: Memory View (Phase 2)
+ *
+ * 16-byte rows, hex + ASCII sidebar.
+ * Bytes written in the most-recent sim_step are highlighted yellow.
  * -------------------------------------------------------------------------- */
 static void draw_pane_memory(void)
 {
@@ -397,36 +988,54 @@ static void draw_pane_memory(void)
         return;
     }
 
-    static uint16_t g_mem_addr = 0x0200;
-    static char     g_addr_buf[8] = "0200";
+    static uint16_t mem_base  = 0x0200;
+    static char     addr_buf[8] = "0200";
 
-    /* Address navigation bar */
-    ImGui::SetNextItemWidth(70);
-    if (ImGui::InputText("##memaddr", g_addr_buf, sizeof(g_addr_buf),
-            ImGuiInputTextFlags_CharsHexadecimal | ImGuiInputTextFlags_EnterReturnsTrue)) {
-        g_mem_addr = (uint16_t)strtol(g_addr_buf, NULL, 16);
+    /* Navigation bar */
+    ImGui::SetNextItemWidth(60);
+    if (ImGui::InputText("##ma", addr_buf, sizeof(addr_buf),
+            ImGuiInputTextFlags_CharsHexadecimal |
+            ImGuiInputTextFlags_EnterReturnsTrue)) {
+        mem_base = (uint16_t)strtol(addr_buf, NULL, 16);
     }
     ImGui::SameLine();
     if (ImGui::SmallButton("PC")) {
         cpu_t *cpu = sim_get_cpu(g_sim);
-        if (cpu) { g_mem_addr = cpu->pc; snprintf(g_addr_buf, sizeof(g_addr_buf), "%04X", g_mem_addr); }
+        if (cpu) {
+            mem_base = cpu->pc;
+            snprintf(addr_buf, sizeof(addr_buf), "%04X", (unsigned)mem_base);
+        }
     }
     ImGui::SameLine();
     if (ImGui::SmallButton("SP")) {
         cpu_t *cpu = sim_get_cpu(g_sim);
-        if (cpu) { g_mem_addr = (uint16_t)(0x0100 | (cpu->s & 0xFF)); snprintf(g_addr_buf, sizeof(g_addr_buf), "%04X", g_mem_addr); }
+        if (cpu) {
+            mem_base = (uint16_t)(0x0100 | (cpu->s & 0xFF));
+            snprintf(addr_buf, sizeof(addr_buf), "%04X", (unsigned)mem_base);
+        }
     }
     ImGui::Separator();
 
+    /* Is this address in the last-write log? */
+    auto was_written = [&](uint16_t a) -> bool {
+        for (int i = 0; i < g_last_write_count; i++)
+            if (g_last_writes[i] == a) return true;
+        return false;
+    };
+
     /* Hex dump — 16 bytes per row, 16 rows */
-    ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
     for (int row = 0; row < 16; row++) {
-        uint16_t raddr = (uint16_t)(g_mem_addr + row * 16);
-        ImGui::Text("%04X ", raddr);
+        uint16_t raddr = (uint16_t)(mem_base + row * 16);
+        ImGui::Text("%04X ", (unsigned)raddr);
         for (int col = 0; col < 16; col++) {
+            uint16_t ba  = (uint16_t)(raddr + col);
+            uint8_t  v   = sim_mem_read_byte(g_sim, ba);
+            bool written = was_written(ba);
             ImGui::SameLine(0, col == 8 ? 8 : 4);
-            uint8_t v = sim_mem_read_byte(g_sim, (uint16_t)(raddr + col));
-            ImGui::Text("%02X", v);
+            if (written)
+                ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.2f, 1.0f), "%02X", (unsigned)v);
+            else
+                ImGui::Text("%02X", (unsigned)v);
         }
         /* ASCII sidebar */
         ImGui::SameLine(0, 8);
@@ -440,39 +1049,58 @@ static void draw_pane_memory(void)
         ImGui::SameLine(0, 0);
         ImGui::TextDisabled("|");
     }
-    ImGui::PopFont();
 
     ImGui::End();
 }
 
 /* --------------------------------------------------------------------------
- * Pane: Console
+ * Pane: Console (Phase 2)
+ *
+ * Scrollable text log with coloured output, command-line input, and
+ * Up/Down history navigation.
  * -------------------------------------------------------------------------- */
 static void draw_pane_console(void)
 {
     if (!show_console) return;
     ImGui::Begin("Console", &show_console);
 
-    sim_state_t state = sim_get_state(g_sim);
-    if (state == SIM_IDLE) {
-        ImGui::TextDisabled("sim6502-gui ready.");
-        ImGui::TextDisabled("Enter a .asm file path in the toolbar and click Load.");
-        ImGui::End();
-        return;
+    /* Output scroll region */
+    float input_h = ImGui::GetFrameHeightWithSpacing() + 4.0f;
+    ImGui::BeginChild("##con_out", ImVec2(0, -input_h), false,
+                      ImGuiWindowFlags_HorizontalScrollbar);
+
+    for (int i = 0; i < g_con_line_count; i++) {
+        ImGui::PushStyleColor(ImGuiCol_Text, g_con_lines[i].color);
+        ImGui::TextUnformatted(g_con_lines[i].text);
+        ImGui::PopStyleColor();
     }
 
-    cpu_t *cpu = sim_get_cpu(g_sim);
-    ImGui::Text("Loaded: %s", sim_get_filename(g_sim));
-    ImGui::Text("Processor: %s", sim_processor_name(g_sim));
-    ImGui::Text("State: %s", sim_state_name(state));
-    ImGui::Separator();
-    if (cpu) {
-        ImGui::Text("PC=$%04X  A=%02X  X=%02X  Y=%02X  S=%04X  P=%02X",
-                    cpu->pc, cpu->a, cpu->x, cpu->y, cpu->s, cpu->p);
-        ImGui::Text("Cycles: %lu", cpu->cycles);
+    if (g_con_scroll_bottom) {
+        ImGui::SetScrollHereY(1.0f);
+        g_con_scroll_bottom = false;
     }
+
+    ImGui::EndChild();
     ImGui::Separator();
-    ImGui::TextDisabled("Full CLI console pane: Phase 2");
+
+    /* Command input */
+    ImGui::PushItemWidth(-1);
+    bool reclaim = false;
+    if (ImGui::InputText("##coninput", g_con_input, sizeof(g_con_input),
+            ImGuiInputTextFlags_EnterReturnsTrue |
+            ImGuiInputTextFlags_CallbackHistory,
+            con_input_cb)) {
+        if (g_con_input[0] != '\0') {
+            con_exec(g_con_input);
+            g_con_input[0] = '\0';
+        }
+        reclaim = true;
+    }
+    ImGui::PopItemWidth();
+
+    /* Keep focus on the input field after Enter */
+    if (reclaim)
+        ImGui::SetKeyboardFocusHere(-1);
 
     ImGui::End();
 }
@@ -494,11 +1122,11 @@ int main(int /*argc*/, char ** /*argv*/)
     SDL_Rect usable = { 0, 0, 1600, 900 };
     SDL_GetDisplayUsableBounds(display_index, &usable);
 
-    /* Pre-parse INI before SDL/ImGui initialisation so font size and window
-     * geometry are correct from the very first frame — no rebuild flash.   */
+    /* Pre-parse INI before SDL/ImGui init so font size and window geometry
+     * are correct from frame 1 — no rebuild flash.                        */
     bool first_run;
-    int  pre_win_x = -32768, pre_win_y = -32768; /* sentinel = not saved   */
-    int  pre_win_w = 0,      pre_win_h = 0;       /* 0 = use default 80%   */
+    int  pre_win_x = -32768, pre_win_y = -32768;
+    int  pre_win_w = 0,      pre_win_h = 0;
     {
         FILE *ini = fopen("sim6502-gui.ini", "r");
         first_run = (ini == nullptr);
@@ -520,10 +1148,8 @@ int main(int /*argc*/, char ** /*argv*/)
         }
     }
 
-    /* Use saved size if valid, else 80 % of usable display area */
     const int win_w = (pre_win_w > 0) ? pre_win_w : ((int)(usable.w * 0.80f) / 2) * 2;
     const int win_h = (pre_win_h > 0) ? pre_win_h : ((int)(usable.h * 0.80f) / 2) * 2;
-    /* Use saved position if both axes were stored, else centre */
     const bool has_saved_pos = (pre_win_x != -32768 && pre_win_y != -32768);
     const int  win_x = has_saved_pos ? pre_win_x : SDL_WINDOWPOS_CENTERED;
     const int  win_y = has_saved_pos ? pre_win_y : SDL_WINDOWPOS_CENTERED;
@@ -558,16 +1184,13 @@ int main(int /*argc*/, char ** /*argv*/)
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
 
-    /* Register custom INI handler for [sim6502][Settings].
-     * ImGui calls WriteAllFn automatically when saving the INI (periodically
-     * and on shutdown).  ReadLineFn only triggers a font rebuild when the
-     * stored size differs from the already-pre-parsed g_base_font_size.    */
+    /* Custom INI handler: persists FontSize and window geometry */
     {
         ImGuiSettingsHandler h = {};
         h.TypeName   = "sim6502";
         h.TypeHash   = ImHashStr("sim6502");
         h.ReadOpenFn = [](ImGuiContext*, ImGuiSettingsHandler*, const char*) -> void* {
-            return (void*)(intptr_t)1;   /* non-null = accept this section */
+            return (void*)(intptr_t)1;
         };
         h.ReadLineFn = [](ImGuiContext*, ImGuiSettingsHandler*, void*, const char* line) {
             int v;
@@ -610,12 +1233,16 @@ int main(int /*argc*/, char ** /*argv*/)
             display_index, ui_scale, font_cfg.SizePixels,
             win_w, win_h, first_run ? "  (first run)" : "");
 
-    /* Create simulator session (default: 6502) */
+    /* Create simulator session */
     g_sim = sim_create("6502");
     if (!g_sim) {
         fprintf(stderr, "sim6502-gui: failed to create sim session\n");
         return 1;
     }
+
+    /* Console welcome message */
+    con_add(CON_COL_OK,     "sim6502-gui Phase 2 ready.  Type 'help' for commands.");
+    con_add(CON_COL_NORMAL, "Processor: %s", sim_processor_name(g_sim));
 
     bool running        = true;
     bool layout_applied = false;
@@ -635,20 +1262,30 @@ int main(int /*argc*/, char ** /*argv*/)
         /* ---- Keyboard shortcuts (when ImGui is not capturing keyboard) ---- */
         if (!io.WantCaptureKeyboard) {
             if (ImGui::IsKeyPressed(ImGuiKey_F5)) {
-                if (sim_get_state(g_sim) == SIM_READY || sim_get_state(g_sim) == SIM_PAUSED)
+                if (sim_get_state(g_sim) == SIM_READY ||
+                    sim_get_state(g_sim) == SIM_PAUSED)
                     g_running = true;
             }
-            if (ImGui::IsKeyPressed(ImGuiKey_F6) || ImGui::IsKeyPressed(ImGuiKey_Escape))
+            if (ImGui::IsKeyPressed(ImGuiKey_F6) ||
+                ImGui::IsKeyPressed(ImGuiKey_Escape))
                 g_running = false;
             if (ImGui::IsKeyPressed(ImGuiKey_F7)) {
                 g_running = false;
-                if (sim_get_state(g_sim) == SIM_READY || sim_get_state(g_sim) == SIM_PAUSED)
+                if (sim_get_state(g_sim) == SIM_READY ||
+                    sim_get_state(g_sim) == SIM_PAUSED) {
+                    cpu_t *cpu = sim_get_cpu(g_sim);
+                    if (cpu) { g_prev_cpu = *cpu; g_prev_cpu_valid = true; }
                     sim_step(g_sim, 1);
+                    g_last_write_count = sim_get_last_writes(g_sim, g_last_writes, 256);
+                }
             }
-            if (ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl)) {
+            if (ImGui::IsKeyDown(ImGuiKey_LeftCtrl) ||
+                ImGui::IsKeyDown(ImGuiKey_RightCtrl)) {
                 if (ImGui::IsKeyPressed(ImGuiKey_R)) {
                     g_running = false;
                     sim_reset(g_sim);
+                    g_prev_cpu_valid   = false;
+                    g_last_write_count = 0;
                 }
                 if (ImGui::IsKeyPressed(ImGuiKey_L))
                     g_focus_filename = true;
@@ -657,14 +1294,17 @@ int main(int /*argc*/, char ** /*argv*/)
 
         /* ---- Per-frame simulation step (run mode) ---- */
         if (g_running) {
+            cpu_t *cpu = sim_get_cpu(g_sim);
+            if (cpu) { g_prev_cpu = *cpu; g_prev_cpu_valid = true; }
             int ev_code = sim_step(g_sim, g_speed);
+            g_last_write_count = sim_get_last_writes(g_sim, g_last_writes, 256);
             if (ev_code > 0)
-                g_running = false;   /* hit BRK, STP, or breakpoint */
+                g_running = false;
             else if (ev_code < 0)
-                g_running = false;   /* wrong state */
+                g_running = false;
         }
 
-        /* ---- Font rebuild (must happen before NewFrame) ---- */
+        /* ---- Font rebuild (before NewFrame) ---- */
         if (g_font_rebuild) {
             rebuild_font();
             g_font_rebuild = false;
@@ -683,12 +1323,12 @@ int main(int /*argc*/, char ** /*argv*/)
             ImGui::SetNextWindowViewport(vp->ID);
 
             ImGuiWindowFlags host_flags =
-                ImGuiWindowFlags_MenuBar              |
-                ImGuiWindowFlags_NoDocking            |
-                ImGuiWindowFlags_NoTitleBar           |
-                ImGuiWindowFlags_NoCollapse           |
-                ImGuiWindowFlags_NoResize             |
-                ImGuiWindowFlags_NoMove               |
+                ImGuiWindowFlags_MenuBar               |
+                ImGuiWindowFlags_NoDocking             |
+                ImGuiWindowFlags_NoTitleBar            |
+                ImGuiWindowFlags_NoCollapse            |
+                ImGuiWindowFlags_NoResize              |
+                ImGuiWindowFlags_NoMove                |
                 ImGuiWindowFlags_NoBringToFrontOnFocus |
                 ImGuiWindowFlags_NoNavFocus;
 
@@ -707,10 +1347,21 @@ int main(int /*argc*/, char ** /*argv*/)
                     ImGui::EndMenu();
                 }
                 if (ImGui::BeginMenu("Run")) {
-                    if (ImGui::MenuItem("Step",  "F7"))  { g_running = false; sim_step(g_sim, 1); }
+                    if (ImGui::MenuItem("Step",  "F7")) {
+                        g_running = false;
+                        cpu_t *cpu = sim_get_cpu(g_sim);
+                        if (cpu) { g_prev_cpu = *cpu; g_prev_cpu_valid = true; }
+                        sim_step(g_sim, 1);
+                        g_last_write_count = sim_get_last_writes(g_sim, g_last_writes, 256);
+                    }
                     if (ImGui::MenuItem("Run",   "F5"))  g_running = true;
                     if (ImGui::MenuItem("Pause", "F6"))  g_running = false;
-                    if (ImGui::MenuItem("Reset", "Ctrl+R")) { g_running = false; sim_reset(g_sim); }
+                    if (ImGui::MenuItem("Reset", "Ctrl+R")) {
+                        g_running = false;
+                        sim_reset(g_sim);
+                        g_prev_cpu_valid   = false;
+                        g_last_write_count = 0;
+                    }
                     ImGui::EndMenu();
                 }
                 if (ImGui::BeginMenu("View")) {
@@ -748,7 +1399,7 @@ int main(int /*argc*/, char ** /*argv*/)
             float ds_h = ImGui::GetContentRegionAvail().y - sb_h;
             if (ds_h < 0.0f) ds_h = 0.0f;
 
-            /* Default layout — applied once on first run */
+            /* Apply default layout on first run */
             const ImGuiID dockspace_id = ImGui::GetID("MainDockspace");
             if (first_run && !layout_applied) {
                 layout_applied = true;

@@ -139,6 +139,38 @@ void sim_break_clear(sim_session_t *s, uint16_t addr);
 /* Return the name of the symbol at addr, or NULL if none found. */
 const char *sim_sym_by_addr(sim_session_t *s, uint16_t addr);
 
+/* --------------------------------------------------------------------------
+ * Phase 2 extensions
+ * -------------------------------------------------------------------------- */
+
+/* Returns 1 if a breakpoint is set at addr, 0 otherwise. */
+int sim_has_breakpoint(sim_session_t *s, uint16_t addr);
+
+/* Return the cycle count for the instruction at addr according to the active
+ * processor variant.  Returns 0 if addr holds an unrecognised opcode.      */
+int sim_get_opcode_cycles(sim_session_t *s, uint16_t addr);
+
+/* Copy up to max_count recently-written virtual addresses into addrs[].
+ * Returns the actual count (≤ min(256, max_count)).
+ * The write log is cleared at the start of every sim_step() call.          */
+int sim_get_last_writes(sim_session_t *s, uint16_t *addrs, int max_count);
+
+/* Set the program counter directly (safe between steps). */
+void sim_set_pc(sim_session_t *s, uint16_t pc);
+
+/* Set a CPU register by name: "A" "X" "Y" "Z" "B" "S" "P".
+ * For S on non-45GS02: sets the low byte (stack page 1).
+ * No-op for unrecognised names.                                             */
+void sim_set_reg_byte(sim_session_t *s, const char *name, uint8_t val);
+
+/* Return the number of active breakpoints. */
+int sim_break_count(sim_session_t *s);
+
+/* Fill *addr and cond[0..cond_sz-1] for the idx-th breakpoint.
+ * Returns 1 on success, 0 if idx is out of range.  cond may be NULL.      */
+int sim_break_get(sim_session_t *s, int idx, uint16_t *addr,
+                  char *cond, int cond_sz);
+
 #ifdef __cplusplus
 }
 #endif
