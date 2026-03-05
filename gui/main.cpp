@@ -1304,59 +1304,175 @@ static void draw_pane_iref(void)
             ImGui::EndTabItem();
         }
 
-        /* ---- By Opcode tab: 16×16 grid ---- */
+        /* ---- By Opcode tab: one 16×16 grid per opcode prefix group ---- */
         if (ImGui::BeginTabItem("By Opcode")) {
-            ImGui::TextDisabled("$00–$FF grid  (click a cell for details)");
 
-            static int by_opcode_sel = -1;
-            const float cell_w = 44.0f;
-            const float cell_h = ImGui::GetTextLineHeight() + ImGui::GetStyle().CellPadding.y * 2.0f;
+            /* Build per-prefix-group lookup: by_idx[base] = opcode-table index */
+            struct PrefixGroup {
+                char    label[20];
+                uint8_t prefix[3];
+                int     plen;         /* number of prefix bytes (0–3)         */
+                int     by_idx[256];  /* opcode table index, -1 = absent      */
+                bool    any;          /* true if at least one entry exists     */
+                bool    row_used[16]; /* high-nibble rows that have >=1 entry  */
+                bool    col_used[16]; /* low-nibble cols that have >=1 entry   */
+            };
 
-            if (ImGui::BeginTable("##opgrid", 17,
-                    ImGuiTableFlags_BordersOuter |
-                    ImGuiTableFlags_SizingFixedFit |
-                    ImGuiTableFlags_ScrollY,
-                    ImVec2(0.0f, cell_h * 18.0f + ImGui::GetStyle().ScrollbarSize))) {
+            PrefixGroup grp[4];
+            for (int g = 0; g < 4; g++) {
+                for (int b = 0; b < 256; b++) grp[g].by_idx[b] = -1;
+                memset(grp[g].row_used, 0, sizeof(grp[g].row_used));
+                memset(grp[g].col_used, 0, sizeof(grp[g].col_used));
+                grp[g].any  = false;
+                grp[g].plen = 0;
+                memset(grp[g].prefix, 0, sizeof(grp[g].prefix));
+            }
+            /* Group 0: no prefix  ($__)                */
+            snprintf(grp[0].label, sizeof(grp[0].label), "$__");
+            /* Group 1: EOM prefix ($EA __)             */
+            snprintf(grp[1].label, sizeof(grp[1].label), "$EA __");
+            grp[1].prefix[0] = 0xEA; grp[1].plen = 1;
+            /* Group 2: NEG NEG prefix ($42 $42 __)     */
+            snprintf(grp[2].label, sizeof(grp[2].label), "$42 $42 __");
+            grp[2].prefix[0] = 0x42; grp[2].prefix[1] = 0x42; grp[2].plen = 2;
+            /* Group 3: NEG NEG EOM ($42 $42 $EA __)    */
+            snprintf(grp[3].label, sizeof(grp[3].label), "$42 $42 $EA __");
+            grp[3].prefix[0] = 0x42; grp[3].prefix[1] = 0x42;
+            grp[3].prefix[2] = 0xEA; grp[3].plen = 3;
 
-                ImGui::TableSetupColumn("##rh", ImGuiTableColumnFlags_WidthFixed, 26.0f);
-                for (int c = 0; c < 16; c++) {
-                    char hdr[4]; snprintf(hdr, sizeof(hdr), "_%X", c);
-                    ImGui::TableSetupColumn(hdr, ImGuiTableColumnFlags_WidthFixed, cell_w);
-                }
-                ImGui::TableHeadersRow();
-
-                for (int r = 0; r < 16; r++) {
-                    ImGui::TableNextRow(ImGuiTableRowFlags_None, cell_h);
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::TextDisabled("%X_", r);
-                    for (int c = 0; c < 16; c++) {
-                        ImGui::TableSetColumnIndex(c + 1);
-                        uint8_t bv = (uint8_t)(r * 16 + c);
-                        sim_opcode_info_t info;
-                        if (sim_opcode_by_byte(g_sim, bv, &info)) {
-                            bool sel = (by_opcode_sel == (int)bv);
-                            char lbl[16];
-                            snprintf(lbl, sizeof(lbl), "%-3s##%02X", info.mnemonic, bv);
-                            ImGui::PushStyleColor(ImGuiCol_Text,
-                                sel ? g_col.text_changed
-                                    : g_col.mnemonic);
-                            if (ImGui::Selectable(lbl, sel, 0,
-                                    ImVec2(cell_w - ImGui::GetStyle().CellPadding.x * 2, 0)))
-                                by_opcode_sel = sel ? -1 : (int)bv;
-                            ImGui::PopStyleColor();
-                        } else {
-                            ImGui::TextDisabled("---");
-                        }
+            int total_ops = sim_opcode_count(g_sim);
+            for (int i = 0; i < total_ops; i++) {
+                sim_opcode_info_t info;
+                if (!sim_opcode_get(g_sim, i, &info)) continue;
+                int plen = (int)info.opcode_len - 1;
+                if (plen < 0 || plen > 3) continue;
+                uint8_t base = info.opcode_bytes[info.opcode_len - 1];
+                for (int g = 0; g < 4; g++) {
+                    if (grp[g].plen != plen) continue;
+                    bool ok = true;
+                    for (int p = 0; p < plen; p++)
+                        if (info.opcode_bytes[p] != grp[g].prefix[p]) { ok = false; break; }
+                    if (ok) {
+                        grp[g].by_idx[base]        = i;
+                        grp[g].any                 = true;
+                        grp[g].row_used[base >> 4] = true;
+                        grp[g].col_used[base & 0xF] = true;
+                        break;
                     }
                 }
-                ImGui::EndTable();
             }
 
+            /* Selection encoded as (group_idx << 8) | base_byte, -1 = none */
+            static int         by_opcode_sel = -1;
+            static const char *sel_proc      = nullptr;
+            const  char       *cur_proc      = sim_processor_name(g_sim);
+            if (cur_proc != sel_proc) { sel_proc = cur_proc; by_opcode_sel = -1; }
+
+            const float cell_w  = 44.0f;
+            const float cell_h  = ImGui::GetTextLineHeight()
+                                 + ImGui::GetStyle().CellPadding.y * 2.0f;
+            const float label_h = ImGui::GetTextLineHeightWithSpacing();
+            const float detail_h = (by_opcode_sel >= 0)
+                                  ? ImGui::GetTextLineHeightWithSpacing() + 4.0f : 0.0f;
+            float avail_h = ImGui::GetContentRegionAvail().y - detail_h;
+            if (avail_h < 60.0f) avail_h = 60.0f;
+            float table_h = avail_h - label_h - ImGui::GetStyle().ItemSpacing.y;
+            if (table_h < cell_h * 4.0f) table_h = cell_h * 4.0f;
+
+            const float cp  = ImGui::GetStyle().CellPadding.x;
+            const float sbw = ImGui::GetStyle().ScrollbarSize;
+
+            /* Horizontal scroll container holds all grids side by side */
+            ImGui::BeginChild("##opgrids_h", ImVec2(0.0f, avail_h), false,
+                              ImGuiWindowFlags_HorizontalScrollbar);
+
+            bool first_grp = true;
+            for (int g = 0; g < 4; g++) {
+                if (!grp[g].any) continue;
+                if (!first_grp) ImGui::SameLine(0.0f, 14.0f);
+                first_grp = false;
+
+                /* Prefix groups: only render rows/cols that contain at least
+                   one opcode.  Standard group keeps the full 16×16 layout.  */
+                const bool filter = (g > 0);
+                uint8_t active_cols[16], active_rows[16];
+                int     nc = 0, nr = 0;
+                for (int i = 0; i < 16; i++) {
+                    if (!filter || grp[g].col_used[i]) active_cols[nc++] = (uint8_t)i;
+                    if (!filter || grp[g].row_used[i]) active_rows[nr++] = (uint8_t)i;
+                }
+
+                /* Grid width sized to actual column count so BeginTable has
+                   a non-zero outer_size.x when placed after SameLine         */
+                float this_grid_w = 26.0f + (float)nc * cell_w
+                                  + (float)(nc + 1) * cp * 2.0f + sbw + 4.0f;
+
+                ImGui::BeginGroup();
+                ImGui::TextDisabled("%s", grp[g].label);
+
+                char tbl_id[16]; snprintf(tbl_id, sizeof(tbl_id), "##opg%d", g);
+                if (ImGui::BeginTable(tbl_id, nc + 1,
+                        ImGuiTableFlags_BordersOuter   |
+                        ImGuiTableFlags_SizingFixedFit |
+                        ImGuiTableFlags_ScrollY,
+                        ImVec2(this_grid_w, table_h))) {
+
+                    ImGui::TableSetupScrollFreeze(1, 1);
+                    ImGui::TableSetupColumn("##rh", ImGuiTableColumnFlags_WidthFixed, 26.0f);
+                    for (int ci = 0; ci < nc; ci++) {
+                        char hdr[4]; snprintf(hdr, sizeof(hdr), "_%X", (int)active_cols[ci]);
+                        ImGui::TableSetupColumn(hdr, ImGuiTableColumnFlags_WidthFixed, cell_w);
+                    }
+                    ImGui::TableHeadersRow();
+
+                    for (int ri = 0; ri < nr; ri++) {
+                        uint8_t r = active_rows[ri];
+                        ImGui::TableNextRow(ImGuiTableRowFlags_None, cell_h);
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::TextDisabled("%X_", (int)r);
+                        for (int ci = 0; ci < nc; ci++) {
+                            ImGui::TableSetColumnIndex(ci + 1);
+                            uint8_t bv  = (uint8_t)((r << 4) | active_cols[ci]);
+                            int     idx = grp[g].by_idx[bv];
+                            if (idx >= 0) {
+                                sim_opcode_info_t info;
+                                sim_opcode_get(g_sim, idx, &info);
+                                int  encoded = (g << 8) | (int)bv;
+                                bool sel = (by_opcode_sel == encoded);
+                                char lbl[16];
+                                snprintf(lbl, sizeof(lbl), "%-3s##%d%02X",
+                                         info.mnemonic, g, bv);
+                                ImGui::PushStyleColor(ImGuiCol_Text,
+                                    sel ? g_col.text_changed : g_col.mnemonic);
+                                if (ImGui::Selectable(lbl, sel, 0,
+                                        ImVec2(cell_w - ImGui::GetStyle().CellPadding.x * 2, 0)))
+                                    by_opcode_sel = sel ? -1 : encoded;
+                                ImGui::PopStyleColor();
+                            } else {
+                                ImGui::TextDisabled("---");
+                            }
+                        }
+                    }
+                    ImGui::EndTable();
+                }
+                ImGui::EndGroup();
+            }
+            ImGui::EndChild();
+
+            /* ---- Detail strip for the selected cell ---- */
             if (by_opcode_sel >= 0) {
                 ImGui::Separator();
-                sim_opcode_info_t info;
-                if (sim_opcode_by_byte(g_sim, (uint8_t)by_opcode_sel, &info)) {
-                    ImGui::Text("$%02X  ", by_opcode_sel);
+                int sel_g  = (by_opcode_sel >> 8) & 0xFF;
+                int sel_bv = (by_opcode_sel)       & 0xFF;
+                if (sel_g < 4 && grp[sel_g].by_idx[sel_bv] >= 0) {
+                    sim_opcode_info_t info;
+                    sim_opcode_get(g_sim, grp[sel_g].by_idx[sel_bv], &info);
+                    char opbuf[16] = "";
+                    int  p = 0;
+                    for (int b = 0; b < (int)info.opcode_len && b < 4; b++)
+                        p += snprintf(opbuf + p, sizeof(opbuf) - p,
+                                      b ? " $%02X" : "$%02X", info.opcode_bytes[b]);
+                    ImGui::Text("%s  ", opbuf);
                     ImGui::SameLine();
                     ImGui::TextColored(g_col.mnemonic, "%-6s", info.mnemonic);
                     ImGui::SameLine();
