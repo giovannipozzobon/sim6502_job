@@ -32,7 +32,17 @@ IMGUI_BACK = $(IMGUI_DIR)/backends
 
 SDL2_CFLAGS := $(shell pkg-config --cflags sdl2 2>/dev/null)
 SDL2_LIBS   := $(shell pkg-config --libs   sdl2 2>/dev/null)
-GL_LIBS      = -lGL
+ifeq ($(SDL2_CFLAGS),)
+  SDL2_CFLAGS := $(shell sdl2-config --cflags 2>/dev/null)
+  SDL2_LIBS   := $(shell sdl2-config --libs   2>/dev/null)
+endif
+
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+  GL_LIBS = -framework OpenGL
+else
+  GL_LIBS = -lGL
+endif
 
 IMGUI_SRCS = \
 	$(IMGUI_DIR)/imgui.cpp \
@@ -58,12 +68,14 @@ OPCODE_OBJS = \
 	src/opcodes_6502.o src/opcodes_6502_undoc.o \
 	src/opcodes_65c02.o src/opcodes_65ce02.o src/opcodes_45gs02.o
 
-# ImGui objects — compiled without -Wall/-Wextra to suppress upstream warnings
-$(IMGUI_DIR)/%.o: $(IMGUI_DIR)/%.cpp
-	$(CXX) -O2 -I $(IMGUI_DIR) -I $(IMGUI_BACK) -c -o $@ $<
-
+# ImGui objects — compiled without -Wall/-Wextra to suppress upstream warnings.
+# NOTE: $(IMGUI_BACK)/%.o must come first: GNU Make 3.81 lets % match '/',
+# so gui/imgui/%.o would otherwise shadow the more-specific backends rule.
 $(IMGUI_BACK)/%.o: $(IMGUI_BACK)/%.cpp
 	$(CXX) -O2 $(SDL2_CFLAGS) -I $(IMGUI_DIR) -I $(IMGUI_BACK) -c -o $@ $<
+
+$(IMGUI_DIR)/%.o: $(IMGUI_DIR)/%.cpp
+	$(CXX) -O2 -I $(IMGUI_DIR) -I $(IMGUI_BACK) -c -o $@ $<
 
 # GUI application object — depends on ImGui and sim_api.h being present
 gui/main.o: gui/main.cpp $(IMGUI_DIR)/imgui.h src/sim_api.h

@@ -1,0 +1,8 @@
+gui/main.o
+src/opcodes_45gs02.o
+src/opcodes_65c02.o
+src/opcodes_65ce02.o
+src/opcodes_6502_undoc.o
+src/opcodes_6502.o
+src/sim6502_lib.o
+src/sim6502.o
