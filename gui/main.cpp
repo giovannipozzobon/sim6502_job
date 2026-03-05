@@ -145,12 +145,39 @@ static int     g_con_history_pos   = -1;
 static char    g_con_history_buf[CON_MAX_HISTORY][256];
 static int     g_con_history_count = 0;
 
-/* Console text colours */
-static const ImVec4 CON_COL_NORMAL = ImVec4(0.85f, 0.85f, 0.85f, 1.0f);
-static const ImVec4 CON_COL_CMD    = ImVec4(0.6f,  0.8f,  1.0f,  1.0f);
-static const ImVec4 CON_COL_OK     = ImVec4(0.4f,  1.0f,  0.4f,  1.0f);
-static const ImVec4 CON_COL_ERR    = ImVec4(1.0f,  0.4f,  0.4f,  1.0f);
-static const ImVec4 CON_COL_WARN   = ImVec4(1.0f,  0.85f, 0.3f,  1.0f);
+/* Console text colours (non-const; updated by apply_theme) */
+static ImVec4 CON_COL_NORMAL = ImVec4(0.85f, 0.85f, 0.85f, 1.0f);
+static ImVec4 CON_COL_CMD    = ImVec4(0.6f,  0.8f,  1.0f,  1.0f);
+static ImVec4 CON_COL_OK     = ImVec4(0.4f,  1.0f,  0.4f,  1.0f);
+static ImVec4 CON_COL_ERR    = ImVec4(1.0f,  0.4f,  0.4f,  1.0f);
+static ImVec4 CON_COL_WARN   = ImVec4(1.0f,  0.85f, 0.3f,  1.0f);
+
+/* --------------------------------------------------------------------------
+ * Theme  (0 = Dark, 1 = Light, 2 = Auto / follow OS)
+ * -------------------------------------------------------------------------- */
+static int  g_theme         = 2;    /* default: auto-detect */
+static bool g_theme_rebuild = false;
+
+struct AppColors {
+    ImVec4 text_normal;        /* console default / general text           */
+    ImVec4 text_cmd;           /* console command echo (cyan-blue)         */
+    ImVec4 text_ok;            /* success, running, flag set (green)       */
+    ImVec4 text_err;           /* error, active breakpoint dot (red)       */
+    ImVec4 text_warn;          /* warning (yellow/gold)                    */
+    ImVec4 text_warn_orange;   /* EOM prefix, FINISHED state (orange)      */
+    ImVec4 text_changed;       /* changed register / PC cursor (bright Y)  */
+    ImVec4 flag_dim;           /* cleared CPU flag (dim gray)              */
+    ImVec4 bp_empty;           /* empty BP gutter dot (very dim)           */
+    ImVec4 bp_text;            /* disasm text on a breakpoint line         */
+    ImVec4 mnemonic;           /* instruction mnemonic (blue)              */
+    ImVec4 symbol_label;       /* symbol in disasm gutter (green)          */
+    ImVec4 source_comment;     /* source viewer comment text (green)       */
+    ImVec4 source_label;       /* source viewer label / mnemonic (gold)    */
+    ImVec4 highlight_blue_bg;  /* current-PC row background (blue tint)    */
+    ImVec4 highlight_green_bg; /* current-SP row background (green tint)   */
+    ImVec4 gl_clear;           /* OpenGL window clear colour               */
+};
+static AppColors g_col;
 
 /* --------------------------------------------------------------------------
  * Font rebuild
@@ -190,6 +217,166 @@ static float detect_ui_scale(int display_index)
         if (mode.w >= 2560) return 1.50f;
     }
     return 1.0f;
+}
+
+/* --------------------------------------------------------------------------
+ * OS dark-mode detection
+ * Returns true if the OS/desktop is using a dark colour scheme.
+ * -------------------------------------------------------------------------- */
+static bool detect_os_is_dark(void)
+{
+    /* 1. GTK_THEME env var (e.g. "Adwaita:dark") */
+    const char *gtk_theme = SDL_getenv("GTK_THEME");
+    if (gtk_theme) {
+        if (strstr(gtk_theme, "dark") || strstr(gtk_theme, "Dark")) return true;
+        return false;
+    }
+
+    /* 3. GNOME: gsettings color-scheme */
+    {
+        FILE *f = popen("gsettings get org.gnome.desktop.interface color-scheme"
+                        " 2>/dev/null", "r");
+        if (f) {
+            char buf[64] = "";
+            if (fgets(buf, sizeof(buf), f)) { /* consume */ }
+            pclose(f);
+            if (buf[0] != '\0') {
+                if (strstr(buf, "dark") || strstr(buf, "Dark")) return true;
+                return false;
+            }
+        }
+    }
+
+    /* 4. KDE: kdeglobals BackgroundNormal luminance */
+    {
+        const char *home = SDL_getenv("HOME");
+        if (home) {
+            char path[512];
+            snprintf(path, sizeof(path), "%s/.config/kdeglobals", home);
+            FILE *f = fopen(path, "r");
+            if (f) {
+                char ln[256];
+                bool in_colors = false;
+                while (fgets(ln, sizeof(ln), f)) {
+                    if (strncmp(ln, "[Colors:Window]", 15) == 0) {
+                        in_colors = true; continue;
+                    }
+                    if (ln[0] == '[') { in_colors = false; continue; }
+                    if (in_colors) {
+                        int r = 0, g = 0, b = 0;
+                        if (sscanf(ln, "BackgroundNormal=%d,%d,%d", &r, &g, &b) == 3) {
+                            fclose(f);
+                            return (r * 299 + g * 587 + b * 114) / 1000 < 128;
+                        }
+                    }
+                }
+                fclose(f);
+            }
+        }
+    }
+
+    /* Default: dark */
+    return true;
+}
+
+/* --------------------------------------------------------------------------
+ * apply_theme: reset ImGui style, apply dark/light colours, platform tweaks
+ * -------------------------------------------------------------------------- */
+static void apply_theme(void)
+{
+    bool dark;
+    if      (g_theme == 0) dark = true;
+    else if (g_theme == 1) dark = false;
+    else                   dark = detect_os_is_dark();
+
+    /* Reset style to ImGui defaults, then apply colour scheme */
+    ImGui::GetStyle() = ImGuiStyle();
+
+    if (dark) {
+        ImGui::StyleColorsDark();
+
+        g_col.text_normal       = ImVec4(0.85f, 0.85f, 0.85f, 1.0f);
+        g_col.text_cmd          = ImVec4(0.6f,  0.8f,  1.0f,  1.0f);
+        g_col.text_ok           = ImVec4(0.4f,  1.0f,  0.4f,  1.0f);
+        g_col.text_err          = ImVec4(1.0f,  0.4f,  0.4f,  1.0f);
+        g_col.text_warn         = ImVec4(1.0f,  0.85f, 0.3f,  1.0f);
+        g_col.text_warn_orange  = ImVec4(1.0f,  0.6f,  0.2f,  1.0f);
+        g_col.text_changed      = ImVec4(1.0f,  1.0f,  0.2f,  1.0f);
+        g_col.flag_dim          = ImVec4(0.35f, 0.35f, 0.35f, 1.0f);
+        g_col.bp_empty          = ImVec4(0.35f, 0.35f, 0.35f, 0.6f);
+        g_col.bp_text           = ImVec4(1.0f,  0.6f,  0.6f,  1.0f);
+        g_col.mnemonic          = ImVec4(0.4f,  0.8f,  1.0f,  1.0f);
+        g_col.symbol_label      = ImVec4(0.5f,  0.9f,  0.5f,  1.0f);
+        g_col.source_comment    = ImVec4(0.5f,  0.8f,  0.5f,  1.0f);
+        g_col.source_label      = ImVec4(1.0f,  0.85f, 0.3f,  1.0f);
+        g_col.highlight_blue_bg = ImVec4(0.3f,  0.4f,  0.8f,  0.35f);
+        g_col.highlight_green_bg= ImVec4(0.3f,  0.6f,  0.3f,  0.25f);
+        g_col.gl_clear          = ImVec4(0.10f, 0.10f, 0.10f, 1.0f);
+    } else {
+        ImGui::StyleColorsLight();
+
+        g_col.text_normal       = ImVec4(0.15f, 0.15f, 0.15f, 1.0f);
+        g_col.text_cmd          = ImVec4(0.1f,  0.4f,  0.8f,  1.0f);
+        g_col.text_ok           = ImVec4(0.1f,  0.55f, 0.1f,  1.0f);
+        g_col.text_err          = ImVec4(0.8f,  0.1f,  0.1f,  1.0f);
+        g_col.text_warn         = ImVec4(0.65f, 0.45f, 0.0f,  1.0f);
+        g_col.text_warn_orange  = ImVec4(0.75f, 0.35f, 0.0f,  1.0f);
+        g_col.text_changed      = ImVec4(0.5f,  0.35f, 0.0f,  1.0f);
+        g_col.flag_dim          = ImVec4(0.55f, 0.55f, 0.55f, 1.0f);
+        g_col.bp_empty          = ImVec4(0.65f, 0.65f, 0.65f, 0.8f);
+        g_col.bp_text           = ImVec4(0.65f, 0.1f,  0.1f,  1.0f);
+        g_col.mnemonic          = ImVec4(0.05f, 0.35f, 0.7f,  1.0f);
+        g_col.symbol_label      = ImVec4(0.1f,  0.45f, 0.1f,  1.0f);
+        g_col.source_comment    = ImVec4(0.1f,  0.45f, 0.1f,  1.0f);
+        g_col.source_label      = ImVec4(0.5f,  0.3f,  0.0f,  1.0f);
+        g_col.highlight_blue_bg = ImVec4(0.3f,  0.4f,  0.8f,  0.2f);
+        g_col.highlight_green_bg= ImVec4(0.2f,  0.5f,  0.2f,  0.2f);
+        g_col.gl_clear          = ImVec4(0.90f, 0.90f, 0.90f, 1.0f);
+    }
+
+    /* Update console colour variables to match theme */
+    CON_COL_NORMAL = g_col.text_normal;
+    CON_COL_CMD    = g_col.text_cmd;
+    CON_COL_OK     = g_col.text_ok;
+    CON_COL_ERR    = g_col.text_err;
+    CON_COL_WARN   = g_col.text_warn;
+
+    /* Per-platform style geometry tweaks */
+    ImGuiStyle &style = ImGui::GetStyle();
+#if defined(__APPLE__)
+    style.WindowRounding   = 10.0f;
+    style.FrameRounding    =  6.0f;
+    style.PopupRounding    =  8.0f;
+    style.ScrollbarRounding=  8.0f;
+    style.GrabRounding     =  5.0f;
+    style.TabRounding      =  6.0f;
+    style.ScrollbarSize    = 14.0f;
+    style.GrabMinSize      = 12.0f;
+    style.WindowBorderSize =  1.0f;
+    style.FrameBorderSize  =  0.0f;
+#elif defined(_WIN32)
+    style.WindowRounding   =  4.0f;
+    style.FrameRounding    =  3.0f;
+    style.PopupRounding    =  3.0f;
+    style.ScrollbarRounding=  3.0f;
+    style.GrabRounding     =  3.0f;
+    style.TabRounding      =  4.0f;
+    style.ScrollbarSize    = 14.0f;
+    style.WindowBorderSize =  1.0f;
+    style.FrameBorderSize  =  0.0f;
+#else   /* Linux / GTK / KDE */
+    style.WindowRounding   =  6.0f;
+    style.FrameRounding    =  4.0f;
+    style.PopupRounding    =  5.0f;
+    style.ScrollbarRounding=  5.0f;
+    style.GrabRounding     =  4.0f;
+    style.TabRounding      =  5.0f;
+    style.ScrollbarSize    = 12.0f;
+    style.WindowBorderSize =  1.0f;
+    style.FrameBorderSize  =  0.0f;
+#endif
+
+    style.ScaleAllSizes(g_ui_scale);
 }
 
 /* --------------------------------------------------------------------------
@@ -680,14 +867,14 @@ static void draw_pane_breakpoints(void)
 
             /* Address */
             ImGui::TableSetColumnIndex(1);
-            if (!enabled) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+            if (!enabled) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
             ImGui::Text("$%04X", (unsigned)addr);
             if (!enabled) ImGui::PopStyleColor();
 
             /* Condition */
             ImGui::TableSetColumnIndex(2);
             if (cond[0]) {
-                if (!enabled) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+                if (!enabled) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
                 ImGui::TextUnformatted(cond);
                 if (!enabled) ImGui::PopStyleColor();
             } else {
@@ -848,7 +1035,7 @@ static void draw_pane_stack(void)
             /* Highlight the top-of-stack row */
             if (is_sp) {
                 ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
-                    ImGui::GetColorU32(ImVec4(0.3f, 0.6f, 0.3f, 0.25f)));
+                    ImGui::GetColorU32(g_col.highlight_green_bg));
                 need_scroll = true;
             }
 
@@ -866,9 +1053,9 @@ static void draw_pane_stack(void)
 
             ImGui::TableSetColumnIndex(2);
             if (is_sp)
-                ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "<-- SP+1");
+                ImGui::TextColored(g_col.text_ok, "<-- SP+1");
             else if (offset == sp)
-                ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.2f, 1.0f), "<-- SP");
+                ImGui::TextColored(g_col.text_changed, "<-- SP");
             else if (active && offset < 0xFF && offset > sp) {
                 /* Pair check: every two pushed bytes may be a return address */
                 if ((offset & 1) == 1 && offset + 1 <= 0xFF) {
@@ -964,7 +1151,7 @@ static void draw_pane_watches(void)
             ImGui::TableNextRow();
 
             ImVec4 val_col = w.changed
-                ? ImVec4(1.0f, 1.0f, 0.2f, 1.0f)
+                ? g_col.text_changed
                 : ImGui::GetStyleColorVec4(ImGuiCol_Text);
 
             ImGui::TableSetColumnIndex(0);
@@ -1083,7 +1270,7 @@ static void draw_pane_iref(void)
                         g_iref_sel_idx = selected ? -1 : i;
 
                     ImGui::TableSetColumnIndex(1);
-                    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", info.mnemonic);
+                    ImGui::TextColored(g_col.mnemonic, "%s", info.mnemonic);
 
                     ImGui::TableSetColumnIndex(2);
                     ImGui::TextDisabled("%s", sim_mode_name(info.mode));
@@ -1108,7 +1295,7 @@ static void draw_pane_iref(void)
                     for (int b = 0; b < (int)info.opcode_len && b < 4; b++)
                         p += snprintf(opbuf + p, sizeof(opbuf) - p,
                                       b ? " $%02X" : "$%02X", info.opcode_bytes[b]);
-                    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%-6s", info.mnemonic);
+                    ImGui::TextColored(g_col.mnemonic, "%-6s", info.mnemonic);
                     ImGui::SameLine();
                     ImGui::Text("mode=%-5s  bytes=%d  cycles=%d  opcode=%s",
                         sim_mode_name(info.mode), info.instr_bytes, info.cycles, opbuf);
@@ -1151,8 +1338,8 @@ static void draw_pane_iref(void)
                             char lbl[16];
                             snprintf(lbl, sizeof(lbl), "%-3s##%02X", info.mnemonic, bv);
                             ImGui::PushStyleColor(ImGuiCol_Text,
-                                sel ? ImVec4(1.0f, 1.0f, 0.3f, 1.0f)
-                                    : ImVec4(0.4f, 0.8f, 1.0f, 1.0f));
+                                sel ? g_col.text_changed
+                                    : g_col.mnemonic);
                             if (ImGui::Selectable(lbl, sel, 0,
                                     ImVec2(cell_w - ImGui::GetStyle().CellPadding.x * 2, 0)))
                                 by_opcode_sel = sel ? -1 : (int)bv;
@@ -1171,7 +1358,7 @@ static void draw_pane_iref(void)
                 if (sim_opcode_by_byte(g_sim, (uint8_t)by_opcode_sel, &info)) {
                     ImGui::Text("$%02X  ", by_opcode_sel);
                     ImGui::SameLine();
-                    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%-6s", info.mnemonic);
+                    ImGui::TextColored(g_col.mnemonic, "%-6s", info.mnemonic);
                     ImGui::SameLine();
                     ImGui::Text("mode=%-5s  bytes=%d  cycles=%d",
                         sim_mode_name(info.mode), info.instr_bytes, info.cycles);
@@ -1400,7 +1587,7 @@ static void draw_pane_source(void)
 
                 if (i == g_src_search_hit)
                     ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
-                        ImGui::GetColorU32(ImVec4(0.3f, 0.4f, 0.8f, 0.35f)));
+                        ImGui::GetColorU32(g_col.highlight_blue_bg));
 
                 ImGui::TableSetColumnIndex(0);
                 ImGui::TextDisabled("%4d", i + 1);
@@ -1414,7 +1601,7 @@ static void draw_pane_source(void)
                     ImGui::Text(" ");
                 } else if (*p == ';') {
                     /* Full comment line */
-                    ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f), "%s", line);
+                    ImGui::TextColored(g_col.source_comment, "%s", line);
                 } else if (p == line) {
                     /* Label / definition at column 0 */
                     const char *semi = strchr(line, ';');
@@ -1423,11 +1610,11 @@ static void draw_pane_source(void)
                         int ll = (int)(semi - line);
                         if (ll >= SRC_MAX_LINE_LEN) ll = SRC_MAX_LINE_LEN - 1;
                         memcpy(lbuf, line, ll); lbuf[ll] = '\0';
-                        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "%s", lbuf);
+                        ImGui::TextColored(g_col.source_label, "%s", lbuf);
                         ImGui::SameLine(0, 0);
-                        ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f), "%s", semi);
+                        ImGui::TextColored(g_col.source_comment, "%s", semi);
                     } else {
-                        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "%s", line);
+                        ImGui::TextColored(g_col.source_label, "%s", line);
                     }
                 } else {
                     /* Indented instruction: indent(dim) + mnemonic(cyan) + operand + comment(green) */
@@ -1456,7 +1643,7 @@ static void draw_pane_source(void)
                         if (ml > 15) ml = 15;
                         memcpy(mbuf, mnem_s, ml); mbuf[ml] = '\0';
                         if (piece) ImGui::SameLine(0, 0);
-                        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", mbuf);
+                        ImGui::TextColored(g_col.mnemonic, "%s", mbuf);
                         piece++;
                     }
                     /* Operand */
@@ -1472,7 +1659,7 @@ static void draw_pane_source(void)
                     /* Inline comment */
                     if (semi) {
                         if (piece) ImGui::SameLine(0, 0);
-                        ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f), "%s", semi);
+                        ImGui::TextColored(g_col.source_comment, "%s", semi);
                         piece++;
                     }
                     if (!piece) ImGui::Text(" ");
@@ -1558,7 +1745,7 @@ static void draw_pane_profiler(void)
                         /* Skip the hex dump field (18 chars) + 1 space */
                         const char *mn  = (strlen(ins) > 19) ? ins + 19 : ins;
                         while (*mn == ' ') mn++;
-                        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f),
+                        ImGui::TextColored(g_col.mnemonic,
                                            "%-16.16s", mn);
 
                         ImGui::TableSetColumnIndex(2);
@@ -1611,7 +1798,7 @@ static void draw_pane_profiler(void)
                     }
                 }
             } else {
-                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                ImGui::TextColored(g_col.text_err,
                                    "Heatmap texture not initialised.");
             }
             ImGui::EndTabItem();
@@ -1819,11 +2006,11 @@ static void draw_statusbar(void)
     cpu_t *cpu        = sim_get_cpu(g_sim);
 
     if (g_running)
-        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "RUNNING");
+        ImGui::TextColored(g_col.text_ok, "RUNNING");
     else {
         const char *sname = sim_state_name(state);
         if      (state == SIM_IDLE)     ImGui::TextDisabled("%s", sname);
-        else if (state == SIM_FINISHED) ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "%s", sname);
+        else if (state == SIM_FINISHED) ImGui::TextColored(g_col.text_warn_orange, "%s", sname);
         else                            ImGui::Text("%s", sname);
     }
 
@@ -1876,9 +2063,9 @@ static void draw_pane_registers(void)
     }
     ImGui::Separator();
 
-    /* Yellow if changed, otherwise default */
+    /* Highlight if changed, otherwise default */
     auto diff_col = [&](bool changed) -> ImVec4 {
-        return changed ? ImVec4(1.0f, 1.0f, 0.2f, 1.0f)
+        return changed ? g_col.text_changed
                        : ImGui::GetStyleColorVec4(ImGuiCol_Text);
     };
 
@@ -1932,9 +2119,9 @@ static void draw_pane_registers(void)
             bool set     = (cpu->p & flags[i].mask) != 0;
             bool changed = prev && ((prev->p & flags[i].mask) != (cpu->p & flags[i].mask));
             ImVec4 col;
-            if      (changed) col = ImVec4(1.0f, 1.0f, 0.2f, 1.0f);
-            else if (set)     col = ImVec4(0.3f, 1.0f, 0.3f, 1.0f);
-            else              col = ImVec4(0.35f, 0.35f, 0.35f, 1.0f);
+            if      (changed) col = g_col.text_changed;
+            else if (set)     col = g_col.text_ok;
+            else              col = g_col.flag_dim;
             ImGui::PushStyleColor(ImGuiCol_Text, col);
             ImGui::Text("%s", flags[i].lbl);
             ImGui::PopStyleColor();
@@ -1949,13 +2136,13 @@ static void draw_pane_registers(void)
         ImGui::PopStyleColor();
 
         if (is_45gs02 && cpu->eom_prefix)
-            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "[EOM]");
+            ImGui::TextColored(g_col.text_warn_orange, "[EOM]");
 
     } else {
         /* ---- Expanded / editable mode ---- */
         auto edit_byte = [&](const char *name, uint8_t cur, uint8_t prev_val) {
             bool ch = prev && (prev_val != cur);
-            if (ch) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.2f, 1.0f));
+            if (ch) ImGui::PushStyleColor(ImGuiCol_Text, g_col.text_changed);
             ImGui::Text("%-2s", name);
             if (ch) ImGui::PopStyleColor();
             ImGui::SameLine(45);
@@ -1981,7 +2168,7 @@ static void draw_pane_registers(void)
         /* S — 16-bit on 45GS02, 8-bit page 1 on others */
         {
             bool ch_s = prev && prev->s != cpu->s;
-            if (ch_s) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.2f, 1.0f));
+            if (ch_s) ImGui::PushStyleColor(ImGuiCol_Text, g_col.text_changed);
             ImGui::Text("S ");
             if (ch_s) ImGui::PopStyleColor();
             ImGui::SameLine(45);
@@ -2004,7 +2191,7 @@ static void draw_pane_registers(void)
         /* PC — 16-bit */
         {
             bool ch_pc = prev && prev->pc != cpu->pc;
-            if (ch_pc) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.2f, 1.0f));
+            if (ch_pc) ImGui::PushStyleColor(ImGuiCol_Text, g_col.text_changed);
             ImGui::Text("PC");
             if (ch_pc) ImGui::PopStyleColor();
             ImGui::SameLine(45);
@@ -2129,9 +2316,9 @@ static void draw_pane_disassembly(void)
                 snprintf(btn_id, sizeof(btn_id), "%s##%04X",
                          has_bp ? "*" : ".", (unsigned)addr);
                 if (has_bp)
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, g_col.text_err);
                 else
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.35f, 0.35f, 0.35f, 0.6f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, g_col.bp_empty);
                 if (ImGui::SmallButton(btn_id)) {
                     if (has_bp) sim_break_clear(g_sim, addr);
                     else        sim_break_set(g_sim, addr, NULL);
@@ -2146,7 +2333,7 @@ static void draw_pane_disassembly(void)
             /* PC arrow */
             ImGui::TableSetColumnIndex(1);
             if (is_pc)
-                ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.2f, 1.0f), ">");
+                ImGui::TextColored(g_col.text_changed, ">");
             else
                 ImGui::TextDisabled(" ");
 
@@ -2155,15 +2342,15 @@ static void draw_pane_disassembly(void)
             {
                 const char *sym = sim_sym_by_addr(g_sim, addr);
                 if (sym) {
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.9f, 0.5f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, g_col.symbol_label);
                     ImGui::Text("%s:", sym);
                     ImGui::PopStyleColor();
                     ImGui::SameLine(0, 6);
                 }
                 if (is_pc)
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.2f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, g_col.text_changed);
                 else if (has_bp)
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.6f, 0.6f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, g_col.bp_text);
                 ImGui::Text("%s", buf);
                 if (is_pc || has_bp)
                     ImGui::PopStyleColor();
@@ -2248,7 +2435,7 @@ static void draw_pane_memory(void)
             bool written = was_written(ba);
             ImGui::SameLine(0, col == 8 ? 8 : 4);
             if (written)
-                ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.2f, 1.0f), "%02X", (unsigned)v);
+                ImGui::TextColored(g_col.text_changed, "%02X", (unsigned)v);
             else
                 ImGui::Text("%02X", (unsigned)v);
         }
@@ -2354,6 +2541,7 @@ int main(int /*argc*/, char ** /*argv*/)
                 if (!in_sec) continue;
                 int v;
                 if (sscanf(ln, "FontSize=%d", &v) == 1 && v >= 8  && v <= 32)  g_base_font_size = v;
+                if (sscanf(ln, "Theme=%d",    &v) == 1 && v >= 0  && v <= 2)   g_theme = v;
                 if (sscanf(ln, "WindowW=%d",  &v) == 1 && v >= 320)             pre_win_w = v;
                 if (sscanf(ln, "WindowH=%d",  &v) == 1 && v >= 240)             pre_win_h = v;
                 if (sscanf(ln, "WindowX=%d",  &v) == 1)                         pre_win_x = v;
@@ -2411,6 +2599,8 @@ int main(int /*argc*/, char ** /*argv*/)
             int v;
             if (sscanf(line, "FontSize=%d", &v) == 1 && v >= 8 && v <= 32)
                 if (v != g_base_font_size) { g_base_font_size = v; g_font_rebuild = true; }
+            if (sscanf(line, "Theme=%d", &v) == 1 && v >= 0 && v <= 2)
+                if (v != g_theme) { g_theme = v; g_theme_rebuild = true; }
         };
         h.WriteAllFn = [](ImGuiContext*, ImGuiSettingsHandler* handler, ImGuiTextBuffer* buf) {
             int x = 0, y = 0, w = 800, wh = 600;
@@ -2420,10 +2610,11 @@ int main(int /*argc*/, char ** /*argv*/)
             }
             buf->appendf("[%s][Settings]\n", handler->TypeName);
             buf->appendf("FontSize=%d\n", g_base_font_size);
-            buf->appendf("WindowX=%d\n", x);
-            buf->appendf("WindowY=%d\n", y);
-            buf->appendf("WindowW=%d\n", w);
-            buf->appendf("WindowH=%d\n", wh);
+            buf->appendf("Theme=%d\n",    g_theme);
+            buf->appendf("WindowX=%d\n",  x);
+            buf->appendf("WindowY=%d\n",  y);
+            buf->appendf("WindowW=%d\n",  w);
+            buf->appendf("WindowH=%d\n",  wh);
             buf->appendf("\n");
         };
         ImGui::AddSettingsHandler(&h);
@@ -2434,8 +2625,7 @@ int main(int /*argc*/, char ** /*argv*/)
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.IniFilename  = "sim6502-gui.ini";
 
-    ImGui::StyleColorsDark();
-    ImGui::GetStyle().ScaleAllSizes(ui_scale);
+    apply_theme();
 
     ImFontConfig font_cfg;
     font_cfg.SizePixels = floorf((float)g_base_font_size * ui_scale);
@@ -2532,6 +2722,12 @@ int main(int /*argc*/, char ** /*argv*/)
                 g_running = false;
         }
 
+        /* ---- Theme rebuild (before NewFrame) ---- */
+        if (g_theme_rebuild) {
+            apply_theme();
+            g_theme_rebuild = false;
+        }
+
         /* ---- Font rebuild (before NewFrame) ---- */
         if (g_font_rebuild) {
             rebuild_font();
@@ -2625,6 +2821,18 @@ int main(int /*argc*/, char ** /*argv*/)
                         }
                         ImGui::EndMenu();
                     }
+                    if (ImGui::BeginMenu("Theme")) {
+                        if (ImGui::MenuItem("Auto (OS)",  nullptr, g_theme == 2)) {
+                            if (g_theme != 2) { g_theme = 2; g_theme_rebuild = true; }
+                        }
+                        if (ImGui::MenuItem("Dark",       nullptr, g_theme == 0)) {
+                            if (g_theme != 0) { g_theme = 0; g_theme_rebuild = true; }
+                        }
+                        if (ImGui::MenuItem("Light",      nullptr, g_theme == 1)) {
+                            if (g_theme != 1) { g_theme = 1; g_theme_rebuild = true; }
+                        }
+                        ImGui::EndMenu();
+                    }
                     ImGui::EndMenu();
                 }
                 ImGui::EndMenuBar();
@@ -2679,7 +2887,7 @@ int main(int /*argc*/, char ** /*argv*/)
         int fb_w = 0, fb_h = 0;
         SDL_GL_GetDrawableSize(window, &fb_w, &fb_h);
         glViewport(0, 0, fb_w, fb_h);
-        glClearColor(0.10f, 0.10f, 0.10f, 1.00f);
+        glClearColor(g_col.gl_clear.x, g_col.gl_clear.y, g_col.gl_clear.z, g_col.gl_clear.w);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         SDL_GL_SwapWindow(window);

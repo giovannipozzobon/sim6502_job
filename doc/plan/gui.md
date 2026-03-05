@@ -761,29 +761,29 @@ Users can save the current docking layout + open panes as a named preset (e.g., 
 
 ## 10. Phased Implementation
 
-### Phase 1 — Core Infrastructure
-1. Refactor `sim6502.c` to expose `sim_api.h` library interface; verify CLI still passes all tests
-2. Set up `gui/` directory, ImGui+SDL2+OpenGL skeleton, main loop, docking space
-3. Toolbar (load, step, run, pause, reset, processor selector)
-4. Status bar
+### Phase 1 — Core Infrastructure ✓
+1. [x] Refactor `sim6502.c` to expose `sim_api.h` library interface; verify CLI still passes all tests
+2. [x] Set up `gui/` directory, ImGui+SDL2+OpenGL skeleton, main loop, docking space
+3. [x] Toolbar (load, step, run, pause, reset, processor selector)
+4. [x] Status bar
 
-### Phase 2 — Essential Panes
-5. Register Display (compact + expanded modes)
-6. Disassembly View (follow-PC mode)
-7. Memory View (hex dump, follow-PC/SP)
-8. CLI Console (all existing interactive commands)
+### Phase 2 — Essential Panes ✓
+5. [x] Register Display (compact + expanded modes)
+6. [x] Disassembly View (follow-PC mode)
+7. [x] Memory View (hex dump, follow-PC/SP)
+8. [x] CLI Console (all existing interactive commands)
 
-### Phase 3 — Debugging Panes
-9. Breakpoint Manager
-10. Execution Trace Log
-11. Stack Inspector
-12. I/O Monitor / Watch
+### Phase 3 — Debugging Panes ✓
+9. [x] Breakpoint Manager
+10. [x] Execution Trace Log
+11. [x] Stack Inspector
+12. [x] I/O Monitor / Watch
 
-### Phase 4 — Reference & Analysis
-13. Instruction Reference (mnemonic browser + detail panel)
-14. Symbol Table Browser
-15. Source Editor / Viewer (view mode first, edit later)
-16. Statistics / Profiler
+### Phase 4 — Reference & Analysis ✓
+13. [x] Instruction Reference (mnemonic browser + detail panel)
+14. [x] Symbol Table Browser
+15. [x] Source Editor / Viewer (view mode first, edit later)
+16. [x] Statistics / Profiler
 
 ### Phase 5 — Polish
 17. Theming and colour preferences
