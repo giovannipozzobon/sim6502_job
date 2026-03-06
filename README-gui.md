@@ -9,7 +9,7 @@ The GUI is designed with a flexible docking system, allowing you to rearrange, s
 ### 1. Register Display
 - **Live State**: Real-time view of all CPU registers (A, X, Y, Z, B, SP, PC) and status flags.
 - **Diff Highlighting**: Registers that changed during the last execution step are highlighted.
-- **Interactive**: Click on any register value to edit it directly.
+- **Interactive**: Toggle to **Expanded Mode** to edit any register value directly via hex input.
 
 ### 2. Disassembly View
 - **Instruction Stream**: Real-time disassembly of memory around the Program Counter.
