@@ -28,6 +28,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <unistd.h>
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "imgui_impl_sdl2.h"
@@ -141,7 +142,9 @@ static char g_iref_filter[32] = "";
 static int  g_iref_sel_idx    = -1;
 
 /* ---- Symbol Browser ---- */
-static char g_sym_filter[64] = "";
+static char g_sym_filter[64]    = "";
+static bool g_symload_open      = false;
+static char g_symload_path[512] = "";
 
 /* ---- Source Viewer ---- */
 #define SRC_MAX_LINES    4096
@@ -1649,6 +1652,26 @@ static void draw_pane_iref(void)
 }
 
 /* --------------------------------------------------------------------------
+ * Resolve a path relative to the running executable's directory.
+ * Used for preset symbol files bundled alongside the binary.
+ * -------------------------------------------------------------------------- */
+static void sym_resolve_path(const char *rel, char *out, size_t outsz)
+{
+    char exe[512]; exe[0] = '\0';
+    ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+    if (n > 0) {
+        exe[n] = '\0';
+        char *slash = strrchr(exe, '/');
+        if (slash) {
+            *slash = '\0';
+            snprintf(out, outsz, "%s/%s", exe, rel);
+            return;
+        }
+    }
+    snprintf(out, outsz, "%s", rel);
+}
+
+/* --------------------------------------------------------------------------
  * Pane: Symbol Table Browser (Phase 4)
  *
  * Shows all symbols in the session's symbol table.
@@ -1663,10 +1686,52 @@ static void draw_pane_symbols(void)
     int count = sim_sym_count(g_sim);
 
     /* Filter bar */
-    ImGui::SetNextItemWidth(160.0f);
+    ImGui::SetNextItemWidth(140.0f);
     ImGui::InputText("Filter##sf", g_sym_filter, sizeof(g_sym_filter));
     ImGui::SameLine();
     ImGui::TextDisabled("%d symbols", count);
+
+    /* Load / preset / clear toolbar */
+    if (ImGui::SmallButton("Load File...##slb")) {
+        g_symload_path[0] = '\0';
+        g_symload_open    = true;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("|");
+    static const struct { const char *label; const char *file; } s_presets[] = {
+        { "C64",    "symbols/c64.sym"    },
+        { "C128",   "symbols/c128.sym"   },
+        { "MEGA65", "symbols/mega65.sym" },
+        { "X16",    "symbols/x16.sym"    },
+    };
+    for (int pi = 0; pi < 4; pi++) {
+        ImGui::SameLine();
+        char pid[32]; snprintf(pid, sizeof(pid), "%s##sp%d", s_presets[pi].label, pi);
+        if (ImGui::SmallButton(pid)) {
+            char path[512];
+            sym_resolve_path(s_presets[pi].file, path, sizeof(path));
+            int added = sim_sym_load_file(g_sim, path);
+            if (added > 0)
+                con_add(ImVec4(0.4f,1.0f,0.4f,1.0f),
+                        "Loaded %d symbol(s) [%s]", added, s_presets[pi].label);
+            else
+                con_add(ImVec4(1.0f,0.4f,0.4f,1.0f),
+                        "Could not load preset: %s", s_presets[pi].file);
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Load %s preset symbols", s_presets[pi].label);
+    }
+    if (count > 0) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("|");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Clear All##sca")) {
+            for (int i = count - 1; i >= 0; i--)
+                sim_sym_remove_idx(g_sim, i);
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Remove all %d symbols", count);
+    }
 
     /* Add row */
     ImGui::Separator();
@@ -2928,6 +2993,41 @@ static void draw_binsave_popup(void)
 }
 
 /* --------------------------------------------------------------------------
+ * Symbol-file load popup (Load File... button in Symbols pane)
+ * -------------------------------------------------------------------------- */
+static void draw_symload_popup(void)
+{
+    if (g_symload_open) {
+        ImGui::OpenPopup("Load Symbol File##slp");
+        g_symload_open = false;
+    }
+    if (ImGui::BeginPopupModal("Load Symbol File##slp", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Path to .sym file:");
+        ImGui::SetNextItemWidth(380.0f);
+        bool enter = ImGui::InputText("##slppath", g_symload_path,
+                        sizeof(g_symload_path),
+                        ImGuiInputTextFlags_EnterReturnsTrue |
+                        ImGuiInputTextFlags_AutoSelectAll);
+        bool ok = ImGui::Button("Load") || enter;
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape))
+            ImGui::CloseCurrentPopup();
+        if (ok && g_symload_path[0]) {
+            int added = sim_sym_load_file(g_sim, g_symload_path);
+            if (added > 0)
+                con_add(ImVec4(0.4f,1.0f,0.4f,1.0f),
+                        "Loaded %d symbol(s) from %s", added, g_symload_path);
+            else
+                con_add(ImVec4(1.0f,0.4f,0.4f,1.0f),
+                        "Could not load symbols from %s", g_symload_path);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
+/* --------------------------------------------------------------------------
  * Go-to-address popup (Ctrl+G)
  * -------------------------------------------------------------------------- */
 static void draw_goto_popup(void)
@@ -3454,6 +3554,7 @@ int main(int /*argc*/, char ** /*argv*/)
         /* Popups */
         draw_binload_popup();
         draw_binsave_popup();
+        draw_symload_popup();
         draw_goto_popup();
 
         /* Render */
