@@ -788,8 +788,8 @@ Users can save the current docking layout + open panes as a named preset (e.g., 
 ### Phase 5 — Polish
 17. [X] Theming and colour preferences
 18. [x] Keyboard shortcuts
-19. Layout presets (save/load)
-20. Multi-instance panes (additional memory views)
+19. [x] Layout presets (save/load)
+20. [x] Multi-instance panes (additional memory views)
 21. Drag-and-drop file loading
 22. <SKIPPED>
 

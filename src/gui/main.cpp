@@ -29,6 +29,8 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <unistd.h>
+#include <dirent.h>
+#include <sys/stat.h>
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "imgui_impl_sdl2.h"
@@ -65,8 +67,22 @@ static int  g_proc_idx             = 0;
 /* Pane visibility */
 static bool show_registers   = true;
 static bool show_disassembly = true;
-static bool show_memory      = true;
 static bool show_console     = true;
+
+/* Multi-instance memory views */
+#define MAX_MEM_VIEWS 4
+struct MemViewState {
+    bool     open;
+    bool     initialized;
+    uint16_t base;
+    char     addr_buf[8];
+};
+static MemViewState g_mem_views[MAX_MEM_VIEWS];  /* zero-init; [0].open set at startup */
+
+/* Layout preset state (#19) */
+static bool g_layout_save_open       = false;
+static char g_layout_save_name[64]   = "";
+static bool g_reset_layout           = false;
 
 /* --------------------------------------------------------------------------
  * Phase 2 state
@@ -2732,10 +2748,24 @@ static void draw_pane_disassembly(void)
  * 16-byte rows, hex + ASCII sidebar.
  * Bytes written in the most-recent sim_step are highlighted yellow.
  * -------------------------------------------------------------------------- */
-static void draw_pane_memory(void)
+static void draw_pane_memory(int idx)
 {
-    if (!show_memory) return;
-    ImGui::Begin("Memory", &show_memory);
+    MemViewState &mv = g_mem_views[idx];
+    if (!mv.open) return;
+
+    /* Lazy default initialisation (base 0x0200) */
+    if (!mv.initialized) {
+        mv.base = 0x0200;
+        snprintf(mv.addr_buf, sizeof(mv.addr_buf), "0200");
+        mv.initialized = true;
+    }
+
+    /* Build a unique title: "Memory" for instance 0, "Memory 2..N" for others */
+    char title[32];
+    if (idx == 0) snprintf(title, sizeof(title), "Memory");
+    else          snprintf(title, sizeof(title), "Memory %d", idx + 1);
+
+    ImGui::Begin(title, &mv.open);
 
     sim_state_t state = sim_get_state(g_sim);
     if (state == SIM_IDLE) {
@@ -2744,30 +2774,30 @@ static void draw_pane_memory(void)
         return;
     }
 
-    static uint16_t mem_base  = 0x0200;
-    static char     addr_buf[8] = "0200";
-
-    /* Navigation bar */
+    /* Navigation bar — use per-instance unique widget IDs via ##idx suffix */
+    char addr_id[16]; snprintf(addr_id, sizeof(addr_id), "##ma%d", idx);
     ImGui::SetNextItemWidth(60);
-    if (ImGui::InputText("##ma", addr_buf, sizeof(addr_buf),
+    if (ImGui::InputText(addr_id, mv.addr_buf, sizeof(mv.addr_buf),
             ImGuiInputTextFlags_CharsHexadecimal |
             ImGuiInputTextFlags_EnterReturnsTrue)) {
-        mem_base = (uint16_t)strtol(addr_buf, NULL, 16);
+        mv.base = (uint16_t)strtol(mv.addr_buf, NULL, 16);
     }
+    char pc_id[16]; snprintf(pc_id, sizeof(pc_id), "PC##pc%d", idx);
     ImGui::SameLine();
-    if (ImGui::SmallButton("PC")) {
+    if (ImGui::SmallButton(pc_id)) {
         cpu_t *cpu = sim_get_cpu(g_sim);
         if (cpu) {
-            mem_base = cpu->pc;
-            snprintf(addr_buf, sizeof(addr_buf), "%04X", (unsigned)mem_base);
+            mv.base = cpu->pc;
+            snprintf(mv.addr_buf, sizeof(mv.addr_buf), "%04X", (unsigned)mv.base);
         }
     }
+    char sp_id[16]; snprintf(sp_id, sizeof(sp_id), "SP##sp%d", idx);
     ImGui::SameLine();
-    if (ImGui::SmallButton("SP")) {
+    if (ImGui::SmallButton(sp_id)) {
         cpu_t *cpu = sim_get_cpu(g_sim);
         if (cpu) {
-            mem_base = (uint16_t)(0x0100 | (cpu->s & 0xFF));
-            snprintf(addr_buf, sizeof(addr_buf), "%04X", (unsigned)mem_base);
+            mv.base = (uint16_t)(0x0100 | (cpu->s & 0xFF));
+            snprintf(mv.addr_buf, sizeof(mv.addr_buf), "%04X", (unsigned)mv.base);
         }
     }
     ImGui::Separator();
@@ -2781,7 +2811,7 @@ static void draw_pane_memory(void)
 
     /* Hex dump — 16 bytes per row, 16 rows */
     for (int row = 0; row < 16; row++) {
-        uint16_t raddr = (uint16_t)(mem_base + row * 16);
+        uint16_t raddr = (uint16_t)(mv.base + row * 16);
         ImGui::Text("%04X ", (unsigned)raddr);
         for (int col = 0; col < 16; col++) {
             uint16_t ba  = (uint16_t)(raddr + col);
@@ -3028,6 +3058,59 @@ static void draw_symload_popup(void)
 }
 
 /* --------------------------------------------------------------------------
+ * Layout preset helpers (#19)
+ * -------------------------------------------------------------------------- */
+
+/* Directory where layout preset .ini files are stored (relative to CWD). */
+static const char *layout_preset_dir(void) { return "presets"; }
+
+/* Save the current ImGui layout to presets/<name>.ini */
+static void layout_save_preset(const char *name)
+{
+    mkdir(layout_preset_dir(), 0755);
+    char path[576];
+    snprintf(path, sizeof(path), "%s/%s.ini", layout_preset_dir(), name);
+    ImGui::SaveIniSettingsToDisk(path);
+    con_add(ImVec4(0.4f,1.0f,0.4f,1.0f), "Layout saved as '%s'", name);
+}
+
+/* Load a preset by name from presets/<name>.ini */
+static void layout_load_preset(const char *name)
+{
+    char path[576];
+    snprintf(path, sizeof(path), "%s/%s.ini", layout_preset_dir(), name);
+    ImGui::LoadIniSettingsFromDisk(path);
+    con_add(ImVec4(0.4f,1.0f,0.4f,1.0f), "Layout loaded: '%s'", name);
+}
+
+/* Save-layout popup: prompts for a preset name */
+static void draw_layout_save_popup(void)
+{
+    if (g_layout_save_open) {
+        ImGui::OpenPopup("Save Layout Preset##lsp");
+        g_layout_save_open = false;
+    }
+    if (ImGui::BeginPopupModal("Save Layout Preset##lsp", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Preset name:");
+        ImGui::SetNextItemWidth(220.0f);
+        bool enter = ImGui::InputText("##lspname", g_layout_save_name,
+                        sizeof(g_layout_save_name),
+                        ImGuiInputTextFlags_EnterReturnsTrue |
+                        ImGuiInputTextFlags_AutoSelectAll);
+        bool ok = ImGui::Button("Save") || enter;
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape))
+            ImGui::CloseCurrentPopup();
+        if (ok && g_layout_save_name[0]) {
+            layout_save_preset(g_layout_save_name);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
+/* --------------------------------------------------------------------------
  * Go-to-address popup (Ctrl+G)
  * -------------------------------------------------------------------------- */
 static void draw_goto_popup(void)
@@ -3204,6 +3287,9 @@ int main(int /*argc*/, char ** /*argv*/)
         fprintf(stderr, "sim6502-gui: failed to create sim session\n");
         return 1;
     }
+
+    /* Initialise multi-instance memory view: instance 0 starts open */
+    g_mem_views[0].open = true;
 
     /* Console welcome message */
     con_add(CON_COL_OK,     "sim6502-gui Phase 4 ready.  Type 'help' for commands.");
@@ -3457,7 +3543,32 @@ int main(int /*argc*/, char ** /*argv*/)
                 if (ImGui::BeginMenu("View")) {
                     ImGui::MenuItem("Registers",   nullptr, &show_registers);
                     ImGui::MenuItem("Disassembly", nullptr, &show_disassembly);
-                    ImGui::MenuItem("Memory",      nullptr, &show_memory);
+                    ImGui::MenuItem("Memory",      nullptr, &g_mem_views[0].open);
+                    /* Multi-instance memory views */
+                    for (int _mi = 1; _mi < MAX_MEM_VIEWS; _mi++) {
+                        if (g_mem_views[_mi].open) {
+                            char label[32];
+                            snprintf(label, sizeof(label), "Memory %d", _mi + 1);
+                            ImGui::MenuItem(label, nullptr, &g_mem_views[_mi].open);
+                        }
+                    }
+                    {
+                        /* Count open views; show "Add Memory View" if a slot is free */
+                        int open_count = 0;
+                        for (int _mi = 0; _mi < MAX_MEM_VIEWS; _mi++)
+                            if (g_mem_views[_mi].open) open_count++;
+                        if (open_count < MAX_MEM_VIEWS) {
+                            if (ImGui::MenuItem("Add Memory View")) {
+                                for (int _mi = 1; _mi < MAX_MEM_VIEWS; _mi++) {
+                                    if (!g_mem_views[_mi].open) {
+                                        g_mem_views[_mi].open        = true;
+                                        g_mem_views[_mi].initialized = false;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
                     ImGui::MenuItem("Console",     nullptr, &show_console);
                     ImGui::Separator();
                     if (ImGui::MenuItem("Go to Address...", "Ctrl+G")) {
@@ -3504,6 +3615,38 @@ int main(int /*argc*/, char ** /*argv*/)
                     }
                     ImGui::EndMenu();
                 }
+                /* ---- Layout menu (#19) ---- */
+                if (ImGui::BeginMenu("Layout")) {
+                    if (ImGui::MenuItem("Save Layout...")) {
+                        g_layout_save_name[0] = '\0';
+                        g_layout_save_open    = true;
+                    }
+                    if (ImGui::MenuItem("Reset to Default"))
+                        g_reset_layout = true;
+                    /* List saved presets */
+                    DIR *dp = opendir(layout_preset_dir());
+                    if (dp) {
+                        bool any = false;
+                        struct dirent *de;
+                        while ((de = readdir(dp)) != nullptr) {
+                            const char *n = de->d_name;
+                            size_t nl = strlen(n);
+                            if (nl > 4 && strcmp(n + nl - 4, ".ini") == 0) {
+                                if (!any) { ImGui::Separator(); any = true; }
+                                char label[68];
+                                /* strip .ini for display */
+                                size_t base_len = nl - 4;
+                                if (base_len >= sizeof(label)) base_len = sizeof(label) - 1;
+                                memcpy(label, n, base_len);
+                                label[base_len] = '\0';
+                                if (ImGui::MenuItem(label))
+                                    layout_load_preset(label);
+                            }
+                        }
+                        closedir(dp);
+                    }
+                    ImGui::EndMenu();
+                }
                 ImGui::EndMenuBar();
             }
 
@@ -3517,10 +3660,11 @@ int main(int /*argc*/, char ** /*argv*/)
             float ds_h = ImGui::GetContentRegionAvail().y - sb_h;
             if (ds_h < 0.0f) ds_h = 0.0f;
 
-            /* Apply default layout on first run */
+            /* Apply default layout on first run or when explicitly reset */
             const ImGuiID dockspace_id = ImGui::GetID("MainDockspace");
-            if (first_run && !layout_applied) {
-                layout_applied = true;
+            if ((first_run && !layout_applied) || g_reset_layout) {
+                layout_applied  = true;
+                g_reset_layout  = false;
                 setup_default_layout(dockspace_id,
                     ImVec2(ImGui::GetContentRegionAvail().x, ds_h));
             }
@@ -3536,7 +3680,7 @@ int main(int /*argc*/, char ** /*argv*/)
         /* Phase 1+2 panes */
         draw_pane_registers();
         draw_pane_disassembly();
-        draw_pane_memory();
+        for (int _mi = 0; _mi < MAX_MEM_VIEWS; _mi++) draw_pane_memory(_mi);
         draw_pane_console();
 
         /* Phase 3 panes */
@@ -3555,6 +3699,7 @@ int main(int /*argc*/, char ** /*argv*/)
         draw_binload_popup();
         draw_binsave_popup();
         draw_symload_popup();
+        draw_layout_save_popup();
         draw_goto_popup();
 
         /* Render */
