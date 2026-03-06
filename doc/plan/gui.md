@@ -786,8 +786,8 @@ Users can save the current docking layout + open panes as a named preset (e.g., 
 16. [x] Statistics / Profiler
 
 ### Phase 5 — Polish
-17. Theming and colour preferences
-18. Keyboard shortcuts
+17. [X] Theming and colour preferences
+18. [x] Keyboard shortcuts
 19. Layout presets (save/load)
 20. Multi-instance panes (additional memory views)
 21. Drag-and-drop file loading
@@ -795,11 +795,18 @@ Users can save the current docking layout + open panes as a named preset (e.g., 
 
 ### Phase 6 — Graphics & Time Travel
 23. Execution History ring buffer infrastructure (`history.h`, `sim_history_*` API)
-24. History pane: timeline slider, step-back/step-forward, history table
+24. History pane: timeline slider, step-back/step-forward, history table, history enable/disable / clear. 
 25. CLI `stepback` / `stepfwd` commands
 26. VIC-II renderer: character mode, bitmap mode, sprites (software rasteriser into pixel buffer → OpenGL texture)
 27. VIC Viewer pane: Screen, Sprites, Char Set, Color RAM, Registers sub-panes
+27a. VIC Viewer pane: Screen
+27b. VIC Viewer pane: Sprites
+27c. VIC Viewer pane: Char Set
+27d. VIC Viewer pane: Color RAM
+27e. VIC Viewer pane: Registers sub-panes
 28. PNG export for frames, sprites, and char sheets (`stb_image_write.h`)
+28a. VIC Viewer pane: Standard Screen bitmap. 
+28b. VIC Viewer pane: Standard text screen w/ character set rendered. 
 29. VIC-III mode extensions
 30. VIC-IV mode extensions (MEGA65 full-colour mode, extended sprites)
 

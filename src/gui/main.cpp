@@ -111,6 +111,17 @@ static bool show_symbols  = false;
 static bool show_source   = false;
 static bool show_profiler = false;
 
+/* ---- Phase 5: keyboard shortcut state ---- */
+static bool     g_focus_console     = false;  /* `: focus console input              */
+static bool     g_focus_disasm_addr = false;  /* Ctrl+Shift+F: focus disasm addr bar */
+static bool     g_focus_src_search  = false;  /* Ctrl+F (source): focus search bar   */
+static bool     g_goto_open         = false;  /* Ctrl+G: go-to-address popup         */
+static char     g_goto_buf[8]       = "";
+
+/* F8 step-over: temp breakpoint tracking */
+static bool     g_step_over_active  = false;
+static uint16_t g_step_over_bp      = 0;
+
 /* ---- Instruction Reference ---- */
 static char g_iref_filter[32] = "";
 static int  g_iref_sel_idx    = -1;
@@ -434,6 +445,33 @@ static void do_load(void)
         /* Phase 4: load source text + reset profiler view */
         src_load(g_filename_buf);
         g_heatmap_dirty = true;
+    }
+}
+
+/* --------------------------------------------------------------------------
+ * do_step_over: step past the current instruction.
+ * For JSR abs ($20): sets a temp breakpoint at the return address and runs.
+ * For all other instructions: single-steps like F7.
+ * -------------------------------------------------------------------------- */
+static void do_step_over(void)
+{
+    g_running = false;
+    sim_state_t st = sim_get_state(g_sim);
+    if (st != SIM_READY && st != SIM_PAUSED) return;
+    cpu_t *cpu = sim_get_cpu(g_sim);
+    if (!cpu) return;
+    g_prev_cpu = *cpu; g_prev_cpu_valid = true;
+    uint8_t op = sim_mem_read_byte(g_sim, cpu->pc);
+    if (op == 0x20) { /* JSR abs: run to return address (PC+3) */
+        uint16_t ret       = (uint16_t)(cpu->pc + 3);
+        g_step_over_bp     = ret;
+        g_step_over_active = true;
+        sim_break_set(g_sim, ret, NULL);
+        g_running = true;
+    } else {
+        sim_step(g_sim, 1);
+        g_last_write_count = sim_get_last_writes(g_sim, g_last_writes, 256);
+        update_watches();
     }
 }
 
@@ -1635,6 +1673,10 @@ static void draw_pane_source(void)
 
     /* Search bar */
     bool do_search = false, do_goto = false;
+    if (g_focus_src_search) {
+        ImGui::SetKeyboardFocusHere();
+        g_focus_src_search = false;
+    }
     ImGui::SetNextItemWidth(180.0f);
     if (ImGui::InputText("##srcsearch", g_src_search, sizeof(g_src_search),
                          ImGuiInputTextFlags_EnterReturnsTrue))
@@ -2053,7 +2095,7 @@ static void draw_toolbar(void)
         g_last_write_count = sim_get_last_writes(g_sim, g_last_writes, 256);
         update_watches();
     }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Step 1 instruction (F7)");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Step into 1 instruction (F7) / Step over: F8");
     if (!can_step) ImGui::EndDisabled();
 
     ImGui::SameLine();
@@ -2357,6 +2399,10 @@ static void draw_pane_disassembly(void)
         char addr_buf[8];
         snprintf(addr_buf, sizeof(addr_buf), "%04X", (unsigned)g_disasm_addr);
         ImGui::SetNextItemWidth(60);
+        if (g_focus_disasm_addr) {
+            ImGui::SetKeyboardFocusHere();
+            g_focus_disasm_addr = false;
+        }
         if (ImGui::InputText("##da", addr_buf, sizeof(addr_buf),
                 ImGuiInputTextFlags_CharsHexadecimal |
                 ImGuiInputTextFlags_EnterReturnsTrue)) {
@@ -2604,6 +2650,10 @@ static void draw_pane_console(void)
     /* Command input */
     ImGui::PushItemWidth(-1);
     bool reclaim = false;
+    if (g_focus_console) {
+        ImGui::SetKeyboardFocusHere();
+        g_focus_console = false;
+    }
     if (ImGui::InputText("##coninput", g_con_input, sizeof(g_con_input),
             ImGuiInputTextFlags_EnterReturnsTrue |
             ImGuiInputTextFlags_CallbackHistory,
@@ -2621,6 +2671,38 @@ static void draw_pane_console(void)
         ImGui::SetKeyboardFocusHere(-1);
 
     ImGui::End();
+}
+
+/* --------------------------------------------------------------------------
+ * Go-to-address popup (Ctrl+G)
+ * -------------------------------------------------------------------------- */
+static void draw_goto_popup(void)
+{
+    if (g_goto_open) {
+        ImGui::OpenPopup("Go to Address##goto");
+        g_goto_open = false;
+    }
+    if (ImGui::BeginPopupModal("Go to Address##goto", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Navigate disassembly to hex address:");
+        ImGui::SetNextItemWidth(120.0f);
+        bool enter = ImGui::InputText("##gotoaddr", g_goto_buf, sizeof(g_goto_buf),
+                        ImGuiInputTextFlags_CharsHexadecimal |
+                        ImGuiInputTextFlags_EnterReturnsTrue  |
+                        ImGuiInputTextFlags_AutoSelectAll);
+        ImGui::SameLine();
+        bool ok = ImGui::Button("Go") || enter;
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape))
+            ImGui::CloseCurrentPopup();
+        if (ok && g_goto_buf[0]) {
+            g_disasm_addr    = (uint16_t)strtol(g_goto_buf, nullptr, 16);
+            g_disasm_follow  = false;
+            show_disassembly = true;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 }
 
 /* --------------------------------------------------------------------------
@@ -2790,37 +2872,105 @@ int main(int /*argc*/, char ** /*argv*/)
 
         /* ---- Keyboard shortcuts (when ImGui is not capturing keyboard) ---- */
         if (!io.WantCaptureKeyboard) {
+            bool ctrl  = ImGui::IsKeyDown(ImGuiKey_LeftCtrl)  || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
+            bool shift = ImGui::IsKeyDown(ImGuiKey_LeftShift) || ImGui::IsKeyDown(ImGuiKey_RightShift);
+
+            /* F5: Run */
             if (ImGui::IsKeyPressed(ImGuiKey_F5)) {
                 if (sim_get_state(g_sim) == SIM_READY ||
                     sim_get_state(g_sim) == SIM_PAUSED)
                     g_running = true;
             }
+
+            /* F6 / Esc: Pause */
             if (ImGui::IsKeyPressed(ImGuiKey_F6) ||
                 ImGui::IsKeyPressed(ImGuiKey_Escape))
                 g_running = false;
+
+            /* Shift+F7: Step back (Phase 6) / F7: Step into */
             if (ImGui::IsKeyPressed(ImGuiKey_F7)) {
-                g_running = false;
-                if (sim_get_state(g_sim) == SIM_READY ||
-                    sim_get_state(g_sim) == SIM_PAUSED) {
-                    cpu_t *cpu = sim_get_cpu(g_sim);
-                    if (cpu) { g_prev_cpu = *cpu; g_prev_cpu_valid = true; }
-                    sim_step(g_sim, 1);
-                    g_last_write_count = sim_get_last_writes(g_sim, g_last_writes, 256);
-                    update_watches();
+                if (shift) {
+                    con_add(CON_COL_WARN, "Step-back not yet available (Phase 6).");
+                } else {
+                    g_running = false;
+                    if (sim_get_state(g_sim) == SIM_READY ||
+                        sim_get_state(g_sim) == SIM_PAUSED) {
+                        cpu_t *cpu = sim_get_cpu(g_sim);
+                        if (cpu) { g_prev_cpu = *cpu; g_prev_cpu_valid = true; }
+                        sim_step(g_sim, 1);
+                        g_last_write_count = sim_get_last_writes(g_sim, g_last_writes, 256);
+                        update_watches();
+                    }
                 }
             }
-            if (ImGui::IsKeyDown(ImGuiKey_LeftCtrl) ||
-                ImGui::IsKeyDown(ImGuiKey_RightCtrl)) {
-                if (ImGui::IsKeyPressed(ImGuiKey_R)) {
-                    g_running = false;
-                    sim_reset(g_sim);
-                    g_prev_cpu_valid   = false;
-                    g_last_write_count = 0;
-                    for (int i = 0; i < g_watch_count; i++) g_watches[i].valid = false;
-                    update_watches();
+
+            /* Shift+F8: Step forward (Phase 6) / F8: Step over */
+            if (ImGui::IsKeyPressed(ImGuiKey_F8)) {
+                if (shift)
+                    con_add(CON_COL_WARN, "Step-forward not yet available (Phase 6).");
+                else
+                    do_step_over();
+            }
+
+            /* F9: Toggle breakpoint at current PC */
+            if (ImGui::IsKeyPressed(ImGuiKey_F9)) {
+                cpu_t *cpu = sim_get_cpu(g_sim);
+                if (cpu && sim_get_state(g_sim) != SIM_IDLE) {
+                    if (sim_has_breakpoint(g_sim, cpu->pc))
+                        sim_break_clear(g_sim, cpu->pc);
+                    else
+                        sim_break_set(g_sim, cpu->pc, NULL);
                 }
-                if (ImGui::IsKeyPressed(ImGuiKey_L))
+            }
+
+            if (ctrl) {
+                /* Ctrl+Shift+R: Reverse-continue (Phase 6) / Ctrl+R: Reset */
+                if (ImGui::IsKeyPressed(ImGuiKey_R)) {
+                    if (shift) {
+                        con_add(CON_COL_WARN, "Reverse-continue not yet available (Phase 6).");
+                    } else {
+                        g_running = false;
+                        sim_reset(g_sim);
+                        g_prev_cpu_valid   = false;
+                        g_last_write_count = 0;
+                        for (int i = 0; i < g_watch_count; i++) g_watches[i].valid = false;
+                        update_watches();
+                    }
+                }
+
+                /* Ctrl+L: Focus load filename field */
+                if (!shift && ImGui::IsKeyPressed(ImGuiKey_L))
                     g_focus_filename = true;
+
+                /* Ctrl+G: Go to address popup */
+                if (!shift && ImGui::IsKeyPressed(ImGuiKey_G)) {
+                    snprintf(g_goto_buf, sizeof(g_goto_buf), "%04X",
+                             (unsigned)g_disasm_addr);
+                    g_goto_open = true;
+                }
+
+                /* Ctrl+Shift+F: Find in disassembly / Ctrl+F: Find in active pane */
+                if (ImGui::IsKeyPressed(ImGuiKey_F)) {
+                    if (shift) {
+                        show_disassembly    = true;
+                        g_focus_disasm_addr = true;
+                    } else {
+                        if (show_source)
+                            g_focus_src_search = true;
+                        else
+                            g_focus_disasm_addr = true;
+                    }
+                }
+
+                /* Ctrl+Shift+E: Export VIC frame (Phase 6) */
+                if (shift && ImGui::IsKeyPressed(ImGuiKey_E))
+                    con_add(CON_COL_WARN, "VIC frame export not yet available (Phase 6).");
+            }
+
+            /* ` (backtick): Focus CLI console */
+            if (ImGui::IsKeyPressed(ImGuiKey_GraveAccent)) {
+                show_console    = true;
+                g_focus_console = true;
             }
         }
 
@@ -2836,6 +2986,11 @@ int main(int /*argc*/, char ** /*argv*/)
                 g_running = false;
             else if (ev_code < 0)
                 g_running = false;
+            /* Clean up step-over temp breakpoint when execution stops */
+            if (!g_running && g_step_over_active) {
+                sim_break_clear(g_sim, g_step_over_bp);
+                g_step_over_active = false;
+            }
         }
 
         /* ---- Theme rebuild (before NewFrame) ---- */
@@ -2887,7 +3042,7 @@ int main(int /*argc*/, char ** /*argv*/)
                     ImGui::EndMenu();
                 }
                 if (ImGui::BeginMenu("Run")) {
-                    if (ImGui::MenuItem("Step",  "F7")) {
+                    if (ImGui::MenuItem("Step Into",  "F7")) {
                         g_running = false;
                         cpu_t *cpu = sim_get_cpu(g_sim);
                         if (cpu) { g_prev_cpu = *cpu; g_prev_cpu_valid = true; }
@@ -2895,6 +3050,8 @@ int main(int /*argc*/, char ** /*argv*/)
                         g_last_write_count = sim_get_last_writes(g_sim, g_last_writes, 256);
                         update_watches();
                     }
+                    if (ImGui::MenuItem("Step Over", "F8"))
+                        do_step_over();
                     if (ImGui::MenuItem("Run",   "F5"))  g_running = true;
                     if (ImGui::MenuItem("Pause", "F6"))  g_running = false;
                     if (ImGui::MenuItem("Reset", "Ctrl+R")) {
@@ -2905,6 +3062,23 @@ int main(int /*argc*/, char ** /*argv*/)
                         for (int i = 0; i < g_watch_count; i++) g_watches[i].valid = false;
                         update_watches();
                     }
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Toggle Breakpoint", "F9")) {
+                        cpu_t *cpu = sim_get_cpu(g_sim);
+                        if (cpu && sim_get_state(g_sim) != SIM_IDLE) {
+                            if (sim_has_breakpoint(g_sim, cpu->pc))
+                                sim_break_clear(g_sim, cpu->pc);
+                            else
+                                sim_break_set(g_sim, cpu->pc, NULL);
+                        }
+                    }
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Step Back",        "Shift+F7"))
+                        con_add(CON_COL_WARN, "Step-back not yet available (Phase 6).");
+                    if (ImGui::MenuItem("Step Forward",     "Shift+F8"))
+                        con_add(CON_COL_WARN, "Step-forward not yet available (Phase 6).");
+                    if (ImGui::MenuItem("Reverse Continue", "Ctrl+Shift+R"))
+                        con_add(CON_COL_WARN, "Reverse-continue not yet available (Phase 6).");
                     ImGui::EndMenu();
                 }
                 if (ImGui::BeginMenu("View")) {
@@ -2912,6 +3086,12 @@ int main(int /*argc*/, char ** /*argv*/)
                     ImGui::MenuItem("Disassembly", nullptr, &show_disassembly);
                     ImGui::MenuItem("Memory",      nullptr, &show_memory);
                     ImGui::MenuItem("Console",     nullptr, &show_console);
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Go to Address...", "Ctrl+G")) {
+                        snprintf(g_goto_buf, sizeof(g_goto_buf), "%04X",
+                                 (unsigned)g_disasm_addr);
+                        g_goto_open = true;
+                    }
                     ImGui::Separator();
                     ImGui::MenuItem("Breakpoints", nullptr, &show_breakpoints);
                     ImGui::MenuItem("Trace Log",   nullptr, &show_trace);
@@ -2997,6 +3177,9 @@ int main(int /*argc*/, char ** /*argv*/)
         draw_pane_symbols();
         draw_pane_source();
         draw_pane_profiler();
+
+        /* Popups */
+        draw_goto_popup();
 
         /* Render */
         ImGui::Render();
