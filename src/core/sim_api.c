@@ -374,6 +374,64 @@ int sim_step(sim_session_t *s, int count) {
     return 0;
 }
 
+int sim_step_cycles(sim_session_t *s, unsigned long max_cycles) {
+    if (!s || s->state == SIM_IDLE || s->state == SIM_FINISHED) return -1;
+    unsigned long start = s->cpu.cycles;
+    while (s->cpu.cycles - start < max_cycles) {
+        s->mem.mem_writes = 0;
+        int tr = handle_trap(&s->symbols, &s->cpu, &s->mem);
+        if (tr < 0) { s->state = SIM_FINISHED; if (s->event_cb) s->event_cb(s, SIM_EVENT_BRK, s->event_userdata); return SIM_EVENT_BRK; }
+        if (tr > 0) continue;
+        if (breakpoint_hit(&s->breakpoints, &s->cpu)) { s->state = SIM_PAUSED; if (s->event_cb) s->event_cb(s, SIM_EVENT_BREAK, s->event_userdata); return SIM_EVENT_BREAK; }
+        unsigned char opc = mem_read(&s->mem, s->cpu.pc);
+        if (opc == 0x00) {
+            s->cpu.pc += (s->cpu_type == CPU_45GS02) ? 1 : 2;
+            s->state = SIM_FINISHED;
+            if (s->event_cb) s->event_cb(s, SIM_EVENT_BRK, s->event_userdata);
+            return SIM_EVENT_BRK;
+        }
+        const dispatch_entry_t *te = peek_dispatch(&s->cpu, &s->mem, &s->dt, s->cpu_type);
+        if (te && te->mnemonic && strcmp(te->mnemonic, "STP") == 0) {
+            s->state = SIM_FINISHED;
+            if (s->event_cb) s->event_cb(s, SIM_EVENT_STP, s->event_userdata);
+            return SIM_EVENT_STP;
+        }
+        uint16_t pre_pc = s->cpu.pc;
+        unsigned long pre_cycles = s->cpu.cycles;
+        cpu_t pre_cpu = s->cpu;
+        execute_from_mem(&s->cpu, &s->mem, &s->dt, s->cpu_type);
+        if (s->hist_enabled && s->hist_buf) {
+            if (s->hist_pos > 0) {
+                s->hist_write = (s->hist_write - s->hist_pos + s->hist_cap * 2) % s->hist_cap;
+                s->hist_count -= s->hist_pos;
+                if (s->hist_count < 0) s->hist_count = 0;
+                s->hist_pos = 0;
+            }
+            sim_history_entry_t *he = &s->hist_buf[s->hist_write];
+            he->pre_cpu = pre_cpu;
+            he->pc      = pre_pc;
+            int dc = s->mem.mem_writes < 16 ? s->mem.mem_writes : 16;
+            he->delta_count = (uint8_t)dc;
+            for (int d = 0; d < dc; d++) {
+                he->delta_addr[d] = s->mem.mem_addr[d];
+                he->delta_old[d]  = s->mem.mem_old_val[d];
+            }
+            s->hist_write = (s->hist_write + 1) & s->hist_mask;
+            if (s->hist_count < s->hist_cap) s->hist_count++;
+        }
+        if (s->trace_enabled) {
+            sim_trace_entry_t *te2 = &s->trace_buf[s->trace_head];
+            te2->pc = pre_pc; te2->cpu = s->cpu; te2->cycles_delta = (int)(s->cpu.cycles - pre_cycles);
+            disasm_one(&s->mem, &s->dt, s->cpu_type, pre_pc, te2->disasm, (int)sizeof(te2->disasm));
+            s->trace_head = (s->trace_head + 1) % SIM_TRACE_DEPTH;
+            if (s->trace_count < SIM_TRACE_DEPTH) s->trace_count++;
+        }
+        if (s->prof_enabled) { s->prof_exec[pre_pc]++; s->prof_cycles[pre_pc] += (uint32_t)(s->cpu.cycles - pre_cycles); }
+    }
+    s->state = SIM_PAUSED;
+    return 0;
+}
+
 void sim_reset(sim_session_t *s) {
     if (!s) return;
     cpu_init(&s->cpu); s->cpu.pc = s->start_addr;
@@ -387,7 +445,8 @@ int sim_disassemble_one(sim_session_t *s, uint16_t addr, char *buf, size_t len) 
     return disasm_one(&s->mem, &s->dt, s->cpu_type, addr, buf, (int)len);
 }
 
-cpu_t *sim_get_cpu(sim_session_t *s) { return s ? &s->cpu : NULL; }
+cpu_t          *sim_get_cpu(sim_session_t *s)    { return s ? &s->cpu : NULL; }
+const memory_t *sim_get_memory(sim_session_t *s) { return s ? &s->mem : NULL; }
 uint8_t sim_mem_read_byte(sim_session_t *s, uint16_t addr) { return s ? mem_read(&s->mem, addr) : 0; }
 void sim_mem_write_byte(sim_session_t *s, uint16_t addr, uint8_t val) { if (s) mem_write(&s->mem, addr, val); }
 sim_state_t sim_get_state(sim_session_t *s) { return s ? s->state : SIM_IDLE; }

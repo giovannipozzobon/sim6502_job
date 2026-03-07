@@ -7,6 +7,11 @@
 #include <string.h>
 #include <ctype.h>
 #include <unistd.h>
+#include <time.h>
+
+/* Speed throttle: 0.0 = unlimited, 1.0 = C64 PAL (~985 kHz) */
+static float  g_cli_speed   = 0.0f;
+static const double CLI_C64_HZ = 985248.0;
 
 /* --------------------------------------------------------------------------
  * CLI execution history (local ring buffer, 4096 entries)
@@ -166,7 +171,8 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
             printf("          jump <addr>, set <reg> <val>, flag <flag> <0|1>,\n");
             printf("          bload \"file\" [addr], bsave \"file\" <start> <end>,\n");
             printf("          asm [addr], disasm [addr [count]],\n");
-            printf("          vic2.info, vic2.savescreen [file], quit\n");
+            printf("          vic2.info, vic2.sprites, vic2.savescreen [file],\n");
+            printf("          speed [scale]  (1.0=C64, 0=unlimited), quit\n");
         } else if (strcmp(cmd, "break") == 0) {
             const char *p = line; SKIP_CMD(p); unsigned long addr;
             if (parse_mon_value(&p, &addr)) { while (*p && isspace((unsigned char)*p)) p++; breakpoint_add(breakpoints, (unsigned short)addr, *p ? p : NULL); }
@@ -196,6 +202,8 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
                 }
             }
         } else if (strcmp(cmd, "run") == 0) {
+            struct timespec t0; clock_gettime(CLOCK_MONOTONIC, &t0);
+            unsigned long cyc0 = cpu->cycles;
             while (1) {
                 mem->mem_writes = 0;
                 int tr = handle_trap_local(symbols, cpu, mem); if (tr < 0) break; if (tr > 0) continue;
@@ -206,6 +214,19 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
                 cpu_t pre = *cpu;
                 execute_from_mem(cpu, mem, dt, *p_cpu_type);
                 cli_hist_push(&pre, mem);
+                /* Speed throttle: sleep when ahead of target clock */
+                if (g_cli_speed > 0.0f && ((cpu->cycles - cyc0) & 0x3FF) < 8) {
+                    struct timespec tnow; clock_gettime(CLOCK_MONOTONIC, &tnow);
+                    double elapsed = (tnow.tv_sec - t0.tv_sec) +
+                                     (tnow.tv_nsec - t0.tv_nsec) * 1e-9;
+                    double target  = (double)(cpu->cycles - cyc0) /
+                                     (CLI_C64_HZ * (double)g_cli_speed);
+                    if (target > elapsed) {
+                        double d = target - elapsed;
+                        struct timespec ts = { (time_t)d, (long)((d - (time_t)d) * 1e9) };
+                        nanosleep(&ts, NULL);
+                    }
+                }
             }
             printf("STOP at $%04X\n", cpu->pc);
         } else if (strcmp(cmd, "processors") == 0) list_processors();
@@ -343,8 +364,26 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
                     }
                 }
             }
+        } else if (strcmp(cmd, "speed") == 0) {
+            float s = 0.0f;
+            const char *p = line; while (*p && !isspace((unsigned char)*p)) p++;
+            if (sscanf(p, " %f", &s) == 1) {
+                if (s < 0.0f) s = 0.0f;
+                g_cli_speed = s;
+                if (g_cli_speed == 0.0f)
+                    printf("Speed: unlimited\n");
+                else
+                    printf("Speed: %.4fx C64 (%.0f Hz)\n", g_cli_speed, CLI_C64_HZ * g_cli_speed);
+            } else {
+                if (g_cli_speed == 0.0f)
+                    printf("Speed: unlimited (use 'speed 1.0' for C64 speed)\n");
+                else
+                    printf("Speed: %.4fx C64 (%.0f Hz)\n", g_cli_speed, CLI_C64_HZ * g_cli_speed);
+            }
         } else if (strcmp(cmd, "vic2.info") == 0) {
             vic2_print_info(mem);
+        } else if (strcmp(cmd, "vic2.sprites") == 0) {
+            vic2_print_sprites(mem);
         } else if (strcmp(cmd, "vic2.savescreen") == 0) {
             const char *p = line; SKIP_CMD(p);
             while (*p && isspace((unsigned char)*p)) p++;

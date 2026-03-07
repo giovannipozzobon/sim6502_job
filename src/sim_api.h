@@ -19,6 +19,7 @@ extern "C" {
 #include <stdint.h>
 #include <stddef.h>
 #include "cpu.h"
+#include "memory.h"
 
 /* --------------------------------------------------------------------------
  * Execution state machine
@@ -108,6 +109,10 @@ void sim_get_load_info(sim_session_t *s, uint16_t *addr_out, uint16_t *size_out)
  * On stop: state is set to SIM_PAUSED (breakpoint) or SIM_FINISHED (BRK/STP). */
 int sim_step(sim_session_t *s, int count);
 
+/* Like sim_step but runs until cpu->cycles has advanced by max_cycles
+ * (or a stop condition is hit).  Used for real-time speed throttling. */
+int sim_step_cycles(sim_session_t *s, unsigned long max_cycles);
+
 /* Reset CPU registers to initial state; keep loaded program in memory.
  * State transitions back to SIM_READY.                                     */
 void sim_reset(sim_session_t *s);
@@ -127,6 +132,10 @@ int sim_disassemble_one(sim_session_t *s, uint16_t addr, char *buf, size_t len);
 /* Direct pointer to the session's cpu_t.  Valid until sim_destroy().
  * Read-only from the GUI; modify only through the API (future sim_set_reg). */
 cpu_t *sim_get_cpu(sim_session_t *s);
+
+/* Direct pointer to the session's memory_t.  Valid until sim_destroy().
+ * Pass to vic2_render_rgb() and other core library routines.              */
+const memory_t *sim_get_memory(sim_session_t *s);
 
 /* Read / write a byte in the session's virtual address space. */
 uint8_t sim_mem_read_byte(sim_session_t *s, uint16_t addr);

@@ -755,6 +755,470 @@ void op_nop(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->pc += 1;
 }
 
+/* ---- INC missing modes ---- */
+void inc_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned char val = (mem_read(mem, arg & 0xFF) + 1) & 0xFF;
+	mem_write(mem, arg & 0xFF, val);
+	update_nz(cpu, val);
+	cpu->cycles += 5;
+	cpu->pc += 2;
+}
+
+void inc_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned char addr = (arg + cpu->x) & 0xFF;
+	unsigned char val = (mem_read(mem, addr) + 1) & 0xFF;
+	mem_write(mem, addr, val);
+	update_nz(cpu, val);
+	cpu->cycles += 6;
+	cpu->pc += 2;
+}
+
+void inc_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned short addr = arg + cpu->x;
+	unsigned char val = (mem_read(mem, addr) + 1) & 0xFF;
+	mem_write(mem, addr, val);
+	update_nz(cpu, val);
+	cpu->cycles += 7;
+	cpu->pc += 3;
+}
+
+/* ---- DEC missing modes ---- */
+void dec_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned char val = (mem_read(mem, arg & 0xFF) - 1) & 0xFF;
+	mem_write(mem, arg & 0xFF, val);
+	update_nz(cpu, val);
+	cpu->cycles += 5;
+	cpu->pc += 2;
+}
+
+void dec_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned char addr = (arg + cpu->x) & 0xFF;
+	unsigned char val = (mem_read(mem, addr) - 1) & 0xFF;
+	mem_write(mem, addr, val);
+	update_nz(cpu, val);
+	cpu->cycles += 6;
+	cpu->pc += 2;
+}
+
+void dec_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned short addr = arg + cpu->x;
+	unsigned char val = (mem_read(mem, addr) - 1) & 0xFF;
+	mem_write(mem, addr, val);
+	update_nz(cpu, val);
+	cpu->cycles += 7;
+	cpu->pc += 3;
+}
+
+/* ---- AND missing modes ---- */
+void and_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	cpu->a &= mem_read(mem, arg & 0xFF);
+	update_nz(cpu, cpu->a);
+	cpu->cycles += 3;
+	cpu->pc += 2;
+}
+
+void and_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	cpu->a &= mem_read(mem, (arg + cpu->x) & 0xFF);
+	update_nz(cpu, cpu->a);
+	cpu->cycles += 4;
+	cpu->pc += 2;
+}
+
+void and_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	cpu->a &= mem_read(mem, arg + cpu->x);
+	update_nz(cpu, cpu->a);
+	cpu->cycles += 4;
+	cpu->pc += 3;
+}
+
+void and_abs_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	cpu->a &= mem_read(mem, arg + cpu->y);
+	update_nz(cpu, cpu->a);
+	cpu->cycles += 4;
+	cpu->pc += 3;
+}
+
+void and_ind_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned short addr = mem_read(mem, (arg + cpu->x) & 0xFF) |
+		(mem_read(mem, (arg + cpu->x + 1) & 0xFF) << 8);
+	cpu->a &= mem_read(mem, addr);
+	update_nz(cpu, cpu->a);
+	cpu->cycles += 6;
+	cpu->pc += 2;
+}
+
+void and_ind_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned short addr = mem_read(mem, arg) | (mem_read(mem, (arg + 1) & 0xFF) << 8);
+	cpu->a &= mem_read(mem, addr + cpu->y);
+	update_nz(cpu, cpu->a);
+	cpu->cycles += 5;
+	cpu->pc += 2;
+}
+
+/* ---- ORA missing modes ---- */
+void ora_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	cpu->a |= mem_read(mem, arg & 0xFF);
+	update_nz(cpu, cpu->a);
+	cpu->cycles += 3;
+	cpu->pc += 2;
+}
+
+void ora_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	cpu->a |= mem_read(mem, (arg + cpu->x) & 0xFF);
+	update_nz(cpu, cpu->a);
+	cpu->cycles += 4;
+	cpu->pc += 2;
+}
+
+void ora_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	cpu->a |= mem_read(mem, arg + cpu->x);
+	update_nz(cpu, cpu->a);
+	cpu->cycles += 4;
+	cpu->pc += 3;
+}
+
+void ora_abs_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	cpu->a |= mem_read(mem, arg + cpu->y);
+	update_nz(cpu, cpu->a);
+	cpu->cycles += 4;
+	cpu->pc += 3;
+}
+
+void ora_ind_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned short addr = mem_read(mem, (arg + cpu->x) & 0xFF) |
+		(mem_read(mem, (arg + cpu->x + 1) & 0xFF) << 8);
+	cpu->a |= mem_read(mem, addr);
+	update_nz(cpu, cpu->a);
+	cpu->cycles += 6;
+	cpu->pc += 2;
+}
+
+void ora_ind_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned short addr = mem_read(mem, arg) | (mem_read(mem, (arg + 1) & 0xFF) << 8);
+	cpu->a |= mem_read(mem, addr + cpu->y);
+	update_nz(cpu, cpu->a);
+	cpu->cycles += 5;
+	cpu->pc += 2;
+}
+
+/* ---- EOR missing modes ---- */
+void eor_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	cpu->a ^= mem_read(mem, arg & 0xFF);
+	update_nz(cpu, cpu->a);
+	cpu->cycles += 3;
+	cpu->pc += 2;
+}
+
+void eor_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	cpu->a ^= mem_read(mem, (arg + cpu->x) & 0xFF);
+	update_nz(cpu, cpu->a);
+	cpu->cycles += 4;
+	cpu->pc += 2;
+}
+
+void eor_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	cpu->a ^= mem_read(mem, arg + cpu->x);
+	update_nz(cpu, cpu->a);
+	cpu->cycles += 4;
+	cpu->pc += 3;
+}
+
+void eor_abs_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	cpu->a ^= mem_read(mem, arg + cpu->y);
+	update_nz(cpu, cpu->a);
+	cpu->cycles += 4;
+	cpu->pc += 3;
+}
+
+void eor_ind_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned short addr = mem_read(mem, (arg + cpu->x) & 0xFF) |
+		(mem_read(mem, (arg + cpu->x + 1) & 0xFF) << 8);
+	cpu->a ^= mem_read(mem, addr);
+	update_nz(cpu, cpu->a);
+	cpu->cycles += 6;
+	cpu->pc += 2;
+}
+
+void eor_ind_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned short addr = mem_read(mem, arg) | (mem_read(mem, (arg + 1) & 0xFF) << 8);
+	cpu->a ^= mem_read(mem, addr + cpu->y);
+	update_nz(cpu, cpu->a);
+	cpu->cycles += 5;
+	cpu->pc += 2;
+}
+
+/* ---- CMP missing modes ---- */
+void cmp_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned char val = mem_read(mem, arg & 0xFF);
+	set_flag(cpu, FLAG_C, cpu->a >= val);
+	update_nz(cpu, (cpu->a - val) & 0xFF);
+	cpu->cycles += 3;
+	cpu->pc += 2;
+}
+
+void cmp_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned char val = mem_read(mem, (arg + cpu->x) & 0xFF);
+	set_flag(cpu, FLAG_C, cpu->a >= val);
+	update_nz(cpu, (cpu->a - val) & 0xFF);
+	cpu->cycles += 4;
+	cpu->pc += 2;
+}
+
+void cmp_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned char val = mem_read(mem, arg + cpu->x);
+	set_flag(cpu, FLAG_C, cpu->a >= val);
+	update_nz(cpu, (cpu->a - val) & 0xFF);
+	cpu->cycles += 4;
+	cpu->pc += 3;
+}
+
+void cmp_abs_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned char val = mem_read(mem, arg + cpu->y);
+	set_flag(cpu, FLAG_C, cpu->a >= val);
+	update_nz(cpu, (cpu->a - val) & 0xFF);
+	cpu->cycles += 4;
+	cpu->pc += 3;
+}
+
+void cmp_ind_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned short addr = mem_read(mem, (arg + cpu->x) & 0xFF) |
+		(mem_read(mem, (arg + cpu->x + 1) & 0xFF) << 8);
+	unsigned char val = mem_read(mem, addr);
+	set_flag(cpu, FLAG_C, cpu->a >= val);
+	update_nz(cpu, (cpu->a - val) & 0xFF);
+	cpu->cycles += 6;
+	cpu->pc += 2;
+}
+
+void cmp_ind_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned short addr = mem_read(mem, arg) | (mem_read(mem, (arg + 1) & 0xFF) << 8);
+	unsigned char val = mem_read(mem, addr + cpu->y);
+	set_flag(cpu, FLAG_C, cpu->a >= val);
+	update_nz(cpu, (cpu->a - val) & 0xFF);
+	cpu->cycles += 5;
+	cpu->pc += 2;
+}
+
+/* ---- SBC missing modes ---- */
+void sbc_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	do_sbc(cpu, mem_read(mem, arg & 0xFF));
+	cpu->cycles += 3;
+	cpu->pc += 2;
+}
+
+void sbc_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	do_sbc(cpu, mem_read(mem, (arg + cpu->x) & 0xFF));
+	cpu->cycles += 4;
+	cpu->pc += 2;
+}
+
+void sbc_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	do_sbc(cpu, mem_read(mem, arg + cpu->x));
+	cpu->cycles += 4;
+	cpu->pc += 3;
+}
+
+void sbc_abs_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	do_sbc(cpu, mem_read(mem, arg + cpu->y));
+	cpu->cycles += 4;
+	cpu->pc += 3;
+}
+
+void sbc_ind_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned short addr = mem_read(mem, (arg + cpu->x) & 0xFF) |
+		(mem_read(mem, (arg + cpu->x + 1) & 0xFF) << 8);
+	do_sbc(cpu, mem_read(mem, addr));
+	cpu->cycles += 6;
+	cpu->pc += 2;
+}
+
+void sbc_ind_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned short addr = mem_read(mem, arg) | (mem_read(mem, (arg + 1) & 0xFF) << 8);
+	do_sbc(cpu, mem_read(mem, addr + cpu->y));
+	cpu->cycles += 5;
+	cpu->pc += 2;
+}
+
+/* ---- ASL missing modes ---- */
+void asl_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned char val = mem_read(mem, arg & 0xFF);
+	set_flag(cpu, FLAG_C, val & 0x80);
+	val = (val << 1) & 0xFF;
+	mem_write(mem, arg & 0xFF, val);
+	update_nz(cpu, val);
+	cpu->cycles += 5;
+	cpu->pc += 2;
+}
+
+void asl_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned char addr = (arg + cpu->x) & 0xFF;
+	unsigned char val = mem_read(mem, addr);
+	set_flag(cpu, FLAG_C, val & 0x80);
+	val = (val << 1) & 0xFF;
+	mem_write(mem, addr, val);
+	update_nz(cpu, val);
+	cpu->cycles += 6;
+	cpu->pc += 2;
+}
+
+void asl_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned short addr = arg + cpu->x;
+	unsigned char val = mem_read(mem, addr);
+	set_flag(cpu, FLAG_C, val & 0x80);
+	val = (val << 1) & 0xFF;
+	mem_write(mem, addr, val);
+	update_nz(cpu, val);
+	cpu->cycles += 7;
+	cpu->pc += 3;
+}
+
+/* ---- LSR missing modes ---- */
+void lsr_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned char val = mem_read(mem, arg & 0xFF);
+	set_flag(cpu, FLAG_C, val & 0x01);
+	val >>= 1;
+	mem_write(mem, arg & 0xFF, val);
+	update_nz(cpu, val);
+	cpu->cycles += 5;
+	cpu->pc += 2;
+}
+
+void lsr_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned char addr = (arg + cpu->x) & 0xFF;
+	unsigned char val = mem_read(mem, addr);
+	set_flag(cpu, FLAG_C, val & 0x01);
+	val >>= 1;
+	mem_write(mem, addr, val);
+	update_nz(cpu, val);
+	cpu->cycles += 6;
+	cpu->pc += 2;
+}
+
+void lsr_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned short addr = arg + cpu->x;
+	unsigned char val = mem_read(mem, addr);
+	set_flag(cpu, FLAG_C, val & 0x01);
+	val >>= 1;
+	mem_write(mem, addr, val);
+	update_nz(cpu, val);
+	cpu->cycles += 7;
+	cpu->pc += 3;
+}
+
+/* ---- ROL missing modes ---- */
+void rol_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned char val = mem_read(mem, arg & 0xFF);
+	int c = get_flag(cpu, FLAG_C);
+	set_flag(cpu, FLAG_C, val & 0x80);
+	val = ((val << 1) | c) & 0xFF;
+	mem_write(mem, arg & 0xFF, val);
+	update_nz(cpu, val);
+	cpu->cycles += 5;
+	cpu->pc += 2;
+}
+
+void rol_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned char addr = (arg + cpu->x) & 0xFF;
+	unsigned char val = mem_read(mem, addr);
+	int c = get_flag(cpu, FLAG_C);
+	set_flag(cpu, FLAG_C, val & 0x80);
+	val = ((val << 1) | c) & 0xFF;
+	mem_write(mem, addr, val);
+	update_nz(cpu, val);
+	cpu->cycles += 6;
+	cpu->pc += 2;
+}
+
+void rol_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned short addr = arg + cpu->x;
+	unsigned char val = mem_read(mem, addr);
+	int c = get_flag(cpu, FLAG_C);
+	set_flag(cpu, FLAG_C, val & 0x80);
+	val = ((val << 1) | c) & 0xFF;
+	mem_write(mem, addr, val);
+	update_nz(cpu, val);
+	cpu->cycles += 7;
+	cpu->pc += 3;
+}
+
+/* ---- ROR missing modes ---- */
+void ror_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned char val = mem_read(mem, arg & 0xFF);
+	int c = get_flag(cpu, FLAG_C);
+	set_flag(cpu, FLAG_C, val & 0x01);
+	val = ((val >> 1) | (c << 7)) & 0xFF;
+	mem_write(mem, arg & 0xFF, val);
+	update_nz(cpu, val);
+	cpu->cycles += 5;
+	cpu->pc += 2;
+}
+
+void ror_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned char addr = (arg + cpu->x) & 0xFF;
+	unsigned char val = mem_read(mem, addr);
+	int c = get_flag(cpu, FLAG_C);
+	set_flag(cpu, FLAG_C, val & 0x01);
+	val = ((val >> 1) | (c << 7)) & 0xFF;
+	mem_write(mem, addr, val);
+	update_nz(cpu, val);
+	cpu->cycles += 6;
+	cpu->pc += 2;
+}
+
+void ror_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned short addr = arg + cpu->x;
+	unsigned char val = mem_read(mem, addr);
+	int c = get_flag(cpu, FLAG_C);
+	set_flag(cpu, FLAG_C, val & 0x01);
+	val = ((val >> 1) | (c << 7)) & 0xFF;
+	mem_write(mem, addr, val);
+	update_nz(cpu, val);
+	cpu->cycles += 7;
+	cpu->pc += 3;
+}
+
+/* ---- CPX missing modes ---- */
+void cpx_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned char val = mem_read(mem, arg & 0xFF);
+	set_flag(cpu, FLAG_C, cpu->x >= val);
+	update_nz(cpu, (cpu->x - val) & 0xFF);
+	cpu->cycles += 3;
+	cpu->pc += 2;
+}
+
+void cpx_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned char val = mem_read(mem, arg);
+	set_flag(cpu, FLAG_C, cpu->x >= val);
+	update_nz(cpu, (cpu->x - val) & 0xFF);
+	cpu->cycles += 4;
+	cpu->pc += 3;
+}
+
+/* ---- CPY missing modes ---- */
+void cpy_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned char val = mem_read(mem, arg & 0xFF);
+	set_flag(cpu, FLAG_C, cpu->y >= val);
+	update_nz(cpu, (cpu->y - val) & 0xFF);
+	cpu->cycles += 3;
+	cpu->pc += 2;
+}
+
+void cpy_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned char val = mem_read(mem, arg);
+	set_flag(cpu, FLAG_C, cpu->y >= val);
+	update_nz(cpu, (cpu->y - val) & 0xFF);
+	cpu->cycles += 4;
+	cpu->pc += 3;
+}
+
+/* ---- JMP indirect (with NMOS page-wrap bug) ---- */
+void jmp_ind(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned short lo = mem_read(mem, arg);
+	unsigned short hi = mem_read(mem, (arg & 0xFF00) | ((arg + 1) & 0x00FF));
+	cpu->cycles += 5;
+	cpu->pc = lo | (hi << 8);
+}
+
 opcode_handler_t opcodes_6502[] = {
 	{"LDA", MODE_IMMEDIATE, lda_imm, 2, 0, 0, 0, {0xA9}, 1},
 	{"LDA", MODE_ABSOLUTE, lda_abs, 4, 0, 0, 0, {0xAD}, 1},
@@ -795,37 +1259,90 @@ opcode_handler_t opcodes_6502[] = {
 	{"ADC", MODE_ZP_X, adc_zp_x, 4, 0, 0, 0, {0x75}, 1},
 	{"ADC", MODE_INDIRECT_X, adc_ind_x, 6, 0, 0, 0, {0x61}, 1},
 	{"ADC", MODE_INDIRECT_Y, adc_ind_y, 5, 0, 0, 0, {0x71}, 1},
-	{"SBC", MODE_IMMEDIATE, sbc_imm, 2, 0, 0, 0, {0xE9}, 1},
-	{"SBC", MODE_ABSOLUTE, sbc_abs, 4, 0, 0, 0, {0xED}, 1},
-	{"CMP", MODE_IMMEDIATE, cmp_imm, 2, 0, 0, 0, {0xC9}, 1},
-	{"CMP", MODE_ABSOLUTE, cmp_abs, 4, 0, 0, 0, {0xCD}, 1},
-	{"CPX", MODE_IMMEDIATE, cpx_imm, 2, 0, 0, 0, {0xE0}, 1},
-	{"CPY", MODE_IMMEDIATE, cpy_imm, 2, 0, 0, 0, {0xC0}, 1},
+	{"SBC", MODE_IMMEDIATE,  sbc_imm,   2, 0, 0, 0, {0xE9}, 1},
+	{"SBC", MODE_ABSOLUTE,   sbc_abs,   4, 0, 0, 0, {0xED}, 1},
+	{"SBC", MODE_ZP,        sbc_zp,    3, 0, 0, 0, {0xE5}, 1},
+	{"SBC", MODE_ZP_X,     sbc_zp_x,  4, 0, 0, 0, {0xF5}, 1},
+	{"SBC", MODE_ABSOLUTE_X, sbc_abs_x, 4, 0, 0, 0, {0xFD}, 1},
+	{"SBC", MODE_ABSOLUTE_Y, sbc_abs_y, 4, 0, 0, 0, {0xF9}, 1},
+	{"SBC", MODE_INDIRECT_X, sbc_ind_x, 6, 0, 0, 0, {0xE1}, 1},
+	{"SBC", MODE_INDIRECT_Y, sbc_ind_y, 5, 0, 0, 0, {0xF1}, 1},
+	{"CMP", MODE_IMMEDIATE,  cmp_imm,   2, 0, 0, 0, {0xC9}, 1},
+	{"CMP", MODE_ABSOLUTE,   cmp_abs,   4, 0, 0, 0, {0xCD}, 1},
+	{"CMP", MODE_ZP,        cmp_zp,    3, 0, 0, 0, {0xC5}, 1},
+	{"CMP", MODE_ZP_X,     cmp_zp_x,  4, 0, 0, 0, {0xD5}, 1},
+	{"CMP", MODE_ABSOLUTE_X, cmp_abs_x, 4, 0, 0, 0, {0xDD}, 1},
+	{"CMP", MODE_ABSOLUTE_Y, cmp_abs_y, 4, 0, 0, 0, {0xD9}, 1},
+	{"CMP", MODE_INDIRECT_X, cmp_ind_x, 6, 0, 0, 0, {0xC1}, 1},
+	{"CMP", MODE_INDIRECT_Y, cmp_ind_y, 5, 0, 0, 0, {0xD1}, 1},
+	{"CPX", MODE_IMMEDIATE,  cpx_imm,   2, 0, 0, 0, {0xE0}, 1},
+	{"CPX", MODE_ZP,        cpx_zp,    3, 0, 0, 0, {0xE4}, 1},
+	{"CPX", MODE_ABSOLUTE,   cpx_abs,   4, 0, 0, 0, {0xEC}, 1},
+	{"CPY", MODE_IMMEDIATE,  cpy_imm,   2, 0, 0, 0, {0xC0}, 1},
+	{"CPY", MODE_ZP,        cpy_zp,    3, 0, 0, 0, {0xC4}, 1},
+	{"CPY", MODE_ABSOLUTE,   cpy_abs,   4, 0, 0, 0, {0xCC}, 1},
 	{"INC", MODE_ABSOLUTE, inc_abs, 6, 0, 0, 0, {0xEE}, 1},
+	{"INC", MODE_ZP,       inc_zp,     5, 0, 0, 0, {0xE6}, 1},
+	{"INC", MODE_ZP_X,    inc_zp_x,   6, 0, 0, 0, {0xF6}, 1},
+	{"INC", MODE_ABSOLUTE_X, inc_abs_x, 7, 0, 0, 0, {0xFE}, 1},
 	{"INA", MODE_IMPLIED, ina, 2, 0, 0, 0, {0x1A}, 1},
 	{"INX", MODE_IMPLIED, inx, 2, 0, 0, 0, {0xE8}, 1},
 	{"INY", MODE_IMPLIED, iny, 2, 0, 0, 0, {0xC8}, 1},
 	{"DEC", MODE_ABSOLUTE, dec_abs, 6, 0, 0, 0, {0xCE}, 1},
+	{"DEC", MODE_ZP,       dec_zp,     5, 0, 0, 0, {0xC6}, 1},
+	{"DEC", MODE_ZP_X,    dec_zp_x,   6, 0, 0, 0, {0xD6}, 1},
+	{"DEC", MODE_ABSOLUTE_X, dec_abs_x, 7, 0, 0, 0, {0xDE}, 1},
 	{"DEA", MODE_IMPLIED, dea, 2, 0, 0, 0, {0x3A}, 1},
 	{"DEX", MODE_IMPLIED, dex, 2, 0, 0, 0, {0xCA}, 1},
 	{"DEY", MODE_IMPLIED, dey, 2, 0, 0, 0, {0x88}, 1},
-	{"ASL", MODE_ABSOLUTE, asl_abs, 6, 0, 0, 0, {0x0E}, 1},
-	{"ASL", MODE_IMPLIED, asla, 2, 0, 0, 0, {0x0A}, 1},
-	{"LSR", MODE_ABSOLUTE, lsr_abs, 6, 0, 0, 0, {0x4E}, 1},
-	{"LSR", MODE_IMPLIED, lsra, 2, 0, 0, 0, {0x4A}, 1},
-	{"ROL", MODE_ABSOLUTE, rol_abs, 6, 0, 0, 0, {0x2E}, 1},
-	{"ROL", MODE_IMPLIED, rola, 2, 0, 0, 0, {0x2A}, 1},
-	{"ROR", MODE_ABSOLUTE, ror_abs, 6, 0, 0, 0, {0x6E}, 1},
-	{"ROR", MODE_IMPLIED, rora, 2, 0, 0, 0, {0x6A}, 1},
-	{"AND", MODE_IMMEDIATE, and_imm, 2, 0, 0, 0, {0x29}, 1},
-	{"AND", MODE_ABSOLUTE, and_abs, 4, 0, 0, 0, {0x2D}, 1},
-	{"EOR", MODE_IMMEDIATE, eor_imm, 2, 0, 0, 0, {0x49}, 1},
-	{"EOR", MODE_ABSOLUTE, eor_abs, 4, 0, 0, 0, {0x4D}, 1},
-	{"ORA", MODE_IMMEDIATE, ora_imm, 2, 0, 0, 0, {0x09}, 1},
-	{"ORA", MODE_ABSOLUTE, ora_abs, 4, 0, 0, 0, {0x0D}, 1},
+	{"ASL", MODE_ABSOLUTE,   asl_abs,   6, 0, 0, 0, {0x0E}, 1},
+	{"ASL", MODE_ZP,        asl_zp,    5, 0, 0, 0, {0x06}, 1},
+	{"ASL", MODE_ZP_X,     asl_zp_x,  6, 0, 0, 0, {0x16}, 1},
+	{"ASL", MODE_ABSOLUTE_X, asl_abs_x, 7, 0, 0, 0, {0x1E}, 1},
+	{"ASL", MODE_IMPLIED,   asla,      2, 0, 0, 0, {0x0A}, 1},
+	{"LSR", MODE_ABSOLUTE,   lsr_abs,   6, 0, 0, 0, {0x4E}, 1},
+	{"LSR", MODE_ZP,        lsr_zp,    5, 0, 0, 0, {0x46}, 1},
+	{"LSR", MODE_ZP_X,     lsr_zp_x,  6, 0, 0, 0, {0x56}, 1},
+	{"LSR", MODE_ABSOLUTE_X, lsr_abs_x, 7, 0, 0, 0, {0x5E}, 1},
+	{"LSR", MODE_IMPLIED,   lsra,      2, 0, 0, 0, {0x4A}, 1},
+	{"ROL", MODE_ABSOLUTE,   rol_abs,   6, 0, 0, 0, {0x2E}, 1},
+	{"ROL", MODE_ZP,        rol_zp,    5, 0, 0, 0, {0x26}, 1},
+	{"ROL", MODE_ZP_X,     rol_zp_x,  6, 0, 0, 0, {0x36}, 1},
+	{"ROL", MODE_ABSOLUTE_X, rol_abs_x, 7, 0, 0, 0, {0x3E}, 1},
+	{"ROL", MODE_IMPLIED,   rola,      2, 0, 0, 0, {0x2A}, 1},
+	{"ROR", MODE_ABSOLUTE,   ror_abs,   6, 0, 0, 0, {0x6E}, 1},
+	{"ROR", MODE_ZP,        ror_zp,    5, 0, 0, 0, {0x66}, 1},
+	{"ROR", MODE_ZP_X,     ror_zp_x,  6, 0, 0, 0, {0x76}, 1},
+	{"ROR", MODE_ABSOLUTE_X, ror_abs_x, 7, 0, 0, 0, {0x7E}, 1},
+	{"ROR", MODE_IMPLIED,   rora,      2, 0, 0, 0, {0x6A}, 1},
+	{"AND", MODE_IMMEDIATE,  and_imm,   2, 0, 0, 0, {0x29}, 1},
+	{"AND", MODE_ABSOLUTE,   and_abs,   4, 0, 0, 0, {0x2D}, 1},
+	{"AND", MODE_ZP,        and_zp,    3, 0, 0, 0, {0x25}, 1},
+	{"AND", MODE_ZP_X,     and_zp_x,  4, 0, 0, 0, {0x35}, 1},
+	{"AND", MODE_ABSOLUTE_X, and_abs_x, 4, 0, 0, 0, {0x3D}, 1},
+	{"AND", MODE_ABSOLUTE_Y, and_abs_y, 4, 0, 0, 0, {0x39}, 1},
+	{"AND", MODE_INDIRECT_X, and_ind_x, 6, 0, 0, 0, {0x21}, 1},
+	{"AND", MODE_INDIRECT_Y, and_ind_y, 5, 0, 0, 0, {0x31}, 1},
+	{"EOR", MODE_IMMEDIATE,  eor_imm,   2, 0, 0, 0, {0x49}, 1},
+	{"EOR", MODE_ABSOLUTE,   eor_abs,   4, 0, 0, 0, {0x4D}, 1},
+	{"EOR", MODE_ZP,        eor_zp,    3, 0, 0, 0, {0x45}, 1},
+	{"EOR", MODE_ZP_X,     eor_zp_x,  4, 0, 0, 0, {0x55}, 1},
+	{"EOR", MODE_ABSOLUTE_X, eor_abs_x, 4, 0, 0, 0, {0x5D}, 1},
+	{"EOR", MODE_ABSOLUTE_Y, eor_abs_y, 4, 0, 0, 0, {0x59}, 1},
+	{"EOR", MODE_INDIRECT_X, eor_ind_x, 6, 0, 0, 0, {0x41}, 1},
+	{"EOR", MODE_INDIRECT_Y, eor_ind_y, 5, 0, 0, 0, {0x51}, 1},
+	{"ORA", MODE_IMMEDIATE,  ora_imm,   2, 0, 0, 0, {0x09}, 1},
+	{"ORA", MODE_ABSOLUTE,   ora_abs,   4, 0, 0, 0, {0x0D}, 1},
+	{"ORA", MODE_ZP,        ora_zp,    3, 0, 0, 0, {0x05}, 1},
+	{"ORA", MODE_ZP_X,     ora_zp_x,  4, 0, 0, 0, {0x15}, 1},
+	{"ORA", MODE_ABSOLUTE_X, ora_abs_x, 4, 0, 0, 0, {0x1D}, 1},
+	{"ORA", MODE_ABSOLUTE_Y, ora_abs_y, 4, 0, 0, 0, {0x19}, 1},
+	{"ORA", MODE_INDIRECT_X, ora_ind_x, 6, 0, 0, 0, {0x01}, 1},
+	{"ORA", MODE_INDIRECT_Y, ora_ind_y, 5, 0, 0, 0, {0x11}, 1},
 	{"BIT", MODE_ZP,       bit_zp,  3, 0, 0, 0, {0x24}, 1},
 	{"BIT", MODE_ABSOLUTE, bit_abs, 4, 0, 0, 0, {0x2C}, 1},
-	{"JMP", MODE_ABSOLUTE, jmp_abs, 3, 0, 0, 0, {0x4C}, 1},
+	{"JMP", MODE_ABSOLUTE,  jmp_abs, 3, 0, 0, 0, {0x4C}, 1},
+	{"JMP", MODE_INDIRECT, jmp_ind, 5, 0, 0, 0, {0x6C}, 1},
 	{"JSR", MODE_ABSOLUTE, jsr_abs, 6, 0, 0, 0, {0x20}, 1},
 	{"RTS", MODE_IMPLIED, rts, 6, 0, 0, 0, {0x60}, 1},
 	{"BRA", MODE_RELATIVE, bra, 2, 0, 0, 0, {0x80}, 1},

@@ -319,6 +319,27 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: "vic2_sprites",
+        description: "Prints the state of all 8 VIC-II hardware sprites: enabled flag, X/Y position, colour, multicolour/expand flags, and sprite data address.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+      {
+        name: "speed",
+        description: "Get or set the run speed throttle. scale=1.0 means C64 PAL speed (~985 kHz), 0.0 means unlimited (as fast as possible). Values >1 run faster than a real C64.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            scale: {
+              type: "number",
+              description: "Speed scale factor (0.0 = unlimited, 1.0 = C64, 2.0 = 2× C64). Omit to query current setting.",
+            },
+          },
+        },
+      },
+      {
         name: "vic2_savescreen",
         description: "Renders the current VIC-II output to a PPM image file and returns the saved file path. The PPM is 384×272 pixels (full PAL frame including border).",
         inputSchema: {
@@ -443,6 +464,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       };
     } else if (name === "vic2_info") {
       const output = await sendCommand("vic2.info");
+      return {
+        content: [{ type: "text", text: output }],
+      };
+    } else if (name === "vic2_sprites") {
+      const output = await sendCommand("vic2.sprites");
+      return {
+        content: [{ type: "text", text: output }],
+      };
+    } else if (name === "speed") {
+      const cmd = (args.scale !== undefined) ? `speed ${args.scale}` : "speed";
+      const output = await sendCommand(cmd);
       return {
         content: [{ type: "text", text: output }],
       };

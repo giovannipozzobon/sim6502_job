@@ -40,6 +40,7 @@
 extern "C" {
 #include "cpu.h"
 #include "sim_api.h"
+#include "vic2.h"
 }
 
 /* --------------------------------------------------------------------------
@@ -47,7 +48,15 @@ extern "C" {
  * -------------------------------------------------------------------------- */
 static sim_session_t *g_sim     = NULL;
 static bool  g_running          = false;  /* true = run mode each frame */
-static int   g_speed            = 5000;   /* instructions per frame */
+static int   g_speed            = 5000;   /* instructions per frame (unthrottled) */
+
+/* ---- Speed throttle ---- */
+static bool   g_throttle        = false;  /* limit run speed to g_throttle_scale × C64 */
+static float  g_throttle_scale  = 1.0f;   /* speed multiplier: 1.0 = C64 (~1 MHz) */
+static Uint64 g_thr_last        = 0;      /* SDL perf counter at last throttled frame */
+static double g_thr_debt        = 0.0;   /* fractional cycle carry-over between frames */
+static bool   g_was_running     = false;  /* detects start-of-run for timer reset */
+static const double C64_HZ      = 985248.0; /* PAL C64 clock at scale 1.0 */
 
 /* Font / DPI state */
 static float g_ui_scale         = 1.0f;
@@ -130,7 +139,8 @@ static bool show_source   = false;
 static bool show_profiler = false;
 
 /* ---- Phase 6 pane visibility ---- */
-static bool show_vic_screen = false;
+static bool show_vic_screen   = false;
+static bool show_vic_sprites  = false;
 
 /* ---- Phase 5: keyboard shortcut state ---- */
 static bool     g_focus_console     = false;  /* `: focus console input              */
@@ -194,6 +204,11 @@ static bool   g_heatmap_dirty = true;
 static GLuint g_vic_tex    = 0;
 static bool   g_vic_dirty  = true;
 static bool   g_vic_freeze = false;
+
+/* ---- VIC-II sprite textures (Phase 6 / 27b) — 8 sprites, 24×21 RGBA ---- */
+static GLuint g_spr_tex[8] = {};
+static bool   g_spr_dirty  = true;
+static bool   g_spr_freeze = false;
 
 /* Console */
 #define CON_MAX_LINES   1024
@@ -575,6 +590,7 @@ static void do_step_into(void)
     sim_step(g_sim, 1);
     g_last_write_count = sim_get_last_writes(g_sim, g_last_writes, 256);
     g_vic_dirty = true;
+    g_spr_dirty = true;
     update_watches();
 }
 
@@ -586,6 +602,7 @@ static void do_reset(void)
     g_prev_cpu_valid   = false;
     g_last_write_count = 0;
     g_vic_dirty        = true;
+    g_spr_dirty        = true;
     for (int i = 0; i < g_watch_count; i++) g_watches[i].valid = false;
     update_watches();
 }
@@ -1088,170 +1105,20 @@ static void update_heatmap_tex(void)
  * Colour RAM: always $D800–$DBFF regardless of bank.
  * -------------------------------------------------------------------------- */
 
-#define VIC_FRAME_W   384
-#define VIC_FRAME_H   272
-#define VIC_ACTIVE_X   32       /* left border width (pixels) */
-#define VIC_ACTIVE_Y   36       /* top  border height (pixels) */
-
-/* C64 colour palette — "Pepto" approximation (sRGB) */
-static const uint8_t VIC2_PAL[16][3] = {
-    {0x00,0x00,0x00}, /* 0  Black      */
-    {0xFF,0xFF,0xFF}, /* 1  White      */
-    {0x88,0x00,0x00}, /* 2  Red        */
-    {0xAA,0xFF,0xEE}, /* 3  Cyan       */
-    {0xCC,0x44,0xCC}, /* 4  Purple     */
-    {0x00,0xCC,0x55}, /* 5  Green      */
-    {0x00,0x00,0xAA}, /* 6  Blue       */
-    {0xEE,0xEE,0x77}, /* 7  Yellow     */
-    {0xDD,0x88,0x55}, /* 8  Orange     */
-    {0x66,0x44,0x00}, /* 9  Brown      */
-    {0xFF,0x77,0x77}, /* A  Lt Red     */
-    {0x33,0x33,0x33}, /* B  Dk Grey    */
-    {0x77,0x77,0x77}, /* C  Grey       */
-    {0xAA,0xFF,0x66}, /* D  Lt Green   */
-    {0x00,0x88,0xFF}, /* E  Lt Blue    */
-    {0xBB,0xBB,0xBB}, /* F  Lt Grey    */
-};
-
-static inline void vic_put(uint8_t *px, int x, int y, int ci)
-{
-    if ((unsigned)x >= VIC_FRAME_W || (unsigned)y >= VIC_FRAME_H) return;
-    ci &= 0xF;
-    int off = (y * VIC_FRAME_W + x) * 3;
-    px[off+0] = VIC2_PAL[ci][0];
-    px[off+1] = VIC2_PAL[ci][1];
-    px[off+2] = VIC2_PAL[ci][2];
-}
+/* vic2.h provides VIC2_FRAME_W, VIC2_FRAME_H, VIC2_ACTIVE_X, VIC2_ACTIVE_Y,
+ * vic2_palette[16][3], and vic2_render_rgb().  No local duplicates needed. */
 
 static void update_vic_tex(void)
 {
     if (!g_sim || !g_vic_tex) return;
     if (g_vic_freeze) { g_vic_dirty = false; return; }
 
-    static uint8_t pixels[VIC_FRAME_W * VIC_FRAME_H * 3];
-
-    /* --- Read VIC-II control registers --- */
-    uint8_t ctrl1    = sim_mem_read_byte(g_sim, 0xD011);
-    uint8_t ctrl2    = sim_mem_read_byte(g_sim, 0xD016);
-    uint8_t memsetup = sim_mem_read_byte(g_sim, 0xD018);
-    uint8_t border   = sim_mem_read_byte(g_sim, 0xD020) & 0xF;
-    uint8_t bg0      = sim_mem_read_byte(g_sim, 0xD021) & 0xF;
-    uint8_t bg1      = sim_mem_read_byte(g_sim, 0xD022) & 0xF;
-    uint8_t bg2      = sim_mem_read_byte(g_sim, 0xD023) & 0xF;
-    uint8_t bg3      = sim_mem_read_byte(g_sim, 0xD024) & 0xF;
-
-    bool ecm = (ctrl1 >> 6) & 1;   /* Extended Colour Mode  */
-    bool bmm = (ctrl1 >> 5) & 1;   /* Bitmap Mode           */
-    bool den = (ctrl1 >> 4) & 1;   /* Display Enable        */
-    bool mcm = (ctrl2 >> 4) & 1;   /* Multicolour Mode      */
-
-    /* VIC bank from CIA2 Port A $DD00 bits 1:0 (inverted) */
-    uint8_t  cia2a    = sim_mem_read_byte(g_sim, 0xDD00);
-    uint32_t vic_bank = (uint32_t)((~cia2a) & 3) * 0x4000u;
-
-    /* Video matrix (screen RAM) base: D018 bits 7:4 × 1024 */
-    uint32_t screen_base = vic_bank + (uint32_t)((memsetup >> 4) & 0xF) * 1024u;
-    /* Character generator base: D018 bits 3:1 × 2048 */
-    uint32_t char_base   = vic_bank + (uint32_t)((memsetup >> 1) & 0x7) * 2048u;
-    /* Bitmap base: CB[2] (D018 bit 3) selects $0000 or $2000 within bank */
-    uint32_t bm_base     = vic_bank + (uint32_t)(((memsetup >> 3) & 1) * 0x2000u);
-    /* Colour RAM is always $D800 */
-    uint16_t color_ram   = 0xD800;
-
-    /* 1. Fill entire frame with border colour */
-    for (int i = 0; i < VIC_FRAME_W * VIC_FRAME_H; i++) {
-        pixels[i*3+0] = VIC2_PAL[border][0];
-        pixels[i*3+1] = VIC2_PAL[border][1];
-        pixels[i*3+2] = VIC2_PAL[border][2];
-    }
-
-    /* 2. Render 320×200 active area when display is enabled */
-    if (den) {
-        if (!bmm) {
-            /* ---- Character modes ---- */
-            for (int row = 0; row < 25; row++) {
-                for (int col = 0; col < 40; col++) {
-                    uint16_t cell = (uint16_t)(row * 40 + col);
-                    uint8_t  sc   = sim_mem_read_byte(g_sim, (uint16_t)(screen_base + cell));
-                    uint8_t  cr   = sim_mem_read_byte(g_sim, (uint16_t)(color_ram + cell)) & 0xF;
-                    int      px0  = VIC_ACTIVE_X + col * 8;
-                    int      py0  = VIC_ACTIVE_Y + row * 8;
-
-                    if (ecm) {
-                        /* Extended Colour: char bits 7:6 pick one of 4 backgrounds */
-                        uint8_t bgtab[4] = { bg0, bg1, bg2, bg3 };
-                        uint32_t cptr = char_base + (uint32_t)(sc & 0x3F) * 8u;
-                        for (int cy = 0; cy < 8; cy++) {
-                            uint8_t bits = sim_mem_read_byte(g_sim, (uint16_t)(cptr + cy));
-                            for (int cx = 0; cx < 8; cx++)
-                                vic_put(pixels, px0+cx, py0+cy,
-                                        (bits & (0x80>>cx)) ? cr : bgtab[sc >> 6]);
-                        }
-                    } else if (mcm && (cr & 0x8)) {
-                        /* Multicolour cell: 2bpp, 4×8 pixel pairs */
-                        uint8_t cols[4] = { bg0, bg1, bg2, (uint8_t)(cr & 0x7) };
-                        uint32_t cptr = char_base + (uint32_t)sc * 8u;
-                        for (int cy = 0; cy < 8; cy++) {
-                            uint8_t bits = sim_mem_read_byte(g_sim, (uint16_t)(cptr + cy));
-                            for (int cx = 0; cx < 4; cx++) {
-                                int sel = (bits >> (6 - cx*2)) & 0x3;
-                                vic_put(pixels, px0+cx*2,   py0+cy, cols[sel]);
-                                vic_put(pixels, px0+cx*2+1, py0+cy, cols[sel]);
-                            }
-                        }
-                    } else {
-                        /* Standard char (also MCM hires cell when cr bit 3 = 0) */
-                        uint32_t cptr = char_base + (uint32_t)sc * 8u;
-                        for (int cy = 0; cy < 8; cy++) {
-                            uint8_t bits = sim_mem_read_byte(g_sim, (uint16_t)(cptr + cy));
-                            for (int cx = 0; cx < 8; cx++)
-                                vic_put(pixels, px0+cx, py0+cy,
-                                        (bits & (0x80>>cx)) ? cr : bg0);
-                        }
-                    }
-                }
-            }
-        } else {
-            /* ---- Bitmap modes ---- */
-            for (int row = 0; row < 25; row++) {
-                for (int col = 0; col < 40; col++) {
-                    uint16_t cell = (uint16_t)(row * 40 + col);
-                    uint8_t  sc   = sim_mem_read_byte(g_sim, (uint16_t)(screen_base + cell));
-                    uint8_t  cr   = sim_mem_read_byte(g_sim, (uint16_t)(color_ram + cell)) & 0xF;
-                    uint8_t  fg   = (sc >> 4) & 0xF;   /* high nibble = foreground */
-                    uint8_t  bg   = sc & 0xF;           /* low  nibble = background */
-                    int      px0  = VIC_ACTIVE_X + col * 8;
-                    int      py0  = VIC_ACTIVE_Y + row * 8;
-                    uint32_t bptr = bm_base + (uint32_t)cell * 8u;
-
-                    if (!mcm) {
-                        /* Standard bitmap: 1bpp per 8×8 block */
-                        for (int cy = 0; cy < 8; cy++) {
-                            uint8_t bits = sim_mem_read_byte(g_sim, (uint16_t)(bptr + cy));
-                            for (int cx = 0; cx < 8; cx++)
-                                vic_put(pixels, px0+cx, py0+cy,
-                                        (bits & (0x80>>cx)) ? fg : bg);
-                        }
-                    } else {
-                        /* Multicolour bitmap: 2bpp, 4×8 pixel pairs */
-                        uint8_t cols[4] = { bg0, fg, bg, cr };
-                        for (int cy = 0; cy < 8; cy++) {
-                            uint8_t bits = sim_mem_read_byte(g_sim, (uint16_t)(bptr + cy));
-                            for (int cx = 0; cx < 4; cx++) {
-                                int sel = (bits >> (6 - cx*2)) & 0x3;
-                                vic_put(pixels, px0+cx*2,   py0+cy, cols[sel]);
-                                vic_put(pixels, px0+cx*2+1, py0+cy, cols[sel]);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+    static uint8_t pixels[VIC2_FRAME_W * VIC2_FRAME_H * 3];
+    vic2_render_rgb(sim_get_memory(g_sim), pixels);
 
     glBindTexture(GL_TEXTURE_2D, g_vic_tex);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
-                    VIC_FRAME_W, VIC_FRAME_H, GL_RGB, GL_UNSIGNED_BYTE, pixels);
+                    VIC2_FRAME_W, VIC2_FRAME_H, GL_RGB, GL_UNSIGNED_BYTE, pixels);
     glBindTexture(GL_TEXTURE_2D, 0);
     g_vic_dirty = false;
 }
@@ -1293,7 +1160,7 @@ static void draw_pane_vic_screen(void)
     ImGui::Checkbox("Freeze", &g_vic_freeze);
 
     /* ---- Rendered frame ---- */
-    ImVec2 img_sz((float)VIC_FRAME_W * vic_scale, (float)VIC_FRAME_H * vic_scale);
+    ImVec2 img_sz((float)VIC2_FRAME_W * vic_scale, (float)VIC2_FRAME_H * vic_scale);
     ImGui::Image((ImTextureID)(uintptr_t)g_vic_tex, img_sz);
 
     /* ---- Register summary ---- */
@@ -1329,6 +1196,190 @@ static void draw_pane_vic_screen(void)
                 sim_mem_read_byte(g_sim, 0xD020) & 0xF,
                 sim_mem_read_byte(g_sim, 0xD021) & 0xF,
                 cia2a);
+
+    ImGui::End();
+}
+
+/* --------------------------------------------------------------------------
+ * VIC-II Sprite pane (Phase 6 / 27b)
+ *
+ * update_spr_textures(): reads all 8 sprites from VIC-II state and uploads
+ *   each to a 24×21 RGBA GL texture (transparent pixels have alpha=0).
+ * draw_pane_vic_sprites(): ImGui pane — 4-per-row grid, scale, freeze, info.
+ * -------------------------------------------------------------------------- */
+static void update_spr_textures(void)
+{
+    if (!g_sim || !g_spr_tex[0]) return;
+    if (g_spr_freeze) { g_spr_dirty = false; return; }
+
+    static uint8_t pixels[24 * 21 * 4];  /* RGBA */
+
+    uint8_t d01c  = sim_mem_read_byte(g_sim, 0xD01C);  /* multicolour flags */
+    uint8_t d018  = sim_mem_read_byte(g_sim, 0xD018);  /* memory setup      */
+    uint8_t cia2a = sim_mem_read_byte(g_sim, 0xDD00);
+    uint8_t d025  = sim_mem_read_byte(g_sim, 0xD025) & 0xF;  /* shared MC0 */
+    uint8_t d026  = sim_mem_read_byte(g_sim, 0xD026) & 0xF;  /* shared MC1 */
+
+    uint32_t vic_bank    = (uint32_t)((~cia2a) & 3) * 0x4000u;
+    uint32_t screen_base = vic_bank + (uint32_t)((d018 >> 4) & 0xF) * 1024u;
+
+    for (int sn = 0; sn < 8; sn++) {
+        uint8_t  ptr   = sim_mem_read_byte(g_sim, (uint16_t)((screen_base + 0x3F8 + sn) & 0xFFFF));
+        uint32_t saddr = vic_bank + (uint32_t)ptr * 64u;
+        uint8_t  color = sim_mem_read_byte(g_sim, (uint16_t)(0xD027 + sn)) & 0xF;
+        bool     is_mcm = ((d01c >> sn) & 1) != 0;
+
+        memset(pixels, 0, sizeof(pixels));  /* all transparent */
+
+        for (int row = 0; row < 21; row++) {
+            uint8_t b[3];
+            for (int bi = 0; bi < 3; bi++)
+                b[bi] = sim_mem_read_byte(g_sim,
+                            (uint16_t)((saddr + (uint32_t)(row*3 + bi)) & 0xFFFF));
+
+            if (!is_mcm) {
+                /* Standard sprite: 24px, 1bpp */
+                for (int col = 0; col < 24; col++) {
+                    if ((b[col/8] >> (7 - col%8)) & 1) {
+                        int pi = (row * 24 + col) * 4;
+                        pixels[pi+0] = vic2_palette[color][0];
+                        pixels[pi+1] = vic2_palette[color][1];
+                        pixels[pi+2] = vic2_palette[color][2];
+                        pixels[pi+3] = 255;
+                    }
+                }
+            } else {
+                /* Multicolour sprite: 12 pixel pairs, 2bpp
+                   00=transparent, 01=d025, 10=sprite color, 11=d026 */
+                const uint8_t *mc[4] = {
+                    NULL,                /* 00: transparent   */
+                    vic2_palette[d025],  /* 01: shared color 0 */
+                    vic2_palette[color], /* 10: sprite color  */
+                    vic2_palette[d026]   /* 11: shared color 1 */
+                };
+                for (int pair = 0; pair < 12; pair++) {
+                    int sel = (b[pair/4] >> (6 - (pair%4)*2)) & 0x3;
+                    if (sel == 0) continue;
+                    int pi0 = (row * 24 + pair*2) * 4;
+                    int pi1 = pi0 + 4;
+                    pixels[pi0+0] = pixels[pi1+0] = mc[sel][0];
+                    pixels[pi0+1] = pixels[pi1+1] = mc[sel][1];
+                    pixels[pi0+2] = pixels[pi1+2] = mc[sel][2];
+                    pixels[pi0+3] = pixels[pi1+3] = 255;
+                }
+            }
+        }
+
+        glBindTexture(GL_TEXTURE_2D, g_spr_tex[sn]);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
+                        24, 21, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+    g_spr_dirty = false;
+}
+
+static void draw_pane_vic_sprites(void)
+{
+    if (!show_vic_sprites) return;
+    ImGui::Begin("VIC-II Sprites", &show_vic_sprites,
+                 ImGuiWindowFlags_HorizontalScrollbar);
+
+    sim_state_t state = sim_get_state(g_sim);
+    if (state == SIM_IDLE) {
+        ImGui::TextDisabled("(no program loaded)");
+        ImGui::End();
+        return;
+    }
+
+    if (g_spr_dirty)
+        update_spr_textures();
+
+    /* Scale controls */
+    static float spr_scale = 3.0f;
+    ImGui::Text("Scale:");
+    ImGui::SameLine();
+    if (ImGui::RadioButton("2x##spr", spr_scale == 2.0f)) spr_scale = 2.0f;
+    ImGui::SameLine();
+    if (ImGui::RadioButton("3x##spr", spr_scale == 3.0f)) spr_scale = 3.0f;
+    ImGui::SameLine();
+    if (ImGui::RadioButton("4x##spr", spr_scale == 4.0f)) spr_scale = 4.0f;
+    ImGui::SameLine();
+    ImGui::Checkbox("Freeze##spr", &g_spr_freeze);
+
+    ImGui::Separator();
+
+    /* Read sprite state registers */
+    uint8_t d015  = sim_mem_read_byte(g_sim, 0xD015);
+    uint8_t d01c  = sim_mem_read_byte(g_sim, 0xD01C);
+    uint8_t d01d  = sim_mem_read_byte(g_sim, 0xD01D);  /* X-expand   */
+    uint8_t d017  = sim_mem_read_byte(g_sim, 0xD017);  /* Y-expand   */
+    uint8_t d01b  = sim_mem_read_byte(g_sim, 0xD01B);  /* behind BG  */
+    uint8_t d010  = sim_mem_read_byte(g_sim, 0xD010);  /* X MSBs     */
+    uint8_t d018  = sim_mem_read_byte(g_sim, 0xD018);
+    uint8_t cia2a = sim_mem_read_byte(g_sim, 0xDD00);
+    uint32_t vic_bank    = (uint32_t)((~cia2a) & 3) * 0x4000u;
+    uint32_t screen_base = vic_bank + (uint32_t)((d018 >> 4) & 0xF) * 1024u;
+
+    ImVec2 img_sz(24.0f * spr_scale, 21.0f * spr_scale);
+    float  cell_w = img_sz.x + 14.0f;
+    float  cell_h = img_sz.y + 78.0f;
+
+    for (int sn = 0; sn < 8; sn++) {
+        if (sn % 4 != 0) ImGui::SameLine(0.0f, 6.0f);
+
+        bool     enabled = ((d015 >> sn) & 1) != 0;
+        uint16_t sx      = (uint16_t)(sim_mem_read_byte(g_sim, (uint16_t)(0xD000 + sn*2))
+                            | (((d010 >> sn) & 1) << 8));
+        uint8_t  sy      = sim_mem_read_byte(g_sim, (uint16_t)(0xD001 + sn*2));
+        uint8_t  color   = sim_mem_read_byte(g_sim, (uint16_t)(0xD027 + sn)) & 0xF;
+        bool     is_mcm  = ((d01c >> sn) & 1) != 0;
+        bool     x_exp   = ((d01d >> sn) & 1) != 0;
+        bool     y_exp   = ((d017 >> sn) & 1) != 0;
+        bool     behind  = ((d01b >> sn) & 1) != 0;
+        uint8_t  ptr     = sim_mem_read_byte(g_sim,
+                               (uint16_t)((screen_base + 0x3F8 + sn) & 0xFFFF));
+        uint32_t saddr   = (vic_bank + (uint32_t)ptr * 64u) & 0xFFFF;
+
+        ImGui::PushID(sn);
+
+        ImVec4 border_col = enabled
+            ? ImVec4(0.25f, 0.75f, 0.25f, 1.0f)
+            : ImVec4(0.28f, 0.28f, 0.28f, 1.0f);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.10f, 0.10f, 1.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
+        ImGui::PushStyleColor(ImGuiCol_Border, border_col);
+
+        if (ImGui::BeginChild("##sc", ImVec2(cell_w, cell_h), true)) {
+            /* Header */
+            if (enabled)
+                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Spr %d", sn);
+            else
+                ImGui::TextDisabled("Spr %d (off)", sn);
+
+            /* Sprite bitmap with transparent background */
+            ImGui::Image((ImTextureID)(uintptr_t)g_spr_tex[sn], img_sz);
+
+            /* Info lines */
+            ImGui::Text("X=%-3d Y=%d", sx, sy);
+            char flags[16] = "";
+            if (is_mcm) strcat(flags, "MC ");
+            if (x_exp)  strcat(flags, "XE ");
+            if (y_exp)  strcat(flags, "YE ");
+            if (behind) strcat(flags, "BG");
+            ImGui::Text("Col:%X  %s", color, flags);
+            ImGui::TextDisabled("$%04X[%02X]", (unsigned)saddr, ptr);
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleColor(2);
+        ImGui::PopStyleVar();
+        ImGui::PopID();
+    }
+
+    /* Footer: shared MC colours and enable mask */
+    ImGui::Separator();
+    uint8_t d025 = sim_mem_read_byte(g_sim, 0xD025) & 0xF;
+    uint8_t d026 = sim_mem_read_byte(g_sim, 0xD026) & 0xF;
+    ImGui::Text("D025 MC0:%X  D026 MC1:%X  D015 En:%02X", d025, d026, d015);
 
     ImGui::End();
 }
@@ -2832,6 +2883,16 @@ static void draw_execution_bar(void)
         ImGui::TextDisabled("hist");
     }
 
+    /* Throttle speed badge */
+    if (g_throttle) {
+        ImGui::SameLine(0.0f, 10.0f);
+        ImGui::TextColored(ImVec4(0.30f, 0.85f, 1.0f, 1.0f),
+                           "%.2fx", g_throttle_scale);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Speed throttle: %.2fx C64 (%.0f Hz)\nToggle via Run menu",
+                              g_throttle_scale, C64_HZ * g_throttle_scale);
+    }
+
     /* Push [|▶] history-forward button to the right edge */
     ImGui::SameLine();
     {
@@ -3903,11 +3964,14 @@ int main(int /*argc*/, char ** /*argv*/)
             return (void*)(intptr_t)1;
         };
         h.ReadLineFn = [](ImGuiContext*, ImGuiSettingsHandler*, void*, const char* line) {
-            int v;
+            int v; float f;
             if (sscanf(line, "FontSize=%d", &v) == 1 && v >= 8 && v <= 32)
                 if (v != g_base_font_size) { g_base_font_size = v; g_font_rebuild = true; }
             if (sscanf(line, "Theme=%d", &v) == 1 && v >= 0 && v <= 2)
                 if (v != g_theme) { g_theme = v; g_theme_rebuild = true; }
+            if (sscanf(line, "Throttle=%d", &v) == 1) g_throttle = (v != 0);
+            if (sscanf(line, "ThrottleScale=%f", &f) == 1 && f >= 0.1f && f <= 100.0f)
+                g_throttle_scale = f;
         };
         h.WriteAllFn = [](ImGuiContext*, ImGuiSettingsHandler* handler, ImGuiTextBuffer* buf) {
             int x = 0, y = 0, w = 800, wh = 600;
@@ -3916,12 +3980,14 @@ int main(int /*argc*/, char ** /*argv*/)
                 SDL_GetWindowSize(g_window, &w, &wh);
             }
             buf->appendf("[%s][Settings]\n", handler->TypeName);
-            buf->appendf("FontSize=%d\n", g_base_font_size);
-            buf->appendf("Theme=%d\n",    g_theme);
-            buf->appendf("WindowX=%d\n",  x);
-            buf->appendf("WindowY=%d\n",  y);
-            buf->appendf("WindowW=%d\n",  w);
-            buf->appendf("WindowH=%d\n",  wh);
+            buf->appendf("FontSize=%d\n",      g_base_font_size);
+            buf->appendf("Theme=%d\n",         g_theme);
+            buf->appendf("WindowX=%d\n",       x);
+            buf->appendf("WindowY=%d\n",       y);
+            buf->appendf("WindowW=%d\n",       w);
+            buf->appendf("WindowH=%d\n",       wh);
+            buf->appendf("Throttle=%d\n",      g_throttle ? 1 : 0);
+            buf->appendf("ThrottleScale=%.4f\n", g_throttle_scale);
             buf->appendf("\n");
         };
         ImGui::AddSettingsHandler(&h);
@@ -3954,9 +4020,20 @@ int main(int /*argc*/, char ** /*argv*/)
     glBindTexture(GL_TEXTURE_2D, g_vic_tex);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, VIC_FRAME_W, VIC_FRAME_H,
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, VIC2_FRAME_W, VIC2_FRAME_H,
                  0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
     glBindTexture(GL_TEXTURE_2D, 0);
+
+    /* VIC-II sprite textures: 8 × 24×21 RGBA (transparent background) */
+    glGenTextures(8, g_spr_tex);
+    for (int sn = 0; sn < 8; sn++) {
+        glBindTexture(GL_TEXTURE_2D, g_spr_tex[sn]);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 24, 21,
+                     0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
 
     fprintf(stdout, "sim6502-gui: display %d  scale=%.2fx  font=%.0fpx  window=%dx%d%s\n",
             display_index, ui_scale, font_cfg.SizePixels,
@@ -4113,9 +4190,32 @@ int main(int /*argc*/, char ** /*argv*/)
         if (g_running) {
             cpu_t *cpu = sim_get_cpu(g_sim);
             if (cpu) { g_prev_cpu = *cpu; g_prev_cpu_valid = true; }
-            int ev_code = sim_step(g_sim, g_speed);
+
+            /* Reset throttle timer on the first frame after (re)starting */
+            if (!g_was_running) {
+                g_thr_last = SDL_GetPerformanceCounter();
+                g_thr_debt = 0.0;
+            }
+            g_was_running = true;
+
+            int ev_code;
+            if (g_throttle) {
+                Uint64 now     = SDL_GetPerformanceCounter();
+                double elapsed = (double)(now - g_thr_last) /
+                                 (double)SDL_GetPerformanceFrequency();
+                g_thr_last = now;
+                if (elapsed > 0.05) elapsed = 0.05;   /* clamp: max 50 ms burst */
+                g_thr_debt += elapsed * C64_HZ * (double)g_throttle_scale;
+                unsigned long budget = (unsigned long)g_thr_debt;
+                g_thr_debt -= (double)budget;
+                ev_code = sim_step_cycles(g_sim, budget);
+            } else {
+                ev_code = sim_step(g_sim, g_speed);
+            }
+
             g_last_write_count = sim_get_last_writes(g_sim, g_last_writes, 256);
             g_vic_dirty = true;
+            g_spr_dirty = true;
             update_watches();
             if (sim_profiler_is_enabled(g_sim)) g_heatmap_dirty = true;
             if (ev_code > 0)
@@ -4127,6 +4227,9 @@ int main(int /*argc*/, char ** /*argv*/)
                 sim_break_clear(g_sim, g_step_over_bp);
                 g_step_over_active = false;
             }
+            if (!g_running) g_was_running = false;
+        } else {
+            g_was_running = false;
         }
 
         /* ---- Theme rebuild (before NewFrame) ---- */
@@ -4227,6 +4330,16 @@ int main(int /*argc*/, char ** /*argv*/)
                     if (ImGui::MenuItem("Step Forward",     "Shift+F8")) do_step_fwd();
                     if (ImGui::MenuItem("Reverse Continue", "Ctrl+Shift+R"))
                         con_add(CON_COL_WARN, "Reverse-continue not yet available.");
+                    ImGui::Separator();
+                    ImGui::MenuItem("Throttle Speed", nullptr, &g_throttle);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Limit run speed to a fraction of C64 speed.\n1.0x = ~985 kHz (PAL C64)");
+                    if (g_throttle) {
+                        ImGui::SetNextItemWidth(160.0f);
+                        ImGui::SliderFloat("Scale##thr", &g_throttle_scale, 0.1f, 10.0f, "%.2fx C64");
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("1.0x = PAL C64 (~985 kHz)\n0.5x = half speed\n2.0x = double speed");
+                    }
                     ImGui::EndMenu();
                 }
                 if (ImGui::BeginMenu("View")) {
@@ -4276,7 +4389,8 @@ int main(int /*argc*/, char ** /*argv*/)
                     ImGui::MenuItem("Source",      nullptr, &show_source);
                     ImGui::MenuItem("Profiler",    nullptr, &show_profiler);
                     ImGui::Separator();
-                    ImGui::MenuItem("VIC-II Screen", nullptr, &show_vic_screen);
+                    ImGui::MenuItem("VIC-II Screen",  nullptr, &show_vic_screen);
+                    ImGui::MenuItem("VIC-II Sprites", nullptr, &show_vic_sprites);
                     ImGui::Separator();
                     if (ImGui::BeginMenu("Font Size")) {
                         static const int sizes[] = { 10, 11, 12, 13, 14, 15, 16, 18, 20, 24 };
@@ -4391,6 +4505,7 @@ int main(int /*argc*/, char ** /*argv*/)
 
         /* Phase 6 panes */
         draw_pane_vic_screen();
+        draw_pane_vic_sprites();
 
         /* Popups */
         draw_binload_popup();
@@ -4413,6 +4528,7 @@ int main(int /*argc*/, char ** /*argv*/)
 
     if (g_heatmap_tex) { glDeleteTextures(1, &g_heatmap_tex); g_heatmap_tex = 0; }
     if (g_vic_tex)     { glDeleteTextures(1, &g_vic_tex);     g_vic_tex     = 0; }
+    if (g_spr_tex[0])  { glDeleteTextures(8, g_spr_tex); for (int i=0;i<8;i++) g_spr_tex[i]=0; }
     sim_destroy(g_sim);
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplSDL2_Shutdown();

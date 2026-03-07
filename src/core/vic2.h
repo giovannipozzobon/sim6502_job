@@ -26,4 +26,7 @@ int vic2_render_ppm(const memory_t *mem, const char *filename);
 /* Print a human-readable VIC-II register summary to stdout. */
 void vic2_print_info(const memory_t *mem);
 
+/* Print all 8 sprite states (position, colour, flags, data address) to stdout. */
+void vic2_print_sprites(const memory_t *mem);
+
 #endif /* VIC2_H */

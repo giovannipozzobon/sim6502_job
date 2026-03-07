@@ -800,8 +800,10 @@ Users can save the current docking layout + open panes as a named preset (e.g., 
 26. VIC-II renderer: character mode, bitmap mode, sprites (software rasteriser into pixel buffer → OpenGL texture)
 27. VIC Viewer pane: Screen, Sprites, Char Set, Color RAM, Registers sub-panes
 27a. [x] VIC Viewer pane: Screen (384×272 rendered frame via GL texture; std/MCM/ECM/bitmap modes; scale controls; register summary; View->VIC-II Screen)
-27b. VIC Viewer pane: Sprites
+27b. [x] VIC Viewer pane: Sprites
+27b2. For VIC Sprites, add editor capability. 
 27c. VIC Viewer pane: Char Set
+27c2. For VIC Char Sets add editor capability. 
 27d. VIC Viewer pane: Color RAM
 27e. VIC Viewer pane: Registers sub-panes
 28. PNG export for frames, sprites, and char sheets (`stb_image_write.h`)

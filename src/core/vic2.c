@@ -152,6 +152,70 @@ void vic2_render_rgb(const memory_t *mem, uint8_t *buf)
             }
         }
     }
+
+    /* ---- Sprite rendering ---- */
+    /* Sprites are drawn 7→0 so sprite 0 ends up on top.
+     * Coordinate mapping to frame buffer:
+     *   frame_x = sprite_x - 16   (raster X 48 = col 0 = frame_x 32)
+     *   frame_y = sprite_y - 15   (raster Y 51 = row 0 = frame_y 36)  */
+    {
+        uint8_t d015 = mem->mem[0xD015];   /* sprite enable    */
+        uint8_t d010 = mem->mem[0xD010];   /* X MSBs           */
+        uint8_t d017 = mem->mem[0xD017];   /* Y expand         */
+        uint8_t d01c = mem->mem[0xD01C];   /* multicolor       */
+        uint8_t d01d = mem->mem[0xD01D];   /* X expand         */
+        uint8_t mc0  = mem->mem[0xD025] & 0xF;
+        uint8_t mc1  = mem->mem[0xD026] & 0xF;
+
+        for (int sn = 7; sn >= 0; sn--) {
+            if (!(d015 & (1 << sn))) continue;
+
+            int      sx  = mem->mem[0xD000 + sn*2];
+            if (d010 & (1 << sn)) sx |= 0x100;
+            int      sy  = mem->mem[0xD001 + sn*2];
+            uint8_t  col = mem->mem[0xD027 + sn] & 0xF;
+            int      xe  = (d01d & (1 << sn)) ? 2 : 1;
+            int      ye  = (d017 & (1 << sn)) ? 2 : 1;
+            int      mcf = (d01c & (1 << sn)) ? 1 : 0;
+
+            uint16_t ptr_addr  = (uint16_t)((screen_base + 0x3F8u + (uint32_t)sn) & 0xFFFF);
+            uint8_t  ptr       = mem->mem[ptr_addr];
+            uint32_t data_base = (vic_bank + (uint32_t)ptr * 64u) & 0xFFFF;
+
+            int fx0 = sx - 16;
+            int fy0 = sy - 15;
+
+            for (int row = 0; row < 21; row++) {
+                uint16_t ra = (uint16_t)((data_base + (uint32_t)row * 3u) & 0xFFFF);
+                uint32_t bits = ((uint32_t)mem->mem[ra]              << 16) |
+                                ((uint32_t)mem->mem[(ra+1u) & 0xFFFF] <<  8) |
+                                 (uint32_t)mem->mem[(ra+2u) & 0xFFFF];
+
+                for (int yr = 0; yr < ye; yr++) {
+                    int fy = fy0 + row * ye + yr;
+                    if (fy < 0 || fy >= VIC2_FRAME_H) continue;
+
+                    if (!mcf) {
+                        /* Standard 1bpp: 24 pixels */
+                        for (int px = 0; px < 24; px++) {
+                            if (!(bits & (0x800000u >> (uint32_t)px))) continue;
+                            for (int xr = 0; xr < xe; xr++)
+                                vic_put(buf, fx0 + px * xe + xr, fy, col);
+                        }
+                    } else {
+                        /* Multicolor 2bpp: 12 pixel-pairs */
+                        for (int px = 0; px < 12; px++) {
+                            int sel = (int)((bits >> (uint32_t)(22 - px*2)) & 0x3u);
+                            if (sel == 0) continue;
+                            uint8_t c = (sel == 1) ? mc0 : (sel == 2) ? col : mc1;
+                            for (int xr = 0; xr < xe * 2; xr++)
+                                vic_put(buf, fx0 + px * xe * 2 + xr, fy, c);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 int vic2_render_ppm(const memory_t *mem, const char *filename)
@@ -221,4 +285,43 @@ void vic2_print_info(const memory_t *mem)
     }
     printf("  Frame    : %dx%d px (active 320x200 at +%d,+%d)\n",
            VIC2_FRAME_W, VIC2_FRAME_H, VIC2_ACTIVE_X, VIC2_ACTIVE_Y);
+}
+
+void vic2_print_sprites(const memory_t *mem)
+{
+    uint8_t d015  = mem->mem[0xD015];
+    uint8_t d01c  = mem->mem[0xD01C];
+    uint8_t d01d  = mem->mem[0xD01D];
+    uint8_t d017  = mem->mem[0xD017];
+    uint8_t d01b  = mem->mem[0xD01B];
+    uint8_t d010  = mem->mem[0xD010];
+    uint8_t d018  = mem->mem[0xD018];
+    uint8_t d025  = mem->mem[0xD025] & 0xF;
+    uint8_t d026  = mem->mem[0xD026] & 0xF;
+    uint8_t cia2a = mem->mem[0xDD00];
+
+    uint32_t vic_bank    = (uint32_t)((~cia2a) & 3) * 0x4000u;
+    uint32_t screen_base = vic_bank + (uint32_t)((d018 >> 4) & 0xF) * 1024u;
+
+    printf("VIC-II Sprites  D015=$%02X  MC0=%d(%s)  MC1=%d(%s):\n",
+           d015, d025, vic2_color_names[d025], d026, vic2_color_names[d026]);
+    printf("  #  En   X    Y   Col            MCM XE  YE  BG  DataAddr\n");
+
+    for (int sn = 0; sn < 8; sn++) {
+        int      enabled = (d015 >> sn) & 1;
+        uint16_t sx      = (uint16_t)(mem->mem[0xD000 + sn*2] | (((d010 >> sn) & 1) << 8));
+        uint8_t  sy      = mem->mem[0xD001 + sn*2];
+        uint8_t  color   = mem->mem[0xD027 + sn] & 0xF;
+        uint8_t  ptr     = mem->mem[(screen_base + 0x3F8 + sn) & 0xFFFF];
+        uint32_t saddr   = (vic_bank + (uint32_t)ptr * 64u) & 0xFFFF;
+
+        printf("  %d  %-3s  %-4d %-3d  %X(%-10s)  %-3s %-3s %-3s %-3s $%04X\n",
+               sn, enabled ? "Yes" : "No", sx, sy,
+               color, vic2_color_names[color],
+               (d01c >> sn) & 1 ? "Y" : "-",
+               (d01d >> sn) & 1 ? "Y" : "-",
+               (d017 >> sn) & 1 ? "Y" : "-",
+               (d01b >> sn) & 1 ? "Y" : "-",
+               (unsigned)saddr);
+    }
 }
