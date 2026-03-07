@@ -1178,21 +1178,29 @@ static void draw_pane_vic_screen(void)
     bool mcm = (ctrl2 >> 4) & 1;
 
     const char *mode = "Unknown";
-    if      (!den)             mode = "Display Off";
-    else if (!bmm&&!ecm&&!mcm) mode = "Standard Char";
-    else if (!bmm&&!ecm&& mcm) mode = "Multicolour Char";
-    else if (!bmm&& ecm&&!mcm) mode = "Extended Colour";
-    else if ( bmm&&!ecm&&!mcm) mode = "Standard Bitmap";
-    else if ( bmm&&!ecm&& mcm) mode = "Multicolour Bitmap";
+    if      (!den)               mode = "Display Off";
+    else if (!bmm&&!ecm&&!mcm)  mode = "Standard Char";
+    else if (!bmm&&!ecm&& mcm)  mode = "Multicolour Char";
+    else if (!bmm&& ecm&&!mcm)  mode = "Extended Colour";
+    else if ( bmm&&!ecm&&!mcm)  mode = "Standard Bitmap";
+    else if ( bmm&&!ecm&& mcm)  mode = "Multicolour Bitmap";
 
-    uint32_t screen_addr = (uint32_t)bank*0x4000u + (uint32_t)((memsetup>>4)&0xF)*1024u;
-    uint32_t cg_addr     = (uint32_t)bank*0x4000u + (uint32_t)((memsetup>>1)&0x7)*2048u;
+    uint32_t vic_bank_u  = (uint32_t)bank * 0x4000u;
+    uint32_t screen_addr = vic_bank_u + (uint32_t)((memsetup>>4)&0xF)*1024u;
+    uint32_t cg_addr     = vic_bank_u + (uint32_t)((memsetup>>1)&0x7)*2048u;
+    uint32_t bm_addr     = vic_bank_u + (uint32_t)(((memsetup>>3)&1)*0x2000u);
 
-    ImGui::Text("Mode: %-20s  D011:%02X  D016:%02X  D018:%02X",
-                mode, ctrl1, ctrl2, memsetup);
+    /* Mode label: green=char, yellow=bitmap, grey=off */
+    ImVec4 mode_col = !den ? ImVec4(0.5f,0.5f,0.5f,1.0f)
+                    :  bmm ? ImVec4(1.0f,0.9f,0.2f,1.0f)
+                           : ImVec4(0.4f,1.0f,0.4f,1.0f);
+    ImGui::TextColored(mode_col, "Mode: %-20s", mode);
+    ImGui::SameLine();
+    ImGui::TextDisabled(" D011:%02X  D016:%02X  D018:%02X", ctrl1, ctrl2, memsetup);
     ImGui::Text("Bank: %d ($%04X)  Screen:$%04X  %s:$%04X",
-                bank, bank*0x4000, screen_addr,
-                bmm ? "Bitmap" : "Chars ", cg_addr);
+                bank, (unsigned)vic_bank_u, (unsigned)screen_addr,
+                bmm ? "Bitmap" : "CharGen",
+                (unsigned)(bmm ? bm_addr : cg_addr));
     ImGui::Text("Border:%X  BG0:%X  CIA2PA:%02X",
                 sim_mem_read_byte(g_sim, 0xD020) & 0xF,
                 sim_mem_read_byte(g_sim, 0xD021) & 0xF,

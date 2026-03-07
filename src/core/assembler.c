@@ -306,8 +306,9 @@ void handle_pseudo_op(const char *line, cpu_type_t *cpu_type, int *pc,
 
 void parse_line(const char *line, instruction_t *instr, symbol_table_t *symbols, int pc) {
 	int i = 0;
+	const char *semi  = strchr(line, ';');
 	const char *colon = strchr(line, ':');
-	if (colon) line = colon + 1;
+	if (colon && (!semi || colon < semi)) line = colon + 1;
 	while (*line && isspace(*line)) line++;
 	if (!*line || *line == ';' || *line == '.') {
 		instr->op[0] = 0;

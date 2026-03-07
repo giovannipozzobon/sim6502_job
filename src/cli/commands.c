@@ -171,7 +171,8 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
             printf("          jump <addr>, set <reg> <val>, flag <flag> <0|1>,\n");
             printf("          bload \"file\" [addr], bsave \"file\" <start> <end>,\n");
             printf("          asm [addr], disasm [addr [count]],\n");
-            printf("          vic2.info, vic2.sprites, vic2.savescreen [file],\n");
+            printf("          vic2.info, vic2.regs, vic2.sprites,\n");
+            printf("          vic2.savescreen [file], vic2.savebitmap [file],\n");
             printf("          speed [scale]  (1.0=C64, 0=unlimited), quit\n");
         } else if (strcmp(cmd, "break") == 0) {
             const char *p = line; SKIP_CMD(p); unsigned long addr;
@@ -382,6 +383,8 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
             }
         } else if (strcmp(cmd, "vic2.info") == 0) {
             vic2_print_info(mem);
+        } else if (strcmp(cmd, "vic2.regs") == 0) {
+            vic2_print_regs(mem);
         } else if (strcmp(cmd, "vic2.sprites") == 0) {
             vic2_print_sprites(mem);
         } else if (strcmp(cmd, "vic2.savescreen") == 0) {
@@ -397,6 +400,22 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
             }
             if (vic2_render_ppm(mem, fbuf) == 0)
                 printf("Saved %dx%d PPM to '%s'\n", VIC2_FRAME_W, VIC2_FRAME_H, fbuf);
+            else
+                printf("Error: cannot write '%s'\n", fbuf);
+        } else if (strcmp(cmd, "vic2.savebitmap") == 0) {
+            const char *p = line; SKIP_CMD(p);
+            while (*p && isspace((unsigned char)*p)) p++;
+            char fbuf[512];
+            if (*p && *p != '\n' && *p != '\r') {
+                int fi = 0;
+                while (*p && *p != '\n' && *p != '\r' && fi < 511) fbuf[fi++] = *p++;
+                fbuf[fi] = '\0';
+            } else {
+                strcpy(fbuf, "vic2bitmap.ppm");
+            }
+            if (vic2_render_ppm_active(mem, fbuf) == 0)
+                printf("Saved %dx%d active-area PPM to '%s'\n",
+                       VIC2_ACTIVE_W, VIC2_ACTIVE_H, fbuf);
             else
                 printf("Error: cannot write '%s'\n", fbuf);
         }

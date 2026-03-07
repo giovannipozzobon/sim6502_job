@@ -319,6 +319,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: "vic2_regs",
+        description: "Prints the complete VIC-II register dump: mode string, D011/D016/D018 with every decoded field (ECM/BMM/DEN/RSEL/RST8/yscroll, MCM/CSEL/xscroll), D012 raster line (9-bit), D019 interrupt status (IRQ/RST/MBC/MMC/LP), D01A interrupt enable, video bank and address range, Screen RAM / CharGen / Bitmap Base addresses, Colour RAM, and all five colour registers (D020 border, D021-D024 BG0-BG3) with colour names.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+      {
         name: "vic2_sprites",
         description: "Prints the state of all 8 VIC-II hardware sprites: enabled flag, X/Y position, colour, multicolour/expand flags, and sprite data address.",
         inputSchema: {
@@ -348,6 +356,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             path: {
               type: "string",
               description: "Output file path (default: /tmp/vic2screen.ppm)",
+            },
+          },
+        },
+      },
+      {
+        name: "vic2_savebitmap",
+        description: "Renders the 320×200 active display area (no border; sprites are included and clipped to the active area) to a PPM image file. The output adapts to the current VIC-II mode (Standard Char, Multicolour Char, ECM, Standard Bitmap, or Multicolour Bitmap) as selected by the D011/D016 registers.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            path: {
+              type: "string",
+              description: "Output file path (default: /tmp/vic2bitmap.ppm)",
             },
           },
         },
@@ -467,6 +488,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return {
         content: [{ type: "text", text: output }],
       };
+    } else if (name === "vic2_regs") {
+      const output = await sendCommand("vic2.regs");
+      return {
+        content: [{ type: "text", text: output }],
+      };
     } else if (name === "vic2_sprites") {
       const output = await sendCommand("vic2.sprites");
       return {
@@ -481,6 +507,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     } else if (name === "vic2_savescreen") {
       const filePath = (args.path && args.path.trim()) || '/tmp/vic2screen.ppm';
       const output = await sendCommand(`vic2.savescreen ${filePath}`);
+      return {
+        content: [{ type: "text", text: output }],
+      };
+    } else if (name === "vic2_savebitmap") {
+      const filePath = (args.path && args.path.trim()) || '/tmp/vic2bitmap.ppm';
+      const output = await sendCommand(`vic2.savebitmap ${filePath}`);
       return {
         content: [{ type: "text", text: output }],
       };

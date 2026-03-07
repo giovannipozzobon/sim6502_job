@@ -230,6 +230,201 @@ int vic2_render_ppm(const memory_t *mem, const char *filename)
     return 0;
 }
 
+/* Active-area helper: same pixel logic as vic2_render_rgb but writes into a
+ * VIC2_ACTIVE_W×VIC2_ACTIVE_H buffer with (0,0) = top-left of the display. */
+static inline void vic_put_a(uint8_t *px, int x, int y, int ci)
+{
+    if ((unsigned)x >= VIC2_ACTIVE_W || (unsigned)y >= VIC2_ACTIVE_H) return;
+    int off = (y * VIC2_ACTIVE_W + x) * 3;
+    ci &= 0xF;
+    px[off+0] = vic2_palette[ci][0];
+    px[off+1] = vic2_palette[ci][1];
+    px[off+2] = vic2_palette[ci][2];
+}
+
+void vic2_render_rgb_active(const memory_t *mem, uint8_t *buf)
+{
+    uint8_t ctrl1    = mem->mem[0xD011];
+    uint8_t ctrl2    = mem->mem[0xD016];
+    uint8_t memsetup = mem->mem[0xD018];
+    uint8_t bg0      = mem->mem[0xD021] & 0xF;
+    uint8_t bg1      = mem->mem[0xD022] & 0xF;
+    uint8_t bg2      = mem->mem[0xD023] & 0xF;
+    uint8_t bg3      = mem->mem[0xD024] & 0xF;
+
+    int ecm = (ctrl1 >> 6) & 1;
+    int bmm = (ctrl1 >> 5) & 1;
+    int den = (ctrl1 >> 4) & 1;
+    int mcm = (ctrl2 >> 4) & 1;
+
+    uint8_t  cia2a    = mem->mem[0xDD00];
+    uint32_t vic_bank = (uint32_t)((~cia2a) & 3) * 0x4000u;
+
+    uint32_t screen_base = vic_bank + (uint32_t)((memsetup >> 4) & 0xF) * 1024u;
+    uint32_t char_base   = vic_bank + (uint32_t)((memsetup >> 1) & 0x7) * 2048u;
+    uint32_t bm_base     = vic_bank + (uint32_t)(((memsetup >> 3) & 1) * 0x2000u);
+    uint16_t color_ram   = 0xD800;
+
+    /* Fill with background colour */
+    int bg_fill = den ? (int)bg0 : 0;
+    for (int i = 0; i < VIC2_ACTIVE_W * VIC2_ACTIVE_H; i++) {
+        buf[i*3+0] = vic2_palette[bg_fill][0];
+        buf[i*3+1] = vic2_palette[bg_fill][1];
+        buf[i*3+2] = vic2_palette[bg_fill][2];
+    }
+
+    if (!den) return;
+
+    if (!bmm) {
+        /* Character modes */
+        for (int row = 0; row < 25; row++) {
+            for (int col = 0; col < 40; col++) {
+                uint16_t cell = (uint16_t)(row * 40 + col);
+                uint8_t  sc   = mem->mem[(screen_base + cell) & 0xFFFF];
+                uint8_t  cr   = mem->mem[(color_ram   + cell) & 0xFFFF] & 0xF;
+                int      px0  = col * 8;
+                int      py0  = row * 8;
+
+                if (ecm) {
+                    uint8_t bgtab[4] = { bg0, bg1, bg2, bg3 };
+                    uint32_t cptr = (char_base + (uint32_t)(sc & 0x3F) * 8u) & 0xFFFF;
+                    for (int cy = 0; cy < 8; cy++) {
+                        uint8_t bits = mem->mem[(cptr + (uint32_t)cy) & 0xFFFF];
+                        for (int cx = 0; cx < 8; cx++)
+                            vic_put_a(buf, px0+cx, py0+cy,
+                                      (bits & (0x80>>cx)) ? cr : bgtab[sc >> 6]);
+                    }
+                } else if (mcm && (cr & 0x8)) {
+                    uint8_t cols[4] = { bg0, bg1, bg2, (uint8_t)(cr & 0x7) };
+                    uint32_t cptr = (char_base + (uint32_t)sc * 8u) & 0xFFFF;
+                    for (int cy = 0; cy < 8; cy++) {
+                        uint8_t bits = mem->mem[(cptr + (uint32_t)cy) & 0xFFFF];
+                        for (int cx = 0; cx < 4; cx++) {
+                            int sel = (bits >> (6 - cx*2)) & 0x3;
+                            vic_put_a(buf, px0+cx*2,   py0+cy, cols[sel]);
+                            vic_put_a(buf, px0+cx*2+1, py0+cy, cols[sel]);
+                        }
+                    }
+                } else {
+                    uint32_t cptr = (char_base + (uint32_t)sc * 8u) & 0xFFFF;
+                    for (int cy = 0; cy < 8; cy++) {
+                        uint8_t bits = mem->mem[(cptr + (uint32_t)cy) & 0xFFFF];
+                        for (int cx = 0; cx < 8; cx++)
+                            vic_put_a(buf, px0+cx, py0+cy,
+                                      (bits & (0x80>>cx)) ? cr : bg0);
+                    }
+                }
+            }
+        }
+    } else {
+        /* Bitmap modes */
+        for (int row = 0; row < 25; row++) {
+            for (int col = 0; col < 40; col++) {
+                uint16_t cell = (uint16_t)(row * 40 + col);
+                uint8_t  sc   = mem->mem[(screen_base + cell) & 0xFFFF];
+                uint8_t  cr   = mem->mem[(color_ram   + cell) & 0xFFFF] & 0xF;
+                uint8_t  fg   = (sc >> 4) & 0xF;
+                uint8_t  bg   = sc & 0xF;
+                int      px0  = col * 8;
+                int      py0  = row * 8;
+                uint32_t bptr = (bm_base + (uint32_t)cell * 8u) & 0xFFFF;
+
+                if (!mcm) {
+                    for (int cy = 0; cy < 8; cy++) {
+                        uint8_t bits = mem->mem[(bptr + (uint32_t)cy) & 0xFFFF];
+                        for (int cx = 0; cx < 8; cx++)
+                            vic_put_a(buf, px0+cx, py0+cy,
+                                      (bits & (0x80>>cx)) ? fg : bg);
+                    }
+                } else {
+                    uint8_t cols[4] = { bg0, fg, bg, cr };
+                    for (int cy = 0; cy < 8; cy++) {
+                        uint8_t bits = mem->mem[(bptr + (uint32_t)cy) & 0xFFFF];
+                        for (int cx = 0; cx < 4; cx++) {
+                            int sel = (bits >> (6 - cx*2)) & 0x3;
+                            vic_put_a(buf, px0+cx*2,   py0+cy, cols[sel]);
+                            vic_put_a(buf, px0+cx*2+1, py0+cy, cols[sel]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /* ---- Sprite rendering (clipped to active area) ----
+     * Same logic as vic2_render_rgb() but coordinates are shifted:
+     *   active_x = frame_x - VIC2_ACTIVE_X  =  (sx - 16) - 32  =  sx - 48
+     *   active_y = frame_y - VIC2_ACTIVE_Y  =  (sy - 15) - 36  =  sy - 51
+     * vic_put_a() silently clips anything outside 0..319, 0..199.         */
+    {
+        uint8_t d015 = mem->mem[0xD015];
+        uint8_t d010 = mem->mem[0xD010];
+        uint8_t d017 = mem->mem[0xD017];
+        uint8_t d01c = mem->mem[0xD01C];
+        uint8_t d01d = mem->mem[0xD01D];
+        uint8_t mc0  = mem->mem[0xD025] & 0xF;
+        uint8_t mc1  = mem->mem[0xD026] & 0xF;
+
+        for (int sn = 7; sn >= 0; sn--) {
+            if (!(d015 & (1 << sn))) continue;
+
+            int     sx  = mem->mem[0xD000 + sn*2];
+            if (d010 & (1 << sn)) sx |= 0x100;
+            int     sy  = mem->mem[0xD001 + sn*2];
+            uint8_t col = mem->mem[0xD027 + sn] & 0xF;
+            int     xe  = (d01d & (1 << sn)) ? 2 : 1;
+            int     ye  = (d017 & (1 << sn)) ? 2 : 1;
+            int     mcf = (d01c & (1 << sn)) ? 1 : 0;
+
+            uint16_t ptr_addr  = (uint16_t)((screen_base + 0x3F8u + (uint32_t)sn) & 0xFFFF);
+            uint8_t  ptr       = mem->mem[ptr_addr];
+            uint32_t data_base = (vic_bank + (uint32_t)ptr * 64u) & 0xFFFF;
+
+            int ax0 = sx - 48;   /* = (sx-16) - VIC2_ACTIVE_X */
+            int ay0 = sy - 51;   /* = (sy-15) - VIC2_ACTIVE_Y */
+
+            for (int row = 0; row < 21; row++) {
+                uint16_t ra = (uint16_t)((data_base + (uint32_t)row * 3u) & 0xFFFF);
+                uint32_t bits = ((uint32_t)mem->mem[ra]               << 16) |
+                                ((uint32_t)mem->mem[(ra+1u) & 0xFFFF] <<  8) |
+                                 (uint32_t)mem->mem[(ra+2u) & 0xFFFF];
+
+                for (int yr = 0; yr < ye; yr++) {
+                    int ay = ay0 + row * ye + yr;
+
+                    if (!mcf) {
+                        for (int px = 0; px < 24; px++) {
+                            if (!(bits & (0x800000u >> (uint32_t)px))) continue;
+                            for (int xr = 0; xr < xe; xr++)
+                                vic_put_a(buf, ax0 + px * xe + xr, ay, col);
+                        }
+                    } else {
+                        for (int px = 0; px < 12; px++) {
+                            int sel = (int)((bits >> (uint32_t)(22 - px*2)) & 0x3u);
+                            if (sel == 0) continue;
+                            uint8_t c = (sel == 1) ? mc0 : (sel == 2) ? col : mc1;
+                            for (int xr = 0; xr < xe * 2; xr++)
+                                vic_put_a(buf, ax0 + px * xe * 2 + xr, ay, c);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+int vic2_render_ppm_active(const memory_t *mem, const char *filename)
+{
+    static uint8_t pixels[VIC2_ACTIVE_W * VIC2_ACTIVE_H * 3];
+    vic2_render_rgb_active(mem, pixels);
+    FILE *f = fopen(filename, "wb");
+    if (!f) return -1;
+    fprintf(f, "P6\n%d %d\n255\n", VIC2_ACTIVE_W, VIC2_ACTIVE_H);
+    fwrite(pixels, 1, sizeof(pixels), f);
+    fclose(f);
+    return 0;
+}
+
 void vic2_print_info(const memory_t *mem)
 {
     uint8_t ctrl1    = mem->mem[0xD011];
@@ -285,6 +480,75 @@ void vic2_print_info(const memory_t *mem)
     }
     printf("  Frame    : %dx%d px (active 320x200 at +%d,+%d)\n",
            VIC2_FRAME_W, VIC2_FRAME_H, VIC2_ACTIVE_X, VIC2_ACTIVE_Y);
+}
+
+void vic2_print_regs(const memory_t *mem)
+{
+    uint8_t ctrl1    = mem->mem[0xD011];
+    uint8_t ctrl2    = mem->mem[0xD016];
+    uint8_t memsetup = mem->mem[0xD018];
+    uint8_t raster   = mem->mem[0xD012];
+    uint8_t border   = mem->mem[0xD020] & 0xF;
+    uint8_t bg0      = mem->mem[0xD021] & 0xF;
+    uint8_t bg1      = mem->mem[0xD022] & 0xF;
+    uint8_t bg2      = mem->mem[0xD023] & 0xF;
+    uint8_t bg3      = mem->mem[0xD024] & 0xF;
+    uint8_t d019     = mem->mem[0xD019];
+    uint8_t d01a     = mem->mem[0xD01A];
+    uint8_t cia2a    = mem->mem[0xDD00];
+
+    int ecm     = (ctrl1 >> 6) & 1;
+    int bmm     = (ctrl1 >> 5) & 1;
+    int den     = (ctrl1 >> 4) & 1;
+    int rsel    = (ctrl1 >> 3) & 1;
+    int rst8    = (ctrl1 >> 7) & 1;
+    int yscroll = ctrl1 & 7;
+    int mcm     = (ctrl2 >> 4) & 1;
+    int csel    = (ctrl2 >> 3) & 1;
+    int xscroll = ctrl2 & 7;
+    int bank    = (~cia2a) & 3;
+
+    uint32_t vic_bank    = (uint32_t)bank * 0x4000u;
+    uint32_t screen_addr = vic_bank + (uint32_t)((memsetup >> 4) & 0xF) * 1024u;
+    uint32_t cg_addr     = vic_bank + (uint32_t)((memsetup >> 1) & 0x7) * 2048u;
+    uint32_t bm_addr     = vic_bank + (uint32_t)(((memsetup >> 3) & 1) * 0x2000u);
+    uint16_t raster_line = (uint16_t)(raster | (rst8 << 8));
+
+    const char *mode;
+    if      (!den)               mode = "Display Off";
+    else if (!bmm&&!ecm&&!mcm)  mode = "Standard Char";
+    else if (!bmm&&!ecm&& mcm)  mode = "Multicolour Char";
+    else if (!bmm&& ecm&&!mcm)  mode = "Extended Colour";
+    else if ( bmm&&!ecm&&!mcm)  mode = "Standard Bitmap";
+    else if ( bmm&&!ecm&& mcm)  mode = "Multicolour Bitmap";
+    else                         mode = "Invalid";
+
+    printf("VIC-II Registers:\n");
+    printf("  Mode     : %s\n", mode);
+    printf("  D011=$%02X : ECM=%d BMM=%d DEN=%d RSEL=%d RST8=%d yscroll=%d\n",
+           ctrl1, ecm, bmm, den, rsel, rst8, yscroll);
+    printf("  D016=$%02X : MCM=%d CSEL=%d xscroll=%d\n",
+           ctrl2, mcm, csel, xscroll);
+    printf("  D018=$%02X : screen=bits[7:4]  char/bm=bits[3:1]\n", memsetup);
+    printf("  D012=$%02X : Raster line = %d ($%03X)\n",
+           raster, raster_line, raster_line);
+    printf("  D019=$%02X : IRQ=%d  RST=%d MBC=%d MMC=%d LP=%d\n",
+           d019, (d019>>7)&1, d019&1, (d019>>1)&1, (d019>>2)&1, (d019>>3)&1);
+    printf("  D01A=$%02X : ERST=%d EMBC=%d EMMC=%d ELP=%d\n",
+           d01a, d01a&1, (d01a>>1)&1, (d01a>>2)&1, (d01a>>3)&1);
+    printf("  Bank     : %d  ($%04X-$%04X)  CIA2PA=$%02X\n",
+           bank, (unsigned)vic_bank, (unsigned)(vic_bank + 0x3FFF), cia2a);
+    printf("  Screen   : $%04X\n", (unsigned)screen_addr);
+    if (bmm)
+        printf("  Bitmap   : $%04X\n", (unsigned)bm_addr);
+    else
+        printf("  CharGen  : $%04X\n", (unsigned)cg_addr);
+    printf("  ColourRAM: $D800\n");
+    printf("  D020 Border: %d (%s)\n",   border, vic2_color_names[border]);
+    printf("  D021   BG0: %d (%s)\n",    bg0,    vic2_color_names[bg0]);
+    printf("  D022   BG1: %d (%s)\n",    bg1,    vic2_color_names[bg1]);
+    printf("  D023   BG2: %d (%s)\n",    bg2,    vic2_color_names[bg2]);
+    printf("  D024   BG3: %d (%s)\n",    bg3,    vic2_color_names[bg3]);
 }
 
 void vic2_print_sprites(const memory_t *mem)

@@ -150,8 +150,9 @@ int main(int argc, char *argv[]) {
 			const char *ptr = line; while (*ptr && isspace(*ptr)) ptr++;
 			if (!*ptr || *ptr == ';') continue;
 			if (*ptr == '.') { handle_pseudo_op(ptr, &cpu_type, &pc, NULL, NULL, NULL); continue; }
+			const char *semi1 = strchr(ptr, ';');
 			const char *colon = strchr(ptr, ':');
-			if (colon) {
+			if (colon && (!semi1 || colon < semi1)) {
 				char l[64]; int len = colon - ptr; if (len >= 64) len = 63;
 				strncpy(l, ptr, len); l[len] = 0; symbol_add(&symbols, l, pc, SYM_LABEL, "Source");
 				const char *after = colon + 1; while (*after && isspace(*after)) after++;
@@ -173,8 +174,9 @@ int main(int argc, char *argv[]) {
 			const char *ptr = line; while (*ptr && isspace(*ptr)) ptr++;
 			if (!*ptr || *ptr == ';') continue;
 			if (*ptr == '.') { handle_pseudo_op(ptr, &cpu_type, &pc, &mem, &symbols, NULL); continue; }
-			const char *colon = strchr(ptr, ':');
-			if (colon) { const char *after = colon + 1; while (*after && isspace(*after)) after++; if (*after == '.') { handle_pseudo_op(after, &cpu_type, &pc, &mem, &symbols, NULL); continue; } }
+			const char *semi2 = strchr(ptr, ';');
+			const char *colon2 = strchr(ptr, ':');
+			if (colon2 && (!semi2 || colon2 < semi2)) { const char *after = colon2 + 1; while (*after && isspace(*after)) after++; if (*after == '.') { handle_pseudo_op(after, &cpu_type, &pc, &mem, &symbols, NULL); continue; } }
 			instruction_t instr; parse_line(line, &instr, &symbols, pc);
 			if (instr.op[0]) {
 				rom[pc] = instr;

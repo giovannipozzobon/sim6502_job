@@ -49,6 +49,47 @@ The GUI is designed with a flexible docking system, allowing you to rearrange, s
 - **Symbol Browser**: Search, inspect, and navigate to any loaded label or variable.
 - **Watch List**: Pin specific addresses to monitor their values as the program runs.
 
+### 10. VIC-II Viewer (View menu → VIC-II Screen / Sprites / Registers)
+
+Three panes expose the Commodore 64 VIC-II video chip state for C64 / C128 / MEGA65 development:
+
+#### VIC-II Screen
+- **Live rendered frame**: Full 384×272 PAL frame — border, 320×200 active display area, and all enabled hardware sprites — rendered in real time via an OpenGL texture.
+- **All display modes**: Standard Char, Multicolour Char, Extended Colour (ECM), Standard Bitmap, and Multicolour Bitmap — rendering automatically follows the current D011/D016 mode register values.
+- **Sprites**: All 8 hardware sprites are rendered on top of the background in every mode (bitmap and character), with correct priority ordering (sprite 0 on top), X/Y expansion, multicolour, and X-MSB support.
+- **Scale controls**: 1×, 2×, 3× zoom.
+- **Freeze**: Lock the last rendered frame while execution continues, for comparison.
+- **Mode indicator**: Colour-coded label (green = char mode, yellow = bitmap mode, grey = display off) plus live addresses for Bank, Screen RAM, CharGen / Bitmap Base.
+- **CLI equivalent**: `vic2.savescreen [file]` saves the identical 384×272 frame as a PPM. `vic2.savebitmap [file]` saves the 320×200 active area (no border, sprites included) as a PPM.
+- **MCP equivalent**: `vic2_savescreen` and `vic2_savebitmap` tools.
+
+#### VIC-II Sprites
+- **Sprite thumbnail grid**: All 8 sprites displayed at configurable zoom (2×/3×/4×) with transparent backgrounds.
+- **Per-sprite info**: Enable status, X/Y position, colour, MCM/XE/YE/BG flags, and data address.
+- **Freeze**: Lock sprite thumbnails independently.
+- **Shared colours**: D025 (MC0) and D026 (MC1) shown in the footer.
+- **CLI equivalent**: `vic2.sprites` prints all 8 sprite states; sprites also appear in `vic2.savescreen` and `vic2.savebitmap` output.
+- **MCP equivalent**: `vic2_sprites` tool.
+
+#### VIC-II Registers
+- **Register table**: D011, D016, D018, D012 (raster line), D019 / D01A (interrupt flags) — each with raw hex and decoded field annotations (ECM/BMM/DEN/RSEL/RST8/yscroll, MCM/CSEL/xscroll, IRQ/RST/MBC/MMC/LP).
+- **Video addresses**: VIC bank (with address range), Screen RAM, Char Gen / Bitmap Base (label and value switch based on BMM), Colour RAM.
+- **Colour swatches**: 14×14 pixel palette swatches for Border (D020) and BG0–BG3 (D021–D024) with index and colour name.
+- **CLI equivalent**: `vic2.regs` in the interactive monitor or the embedded console outputs the same information in text form.
+- **MCP equivalent**: `vic2_regs` tool.
+
+## Speed Throttle
+
+The **Run** menu contains a **Throttle Speed** toggle and a scale slider:
+
+- **Throttle Speed** checkbox: when enabled, execution is rate-limited to the configured scale factor.
+- **Scale slider** (0.1×–10×): `1.0` = C64 PAL clock (~985 kHz); values above 1 run faster, below 1 run slower than a real C64.
+- The throttle state and scale are **persisted** in the ImGui INI file and restored on next launch.
+- **CLI equivalent**: `speed [scale]` — query or set the throttle from the interactive monitor or embedded console. `speed` alone prints the current setting.
+- **MCP equivalent**: `speed` tool (pass `scale` parameter to set, omit to query).
+
+---
+
 ## Breakpoint Conditions
 
 The GUI and CLI both support complex conditional breakpoints using standard assembler expression syntax.

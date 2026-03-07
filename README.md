@@ -60,6 +60,14 @@ The simulator includes an integrated assembler that runs before execution:
 - **Execution trace**: Detailed logs of every instruction, address, register state, and cycle count.
 - **Interactive monitor**: Full-featured CLI for inspecting/modifying registers and memory.
 - **ROM TRAP intercept**: Simulate Kernal/ROM calls (e.g., CHROUT) without loading real ROM files.
+- **Speed throttle**: Configurable run-speed limiter; `1.0` = C64 PAL clock (~985 kHz), `0` = unlimited.
+
+### VIC-II Support (C64 / C128 / MEGA65)
+
+- **Software rasteriser**: All display modes rendered — Standard Char, Multicolour Char, Extended Colour (ECM), Standard Bitmap, Multicolour Bitmap.
+- **Sprite rendering**: All 8 hardware sprites with X/Y expansion, multicolour, X-MSB, and correct priority.
+- **CLI commands**: `vic2.info`, `vic2.regs`, `vic2.sprites`, `vic2.savescreen`, `vic2.savebitmap`.
+- **MCP tools**: `vic2_info`, `vic2_regs`, `vic2_sprites`, `vic2_savescreen`, `vic2_savebitmap`.
 
 ### Memory Model
 
@@ -86,6 +94,8 @@ The simulator includes a comprehensive IDE-style debugger built with **Dear ImGu
 - **Symbol Browser**: Search and inspect all loaded labels, variables, and constants.
 - **Stack Inspector**: Human-readable view of the hardware stack and annotated frames.
 - **Trace Log**: Rolling ring-buffer of recently executed instructions and CPU states.
+- **VIC-II Viewer**: Three panes — Screen (live 384×272 rendered frame with all modes and sprites), Sprites (per-sprite thumbnail grid), and Registers (decoded D011–D01A, video addresses, colour swatches).
+- **Speed Throttle**: Run menu slider limits execution to a configurable multiple of the C64 PAL clock; setting persists across sessions via ImGui INI.
 
 ### Keyboard Shortcuts
 
@@ -285,9 +295,22 @@ Enter the monitor with `-I`. Pressing Enter on a blank line executes a single st
 | `jump <addr>` | Set the Program Counter |
 | `set <reg> <val>` | Set a register (A X Y Z B S P PC) |
 | `flag <flag> <val>` | Set a status flag (N V B D I Z C) |
+| `speed [scale]` | Get or set run speed. `1.0` = C64 PAL (~985 kHz). `0` = unlimited. |
 | `reset` | Reset CPU |
 | `help` | Show command summary |
 | `quit` / `exit` | Exit the simulator |
+
+### VIC-II Commands
+
+The interactive monitor includes commands for inspecting and capturing the VIC-II video chip state.
+
+| Command | Description |
+|---------|-------------|
+| `vic2.info` | Print VIC-II state summary: mode string, D011/D016/D018, bank, screen/charset/bitmap addresses, border and background colours |
+| `vic2.regs` | Full register dump — D011/D016/D018 with every decoded bit, D012 raster line (9-bit), D019 interrupt status (IRQ/RST/MBC/MMC/LP), D01A interrupt enable, bank and all video addresses, all five colour registers (D020 border, D021–D024 BG0–BG3) with colour names |
+| `vic2.sprites` | Print all 8 sprite states: X/Y, colour, MCM/XE/YE/BG flags, data address |
+| `vic2.savescreen [file]` | Render full 384×272 PAL frame (border + display + sprites) to a PPM file (default: `vic2screen.ppm`) |
+| `vic2.savebitmap [file]` | Render the 320×200 active display area (no border; sprites included and clipped to active area) to a PPM file — mode-aware: adapts to Standard Char, Multicolour Char, ECM, Standard Bitmap, or Multicolour Bitmap (default: `vic2bitmap.ppm`) |
 
 ### Breakpoint Conditions
 
@@ -322,6 +345,34 @@ TRAPs simulate Kernal/ROM routines without requiring the actual ROM to be loaded
 
 `plugin-gemini/server.js` is a Node.js MCP server that exposes the simulator to LLMs, allowing AI assistants to write, debug, and execute 6502 assembly code directly.
 
+### MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `load_program` | Assemble and load 6502 source code |
+| `step_instruction` | Execute N instructions |
+| `run_program` | Run until breakpoint / BRK / STP |
+| `read_registers` | Return current CPU register state |
+| `read_memory` | Read a range of memory bytes |
+| `write_memory` | Write a byte to memory |
+| `reset_cpu` | Reset CPU registers |
+| `set_processor` | Switch processor variant |
+| `list_processors` | List supported processor types |
+| `get_opcode_info` | Fetch addressing modes and cycles for a mnemonic |
+| `set_breakpoint` | Set a breakpoint at an address |
+| `clear_breakpoint` | Remove a breakpoint |
+| `list_breakpoints` | List all active breakpoints |
+| `assemble` | Inline-assemble code into memory |
+| `disassemble` | Disassemble memory at an address |
+| `step_back` | Step back one instruction using execution history |
+| `step_forward` | Step forward in history |
+| `speed` | Get or set run-speed throttle (`1.0` = C64) |
+| `vic2_info` | Print VIC-II state summary (mode, key addresses, colours) |
+| `vic2_regs` | Full register dump: D011–D01A decoded, raster line, interrupt flags, bank, all video addresses, all colour registers |
+| `vic2_sprites` | Print all 8 sprite states |
+| `vic2_savescreen` | Render full 384×272 PAL frame to PPM |
+| `vic2_savebitmap` | Render 320×200 active display area to PPM (mode-aware, no border; sprites included) |
+
 ---
 
 ## File Structure
@@ -349,4 +400,4 @@ TRAPs simulate Kernal/ROM routines without requiring the actual ROM to be loaded
 
 Proprietary — see `LICENSE`. Will move to open source at a future date.
 
-**Last Updated**: 2026-03-06
+**Last Updated**: 2026-03-07

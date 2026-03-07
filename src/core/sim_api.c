@@ -154,8 +154,9 @@ int sim_load_asm(sim_session_t *s, const char *path) {
         while (*ptr && isspace(*ptr)) ptr++;
         if (!*ptr || *ptr == ';') continue;
         if (*ptr == '.') { handle_pseudo_op(ptr, &cpu_type, &pc, NULL, NULL, NULL); continue; }
+        char *semi  = strchr(ptr, ';');
         char *colon = strchr(ptr, ':');
-        if (colon) {
+        if (colon && (!semi || colon < semi)) {
             char label_name[64]; int len = (int)(colon - ptr); if (len >= 64) len = 63;
             strncpy(label_name, ptr, len); label_name[len] = 0;
             symbol_add(&s->symbols, label_name, (unsigned short)pc, SYM_LABEL, "Source");
@@ -187,8 +188,9 @@ int sim_load_asm(sim_session_t *s, const char *path) {
         while (*ptr && isspace(*ptr)) ptr++;
         if (!*ptr || *ptr == ';') continue;
         if (*ptr == '.') { handle_pseudo_op(ptr, &s->cpu_type, &pc, &s->mem, &s->symbols, NULL); continue; }
+        const char *semi2  = strchr(ptr, ';');
         const char *colon = strchr(ptr, ':');
-        if (colon) {
+        if (colon && (!semi2 || colon < semi2)) {
             const char *after = colon + 1;
             while (*after && isspace(*after)) after++;
             if (*after == '.') { handle_pseudo_op(after, &s->cpu_type, &pc, &s->mem, &s->symbols, NULL); continue; }
