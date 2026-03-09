@@ -107,6 +107,7 @@ then persists for the session; a new `load_program` call restarts it with fresh 
 | User intent | Tools called |
 |-------------|--------------|
 | Run / test assembly code | `load_program` → `run_program` → `read_registers` |
+| Trace execution | `load_program` → `trace_run` |
 | Step through code | `load_program` → `step_instruction` × N → `read_registers` |
 | Inspect memory | `read_memory` |
 | Debug a crash | `read_registers` → `disassemble` → `step_back` |
@@ -114,6 +115,9 @@ then persists for the session; a new `load_program` call restarts it with fresh 
 | Switch processor | `set_processor` |
 | Set breakpoint and run | `set_breakpoint` → `run_program` → `read_registers` |
 | Look up an opcode | `get_opcode_info` |
+| TDD for a subroutine | `load_program` → `validate_routine` |
+| Track memory writes | `snapshot` → `run_program` → `diff_snapshot` |
+| Get a code snippet | `list_patterns` → `get_pattern` |
 | VIC-II output | `vic2_info` → `vic2_savescreen` or `vic2_savebitmap` |
 
 ### Example prompts
@@ -142,6 +146,18 @@ then persists for the session; a new `load_program` call restarts it with fresh 
 **Opcode reference**
 > "What addressing modes does ADC support on the 65c02?"
 
+**Trace execution**
+> "Load this routine and show me every instruction it executes with register state at each step."
+
+**TDD / validate a routine**
+> "Run these three test cases against the multiply routine at $0300 and tell me which ones pass."
+
+**Memory diff**
+> "Take a snapshot, run the program, then show me every byte that changed."
+
+**Code snippets**
+> "Show me the built-in 16-bit addition snippet and adapt it to use zero-page addresses $20 and $22."
+
 **VIC-II / graphics**
 > "Run the VIC screen demo and save a screenshot of what it renders."
 
@@ -157,6 +173,7 @@ then persists for the session; a new `load_program` call restarts it with fresh 
 | `load_program` | Assemble and load 6502/65xx assembly code | `code` (required) |
 | `run_program` | Execute until BRK, STP, or breakpoint | — |
 | `step_instruction` | Execute N instructions | `count` (default 1) |
+| `trace_run` | Execute N instructions; return compact per-instruction log (address, disasm, registers) | `start_address`, `max_instructions` (default 100), `stop_on_brk` |
 | `step_back` | Undo one instruction | — |
 | `step_forward` | Redo one instruction | — |
 | `read_registers` | Get CPU state (A, X, Y, Z, B, SP, PC, Flags) | — |
@@ -171,6 +188,11 @@ then persists for the session; a new `load_program` call restarts it with fresh 
 | `list_processors` | Show supported processor variants | — |
 | `set_processor` | Change processor (6502, 65c02, 45gs02…) | `type` |
 | `get_opcode_info` | Details for a specific mnemonic | `mnemonic` |
+| `validate_routine` | Run register test-vectors against a subroutine; returns pass/fail per test | `routine_address`, `tests` (array), `setup` (optional asm), `scratch_address` |
+| `snapshot` | Record current memory as a baseline | — |
+| `diff_snapshot` | Show bytes changed since the last snapshot, with before/after and writer PC | — |
+| `list_patterns` | List all built-in assembly snippets grouped by category and processor | — |
+| `get_pattern` | Return the full documented source for a named snippet | `name` (e.g. `mul8_mega65`, `memcopy`) |
 | `speed` | Get/set run speed throttle | `scale` (0.0=unlimited, 1.0=C64 speed) |
 | `vic2_info` | VIC-II chip summary | — |
 | `vic2_regs` | Full VIC-II register dump | — |

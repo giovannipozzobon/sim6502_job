@@ -49,7 +49,24 @@ The GUI is designed with a flexible docking system, allowing you to rearrange, s
 - **Symbol Browser**: Search, inspect, and navigate to any loaded label or variable.
 - **Watch List**: Pin specific addresses to monitor their values as the program runs.
 
-### 10. VIC-II Viewer (View menu → VIC-II Screen / Sprites / Registers)
+### 10. Pattern Library (View menu → Pattern Library)
+
+- **Built-in snippet browser**: All built-in assembly snippet templates organised by category (math, memory, io, time) and processor variant (6502, 65C02, 45GS02/MEGA65).
+- **Filter**: Type to narrow the list by name, category, or processor.
+- **Detail view**: Full documented source for the selected snippet, including parameter equates and clobber notes.
+- **Copy to Clipboard**: One-click copy of the full snippet body, ready to paste into your source file.
+- **CLI equivalent**: `list_patterns` / `get_pattern <name>` in the interactive monitor or embedded console.
+- **MCP equivalent**: `list_patterns` and `get_pattern` tools.
+
+### 11. Test Runner (View menu → Test Runner)
+
+- **Subroutine test-vector table**: Define input and expected-output register values for any loaded subroutine, then run all vectors with one click.
+- **Pass/Fail reporting**: Each row shows per-register pass/fail with expected vs. actual values.
+- **JSON export**: Results can be exported as JSON for CI integration.
+- **CLI equivalent**: `validate <addr> [REG=val…] : [REG=val…]` in the interactive monitor.
+- **MCP equivalent**: `validate_routine` tool.
+
+### 12. VIC-II Viewer (View menu → VIC-II Screen / Sprites / Registers)
 
 Three panes expose the Commodore 64 VIC-II video chip state for C64 / C128 / MEGA65 development:
 

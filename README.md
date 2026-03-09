@@ -175,8 +175,6 @@ make clean    # remove object files and binaries
 PROCESSOR SELECTION
   -p, --processor <CPU>    6502 | 6502-undoc | 65c02 | 65ce02 | 45gs02
   -l, --list               List all available processor types
-  -o, --opcodes <CPU>      List all opcodes for a processor
-  --info <MNEMONIC>        Show addressing modes and cycle counts for one opcode
 
 EXECUTION
   -a, --address <ADDR>     Override start address (hex $xxxx, or a label name)
@@ -188,18 +186,14 @@ DEBUGGING
 
 MEMORY
   -m, --mem <START:END>    Hex-dump memory range on exit (e.g. 0x0200:0x0300)
-  -s, --stats              Show memory write statistics on exit
 
 SYMBOL TABLES
   --symbols <FILE>         Load a custom symbol table file
   --preset <ARCH>          Load a built-in preset: c64 | c128 | mega65 | x16
   --show-symbols           Print the loaded symbol table on exit
 
-INTERRUPTS
-  -i, --irq <CYCLES>       Fire an IRQ at the given cycle count
-  -n, --nmi <CYCLES>       Fire an NMI at the given cycle count
-
 OTHER
+  -J, --json               Emit all monitor output as JSON (used by the MCP server)
   -h, --help               Show help and exit
 ```
 
@@ -210,6 +204,31 @@ Execution stops at a `BRK` instruction, `STP`, a breakpoint, or after 100 000 cy
 ---
 
 ## Assembler Syntax
+
+### Equates
+
+```asm
+SCREEN  = $0400     ; define a named constant
+COLOUR  = $D800
+```
+
+`NAME = VALUE` equates are resolved before instructions are assembled. The value can be any literal format.
+
+### Local Labels
+
+Labels starting with `.` are local and are intended for use within a single routine:
+
+```asm
+mul_loop:
+    LSR FACTOR_B
+    BCC .skip
+    ADC FACTOR_A
+.skip:
+    DEX
+    BNE mul_loop
+```
+
+Local labels do not need to be unique across the file.
 
 ### Literal Formats
 
@@ -278,24 +297,34 @@ Enter the monitor with `-I`. Pressing Enter on a blank line executes a single st
 
 | Command | Description |
 |---------|-------------|
-| `step [n]` | Execute `n` instructions (default 1). |
-| `stepback` / `sb` | Step backward 1 instruction in history. |
-| `stepfwd` / `sf` | Step forward (re-execute) in history. |
+| `step [n]` | Execute `n` instructions (default 1) |
+| `stepback` / `sb` | Step backward 1 instruction in history |
+| `stepfwd` / `sf` | Step forward (re-execute) in history |
 | `run` | Run until BRK, STP, or a breakpoint |
+| `trace [on\|off\|file <path>]` | Enable/disable execution trace, or redirect to a file |
 | `break <addr> [cond]` | Set a breakpoint with an optional condition (e.g., `A == $00 && .Z == 1`) |
 | `clear <addr>` | Remove a breakpoint |
-| `list` | List all breakpoints |
+| `list` | List all active breakpoints |
 | `regs` | Show all registers |
 | `mem <addr> [len]` | Hex dump memory |
 | `write <addr> <val>` | Write one byte to memory |
-| `bload "file" [addr]` | Load binary or `.prg` (C64 format) file. |
-| `bsave "file" <start> <end>` | Save memory to binary or `.prg` file. |
+| `bload "file" [addr]` | Load binary or `.prg` (C64 format) file |
+| `bsave "file" <start> <end>` | Save memory range to binary or `.prg` file |
 | `disasm [addr [count]]` | Disassemble memory |
-| `asm [addr]` | Enter inline assembler at `addr` |
+| `asm [addr]` | Enter inline assembler at `addr` (blank line exits) |
 | `jump <addr>` | Set the Program Counter |
 | `set <reg> <val>` | Set a register (A X Y Z B S P PC) |
 | `flag <flag> <val>` | Set a status flag (N V B D I Z C) |
-| `speed [scale]` | Get or set run speed. `1.0` = C64 PAL (~985 kHz). `0` = unlimited. |
+| `processor <type>` | Switch processor variant (6502, 65c02, 65ce02, 45gs02) |
+| `processors` | List all supported processor types |
+| `info <mnemonic>` | Show addressing modes and cycle counts for one opcode |
+| `symbols` | List the loaded symbol table |
+| `validate <addr> [REG=val…] : [REG=val…]` | Call subroutine at `addr` with given input registers and verify expected output registers |
+| `snapshot` | Record the current memory state as a baseline |
+| `diff` | Show all bytes that changed since the last `snapshot` |
+| `list_patterns` | List all built-in assembly snippet templates |
+| `get_pattern <name>` | Print the full source for a snippet (e.g. `mul8_mega65`, `memcopy`) |
+| `speed [scale]` | Get or set run speed. `1.0` = C64 PAL (~985 kHz). `0` = unlimited |
 | `reset` | Reset CPU |
 | `help` | Show command summary |
 | `quit` / `exit` | Exit the simulator |
@@ -343,7 +372,7 @@ TRAPs simulate Kernal/ROM routines without requiring the actual ROM to be loaded
 
 ## MCP Server
 
-`plugin-gemini/server.js` is a Node.js MCP server that exposes the simulator to LLMs, allowing AI assistants to write, debug, and execute 6502 assembly code directly.
+`mcp-server/server.js` is a Node.js MCP server that exposes the simulator to LLMs, allowing AI assistants to write, debug, and execute 6502 assembly code directly.
 
 ### MCP Tools
 
@@ -352,6 +381,7 @@ TRAPs simulate Kernal/ROM routines without requiring the actual ROM to be loaded
 | `load_program` | Assemble and load 6502 source code |
 | `step_instruction` | Execute N instructions |
 | `run_program` | Run until breakpoint / BRK / STP |
+| `trace_run` | Execute N instructions and return a compact per-instruction log (address, disassembly, register state after each step) |
 | `read_registers` | Return current CPU register state |
 | `read_memory` | Read a range of memory bytes |
 | `write_memory` | Write a byte to memory |
@@ -366,6 +396,11 @@ TRAPs simulate Kernal/ROM routines without requiring the actual ROM to be loaded
 | `disassemble` | Disassemble memory at an address |
 | `step_back` | Step back one instruction using execution history |
 | `step_forward` | Step forward in history |
+| `validate_routine` | Run an array of register test-vectors against a subroutine; returns pass/fail per test |
+| `snapshot` | Capture a memory baseline; subsequent execution tracks all writes |
+| `diff_snapshot` | Show every address that changed since the last snapshot, with before/after values and writer PC |
+| `list_patterns` | List all built-in assembly snippet templates grouped by category and processor |
+| `get_pattern` | Return a fully documented, parameterised snippet by name (e.g. `mul8_mega65`, `memcopy`) |
 | `speed` | Get or set run-speed throttle (`1.0` = C64) |
 | `vic2_info` | Print VIC-II state summary (mode, key addresses, colours) |
 | `vic2_regs` | Full register dump: D011–D01A decoded, raster line, interrupt flags, bank, all video addresses, all colour registers |
@@ -377,18 +412,20 @@ TRAPs simulate Kernal/ROM routines without requiring the actual ROM to be loaded
 
 ## File Structure
 
-- `src/core/`: The simulator engine (CPU, memory, assembler, disassembler).
+- `src/core/`: The simulator engine (CPU, memory, assembler, disassembler, patterns).
 - `src/cli/`: Command-line interface and interactive monitor.
 - `src/gui/`: Dear ImGui-based graphical debugger.
-- `plugin-gemini/`: MCP server for LLM integration.
-- `tests/`: Regression test suite.
+- `mcp-server/`: MCP server for LLM integration.
+- `tests/`: Regression test suite (`make test` runs both `run_tests.py` and `test_patterns.py`).
+- `tools/`: Test scripts (`run_tests.py`, `test_patterns.py`).
 - `examples/`: Sample assembly programs.
+- `symbols/`: Pre-built symbol tables (c64, c128, mega65, x16).
 
 ---
 
 ## Known Limitations
 
-- **Assembler**: Simple syntax with no macro support (yet), no complex expressions, and no local labels.
+- **Assembler**: No macro support yet. Complex expressions in operands are not supported beyond single values and symbol references.
 - **Label Resolution**: Only the low byte of a label address is emitted by the `.byte label` pseudo-op.
 - **Cycle Counts**: While provided, counts may not be 100% cycle-accurate for all addressing modes and page-crossing penalties in all variants.
 - **Memory Allocation**: The 64 KB `memory_t` virtual space is stack-allocated; deep call stacks in the simulator itself may cause issues on resource-constrained platforms.
@@ -400,4 +437,4 @@ TRAPs simulate Kernal/ROM routines without requiring the actual ROM to be loaded
 
 Proprietary — see `LICENSE`. Will move to open source at a future date.
 
-**Last Updated**: 2026-03-07
+**Last Updated**: 2026-03-08
