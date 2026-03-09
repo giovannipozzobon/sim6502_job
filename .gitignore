@@ -1,3 +1,13 @@
+*.swp
+*.*~
+tags
+TAGS
+*/node_modules/
+*package-lock.json
+*.a
+*.ini
+*.o
+src/gui/imgui
 gui/main.o
 src/opcodes_45gs02.o
 src/opcodes_65c02.o
