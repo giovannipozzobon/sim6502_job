@@ -16,7 +16,21 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const SIMULATOR_PATH = path.resolve(__dirname, '..', 'sim6502');
-const TEMP_ASM_FILE  = path.join(os.tmpdir(), '6502_mcp_prog.asm');
+
+// Create a unique temporary directory for this session to avoid collisions
+const sessionTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), '6502-mcp-'));
+const TEMP_ASM_FILE = path.join(sessionTmpDir, 'prog.asm');
+
+// Ensure cleanup on exit
+process.on('exit', () => {
+  try {
+    if (fs.existsSync(sessionTmpDir)) {
+      fs.rmSync(sessionTmpDir, { recursive: true, force: true });
+    }
+  } catch (err) {
+    // Silent fail on cleanup
+  }
+});
 
 let simulatorProcess = null;
 let simulatorBuffer  = '';
@@ -69,9 +83,14 @@ function startSimulator(asmCode) {
 function sendCommand(cmd) {
   if (!simulatorProcess)
     throw new Error("Simulator not running. Use load_program first.");
+
+  // Sanitize: No newlines allowed in a single command, and trim whitespace
+  const sanitized = cmd.replace(/[\n\r]/g, ' ').trim();
+  if (sanitized.length === 0) return Promise.resolve("");
+
   return new Promise((resolve) => {
     simulatorResolve = resolve;
-    simulatorProcess.stdin.write(cmd + '\n');
+    simulatorProcess.stdin.write(sanitized + '\n');
   });
 }
 
@@ -703,14 +722,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "vic2_savescreen": {
-        const filePath = (args.path && args.path.trim()) || '/tmp/vic2screen.ppm';
+        const filePath = (args.path && args.path.trim()) || path.join(os.tmpdir(), 'vic2screen.ppm');
         const raw = await sendCommand(`vic2.savescreen ${filePath}`);
         const d   = parseResult(raw);
         return text(`Saved ${d.width}×${d.height} PPM to '${d.path}'`);
       }
 
       case "vic2_savebitmap": {
-        const filePath = (args.path && args.path.trim()) || '/tmp/vic2bitmap.ppm';
+        const filePath = (args.path && args.path.trim()) || path.join(os.tmpdir(), 'vic2bitmap.ppm');
         const raw = await sendCommand(`vic2.savebitmap ${filePath}`);
         const d   = parseResult(raw);
         return text(`Saved ${d.width}×${d.height} active-area PPM to '${d.path}'`);
