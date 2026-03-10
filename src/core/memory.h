@@ -62,11 +62,78 @@ static inline void mem_math_update(memory_t *mem, unsigned short addr) {
 	}
 }
 
+#include <stdio.h>
+
+/* Physical (raw) byte write — no MAP translation. */
+static inline void mem_write_phys(memory_t *mem, unsigned int phys, unsigned char val);
+
+/* MEGA65 Enhanced DMA execution.
+ * Triggered by writing to $D705 (ETRIG).
+ * Address is constructed from $D701 (bits 8-15), $D702 (bits 16-23), $D704 (bits 24-27).
+ * Currently supports a subset of the F018B (12-byte) enhanced DMA format.
+ */
+/* MEGA65 Enhanced DMA execution.
+ * Triggered by writing to $D705 (ETRIG).
+ * Address is constructed from $D701 (bits 8-15), $D702 (bits 16-23), $D704 (bits 24-27).
+ * Currently supports a subset of the F018B (12-byte) enhanced DMA format.
+ */
+static inline void mem_dma_execute(memory_t *mem, unsigned char val) {
+	unsigned int job_addr = val | (mem->mem[0xD701] << 8) | (mem->mem[0xD702] << 16) | ((mem->mem[0xD704] & 0x0F) << 24);
+	
+	/* Skip option tokens until $00 terminator */
+	unsigned int ptr = job_addr;
+	unsigned char token = mem_read_phys(mem, ptr++);
+	if (token == 0x0B) {
+		/* Enhanced DMA: options followed by $00 */
+		unsigned int src_mb = 0;
+		unsigned int dst_mb = 0;
+		
+		token = mem_read_phys(mem, ptr++);
+		while (token != 0x00 && ptr - job_addr < 256) {
+			if (token == 0x80) { /* Source MB */
+				src_mb = mem_read_phys(mem, ptr++);
+			} else if (token == 0x81) { /* Destination MB */
+				dst_mb = mem_read_phys(mem, ptr++);
+			} else if (token & 0x80) {
+				/* Other options with 1-byte argument */
+				ptr++;
+			}
+			token = mem_read_phys(mem, ptr++);
+		}
+		
+		/* Now pointing at the 12-byte job record */
+		unsigned char cmd = mem_read_phys(mem, ptr);
+		unsigned int count = mem_read_phys(mem, ptr + 1) | (mem_read_phys(mem, ptr + 2) << 8);
+		if (count == 0) count = 65536;
+		
+		unsigned int src = mem_read_phys(mem, ptr + 3) | (mem_read_phys(mem, ptr + 4) << 8) | ((mem_read_phys(mem, ptr + 5) & 0x0F) << 16) | (src_mb << 20);
+		unsigned int dst = mem_read_phys(mem, ptr + 6) | (mem_read_phys(mem, ptr + 7) << 8) | ((mem_read_phys(mem, ptr + 8) & 0x0F) << 16) | (dst_mb << 20);
+		
+		if ((cmd & 0x03) == 0x00) { /* COPY */
+			for (unsigned int i = 0; i < count; i++) {
+				unsigned char b = mem_read_phys(mem, src + i);
+				mem_write_phys(mem, dst + i, b);
+			}
+		} else if ((cmd & 0x03) == 0x03) { /* FILL */
+			unsigned char fill_val = mem_read_phys(mem, ptr + 3); /* src_lo is fill value in FILL mode */
+			for (unsigned int i = 0; i < count; i++) {
+				mem_write_phys(mem, dst + i, fill_val);
+			}
+		}
+	}
+}
+
 /* Physical (raw) byte write — no MAP translation. */
 static inline void mem_write_phys(memory_t *mem, unsigned int phys, unsigned char val) {
 	if (phys < 0x10000) {
 		mem->mem[phys] = val;
+		if (phys == 0xD702) {
+			mem->mem[0xD704] = 0; /* Reset megabyte when bank is written for compatibility */
+		}
 		mem_math_update(mem, (unsigned short)phys);
+		if (phys == 0xD705) {
+			mem_dma_execute(mem, val);
+		}
 		return;
 	}
 	unsigned int page = phys >> FAR_PAGE_SHIFT;
@@ -101,8 +168,7 @@ static inline void mem_write(memory_t *mem, unsigned short addr, unsigned char v
 		unsigned int phys = ((unsigned int)addr + mem->map_offset[block]) & 0xFFFFF;
 		mem_write_phys(mem, phys, val);
 	} else {
-		mem->mem[addr] = val;
-		mem_math_update(mem, addr);
+		mem_write_phys(mem, addr, val);
 	}
 }
 
