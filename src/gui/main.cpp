@@ -4211,14 +4211,48 @@ static void draw_pane_memory(int idx)
 
     /* Navigation bar — use per-instance unique widget IDs via ##idx suffix */
     char addr_id[16]; snprintf(addr_id, sizeof(addr_id), "##ma%d", idx);
-    ImGui::SetNextItemWidth(60);
+    ImGui::SetNextItemWidth(64);
     if (ImGui::InputText(addr_id, mv.addr_buf, sizeof(mv.addr_buf),
             ImGuiInputTextFlags_CharsHexadecimal |
             ImGuiInputTextFlags_EnterReturnsTrue)) {
         mv.base = (uint16_t)strtol(mv.addr_buf, NULL, 16);
     }
-    char pc_id[16]; snprintf(pc_id, sizeof(pc_id), "PC##pc%d", idx);
+
+    /* Range step buttons (256 and 4096 byte increments) */
+    auto step_base = [&](int delta, const char* label, const char* tip) {
+        ImGui::SameLine();
+        char btn_id[16]; snprintf(btn_id, sizeof(btn_id), "%s##%s%d", label, label, idx);
+        if (ImGui::SmallButton(btn_id)) {
+            mv.base = (uint16_t)(mv.base + delta);
+            snprintf(mv.addr_buf, sizeof(mv.addr_buf), "%04X", (unsigned)mv.base);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s (%+d bytes)", tip, delta);
+    };
+    step_base(-4096, "<<", "Back 4KB");
+    step_base(-256,  "<",  "Back 256B");
+    step_base(256,   ">",  "Forward 256B");
+    step_base(4096,  ">>", "Forward 4KB");
+
+    /* Preset range buttons */
     ImGui::SameLine();
+    ImGui::TextDisabled(" | ");
+    ImGui::SameLine();
+
+    auto set_addr = [&](uint16_t addr, const char* label, const char* tip) {
+        char btn_id[32]; snprintf(btn_id, sizeof(btn_id), "%s##%s%d", label, label, idx);
+        if (ImGui::SmallButton(btn_id)) {
+            mv.base = addr;
+            snprintf(mv.addr_buf, sizeof(mv.addr_buf), "%04X", (unsigned)mv.base);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s ($%04X)", tip, addr);
+        ImGui::SameLine();
+    };
+
+    set_addr(0x0000, "Zp", "Zero Page");
+    set_addr(0x0100, "Sp", "Stack Page ($0100)");
+    
+    /* PC Button: Dynamic to current state */
+    char pc_id[16]; snprintf(pc_id, sizeof(pc_id), "PC##pc%d", idx);
     if (ImGui::SmallButton(pc_id)) {
         cpu_t *cpu = sim_get_cpu(g_sim);
         if (cpu) {
@@ -4226,15 +4260,18 @@ static void draw_pane_memory(int idx)
             snprintf(mv.addr_buf, sizeof(mv.addr_buf), "%04X", (unsigned)mv.base);
         }
     }
-    char sp_id[16]; snprintf(sp_id, sizeof(sp_id), "SP##sp%d", idx);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Follow Current PC");
     ImGui::SameLine();
-    if (ImGui::SmallButton(sp_id)) {
-        cpu_t *cpu = sim_get_cpu(g_sim);
-        if (cpu) {
-            mv.base = (uint16_t)(0x0100 | (cpu->s & 0xFF));
-            snprintf(mv.addr_buf, sizeof(mv.addr_buf), "%04X", (unsigned)mv.base);
-        }
-    }
+
+    /* Program Start Button: Based on last load info */
+    uint16_t laddr = 0, lsize = 0;
+    sim_get_load_info(g_sim, &laddr, &lsize);
+    set_addr(laddr, "Prog", "Program Start Address");
+
+    set_addr(0x0400, "Scrn", "Screen RAM ($0400)");
+    set_addr(0xD000, "Vic",  "VIC Registers ($D000)");
+    
+    ImGui::NewLine();
     ImGui::Separator();
 
     /* Is this address in the last-write log? */
