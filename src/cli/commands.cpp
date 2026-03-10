@@ -710,7 +710,7 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
         } else if (cmd == "write") {
             const char *p = line.c_str(); SKIP_CMD(p); unsigned long addr, val;
             if (parse_mon_value(&p, &addr) && parse_mon_value(&p, &val)) {
-                mem->mem[addr & 0xFFFF] = (unsigned char)(val & 0xFF);
+                mem_write(mem, (unsigned short)addr, (unsigned char)val);
                 if (g_json_mode) printf("{\"cmd\":\"write\",\"ok\":true,\"data\":{\"address\":%lu,\"value\":%lu}}\n",
                                         addr & 0xFFFF, val & 0xFF);
                 else printf("OK\n");
@@ -914,13 +914,13 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
                            addr & 0xFFFF, len);
                     for (unsigned long i = 0; i < len; i++) {
                         if (i > 0) printf(",");
-                        printf("%d", mem->mem[(addr + i) & 0xFFFF]);
+                        printf("%d", mem_read(mem, (unsigned short)(addr + i)));
                     }
                     printf("]}}\n");
                 } else {
                     for (unsigned long i = 0; i < len; i++) {
                         if (i % 16 == 0) printf("\n%04lX: ", addr + i);
-                        printf("%02X ", mem->mem[addr + i]);
+                        printf("%02X ", mem_read(mem, (unsigned short)(addr + i)));
                     }
                     printf("\n");
                 }

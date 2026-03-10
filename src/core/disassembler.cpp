@@ -5,7 +5,7 @@
 
 void dispatch_build(dispatch_table_t *dt,
 		const opcode_handler_t *handlers, int n, cpu_type_t cpu_type) {
-	memset(dt, 0, sizeof(*dt));
+	fprintf(stderr, "[DEBUG] Building dispatch table for CPU type %d with %d handlers\n", (int)cpu_type, n);
 	for (int i = 0; i < n; i++) {
 		unsigned char olen = handlers[i].opcode_len;
 		if (olen == 0) continue;
@@ -14,6 +14,7 @@ void dispatch_build(dispatch_table_t *dt,
 		case CPU_65C02:  cyc = handlers[i].cycles_65c02  ? handlers[i].cycles_65c02  : handlers[i].cycles_6502; break;
 		case CPU_65CE02: cyc = handlers[i].cycles_65ce02 ? handlers[i].cycles_65ce02 : handlers[i].cycles_6502; break;
 		case CPU_45GS02: cyc = handlers[i].cycles_45gs02 ? handlers[i].cycles_45gs02 : handlers[i].cycles_6502; break;
+		case CPU_6502_UNDOCUMENTED: cyc = handlers[i].cycles_6502; break;
 		default:         cyc = handlers[i].cycles_6502; break;
 		}
 		dispatch_entry_t *slot = NULL;
@@ -70,8 +71,9 @@ int disasm_one(const memory_t *mem, const dispatch_table_t *dt,
             if (b2 == 0xEA) {
                 unsigned char b3 = mem->mem[(unsigned short)(addr + 3)];
                 if (dt->quad_eom[b3].fn) { e = &dt->quad_eom[b3]; prefix_len = 3; }
+            } else {
+                if (dt->quad[b2].fn) { e = &dt->quad[b2]; prefix_len = 2; }
             }
-            if (!e && dt->quad[b2].fn) { e = &dt->quad[b2]; prefix_len = 2; }
         }
     }
     if (!e) {
@@ -144,8 +146,9 @@ int disasm_one_entry(const memory_t *mem, const dispatch_table_t *dt,
             if (b2 == 0xEA) {
                 unsigned char b3 = mem->mem[(unsigned short)(addr + 3)];
                 if (dt->quad_eom[b3].fn) { e = &dt->quad_eom[b3]; prefix_len = 3; }
+            } else {
+                if (dt->quad[b2].fn) { e = &dt->quad[b2]; prefix_len = 2; }
             }
-            if (!e && dt->quad[b2].fn) { e = &dt->quad[b2]; prefix_len = 2; }
         }
     }
     if (!e) {

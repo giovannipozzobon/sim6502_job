@@ -13,6 +13,8 @@ CORE_SRCS = \
 	src/core/disassembler.cpp \
 	src/core/condition.cpp \
 	src/core/vic2.cpp \
+	src/core/vic2_io.cpp \
+	src/core/mega65_io.cpp \
 	src/core/patterns.cpp \
 	src/core/project_manager.cpp
 

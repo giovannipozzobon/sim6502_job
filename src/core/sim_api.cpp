@@ -10,6 +10,7 @@
 #include "disassembler.h"
 #include "cpu_engine.h"
 #include "cpu_6502.h"
+#include "mega65_io.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -160,6 +161,7 @@ sim_session_t *sim_create(const char *processor) {
     s->cpu = CPUFactory::create(s->cpu_type);
     s->cpu->mem = &s->mem;
     memset(&s->mem, 0, sizeof(s->mem));
+    if (s->cpu_type == CPU_45GS02) mega65_io_register(&s->mem);
     symbol_table_init(&s->symbols, "Session");
     breakpoint_init(&s->breakpoints);
     s->state = SIM_IDLE;
@@ -191,6 +193,7 @@ int sim_load_asm(sim_session_t *s, const char *path) {
     FILE *f = fopen(path, "r");
     if (!f) return -1;
     memset(&s->mem, 0, sizeof(s->mem));
+    if (s->cpu_type == CPU_45GS02) mega65_io_register(&s->mem);
     memset(s->session_rom, 0, sizeof(s->session_rom));
     symbol_table_init(&s->symbols, "Session");
     breakpoint_init(&s->breakpoints);
@@ -284,6 +287,7 @@ int sim_load_bin(sim_session_t *s, const char *path, uint16_t load_addr)
     FILE *f = fopen(path, "rb");
     if (!f) return -1;
     memset(&s->mem, 0, sizeof(s->mem));
+    if (s->cpu_type == CPU_45GS02) mega65_io_register(&s->mem);
     memset(s->session_rom, 0, sizeof(s->session_rom));
     symbol_table_init(&s->symbols, "Session");
     breakpoint_init(&s->breakpoints);
@@ -312,6 +316,7 @@ int sim_load_prg(sim_session_t *s, const char *path, uint16_t override_addr)
         ? override_addr
         : (uint16_t)((unsigned)lo | ((unsigned)hi << 8));
     memset(&s->mem, 0, sizeof(s->mem));
+    if (s->cpu_type == CPU_45GS02) mega65_io_register(&s->mem);
     memset(s->session_rom, 0, sizeof(s->session_rom));
     symbol_table_init(&s->symbols, "Session");
     breakpoint_init(&s->breakpoints);

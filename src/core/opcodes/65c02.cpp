@@ -399,9 +399,17 @@ void brl(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->pc += 3 + offset;
 }
 
+void jmp_ind_65c02(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	unsigned short lo = mem_read(mem, arg);
+	unsigned short hi = mem_read(mem, (unsigned short)(arg + 1));
+	cpu->cycles += 6;
+	cpu->pc = lo | (hi << 8);
+}
+
 void jmp_ind_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, (arg + cpu->x) & 0xFF) |
 		(mem_read(mem, (arg + cpu->x + 1) & 0xFF) << 8);
+	cpu->cycles += 6;
 	cpu->pc = addr;
 }
 
@@ -506,8 +514,15 @@ extern void op_brk(cpu_t *cpu, memory_t *mem, unsigned short arg);
 extern void op_rti(cpu_t *cpu, memory_t *mem, unsigned short arg);
 extern void op_nop(cpu_t *cpu, memory_t *mem, unsigned short arg);
 
+void lda_imm_65c02(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+	cpu->a = arg & 0xFF;
+	update_nz(cpu, cpu->a);
+	cpu->cycles += 2;
+	cpu->pc += 2;
+}
+
 opcode_handler_t opcodes_65c02[] = {
-	{"LDA", MODE_IMMEDIATE, lda_imm, 2, 0, 0, 0, {0xA9}, 1},
+	{"LDA", MODE_IMMEDIATE, lda_imm_65c02, 2, 0, 0, 0, {0xA9}, 1},
 	{"LDA", MODE_ABSOLUTE, lda_abs, 4, 0, 0, 0, {0xAD}, 1},
 	{"LDA", MODE_ABSOLUTE_X, lda_abs_x, 4, 0, 0, 0, {0xBD}, 1},
 	{"LDA", MODE_ABSOLUTE_Y, lda_abs_y, 4, 0, 0, 0, {0xB9}, 1},
@@ -622,6 +637,7 @@ opcode_handler_t opcodes_65c02[] = {
 	{"BRA", MODE_RELATIVE, bra_rel, 3, 0, 0, 0, {0x80}, 1},
 	{"BRL", MODE_RELATIVE, brl, 4, 0, 0, 0, {0x82}, 1},
 	{"JMP", MODE_ABSOLUTE, jmp_abs, 3, 0, 0, 0, {0x4C}, 1},
+	{"JMP", MODE_INDIRECT, jmp_ind_65c02, 6, 0, 0, 0, {0x6C}, 1},
 	{"JMP", MODE_INDIRECT_X, jmp_ind_x, 6, 0, 0, 0, {0x7C}, 1},
 	{"JSR", MODE_ABSOLUTE, jsr_abs, 6, 0, 0, 0, {0x20}, 1},
 	{"RTS", MODE_IMPLIED, rts, 6, 0, 0, 0, {0x60}, 1},

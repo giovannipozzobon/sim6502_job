@@ -23,6 +23,8 @@ typedef enum {
 #define FLAG_V 0x40
 #define FLAG_N 0x80
 
+class IOHandler;
+
 struct memory_t {
 	unsigned char mem[0x10000];
 	int mem_writes;
@@ -31,6 +33,7 @@ struct memory_t {
 	unsigned char mem_old_val[256]; /* value BEFORE write */
 	unsigned char *far_pages[FAR_NUM_PAGES];	/* sparse 28-bit page table */
 	unsigned int map_offset[8];		/* MAP: per-8KB-block physical offset added to virtual addr; 0 = passthrough */
+	IOHandler *io_handlers[0x10000];
 };
 
 typedef struct memory_t memory_t;

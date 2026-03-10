@@ -4,12 +4,17 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include "cpu.h"
+#include "io_handler.h"
 
 /* Physical (raw) byte read — no MAP translation.
  * Used for far/flat 28-bit access and internally after MAP address translation. */
 static inline unsigned char mem_read_phys(memory_t *mem, unsigned int phys) {
-	if (phys < 0x10000)
+	if (phys < 0x10000) {
+		uint8_t val;
+		if (mem->io_handlers[phys] && mem->io_handlers[phys]->io_read(mem, (uint16_t)phys, &val))
+			return val;
 		return mem->mem[phys];
+	}
 	unsigned int page = phys >> FAR_PAGE_SHIFT;
 	unsigned int off  = phys & (FAR_PAGE_SIZE - 1);
 	if (!mem->far_pages[page])
@@ -17,36 +22,11 @@ static inline unsigned char mem_read_phys(memory_t *mem, unsigned int phys) {
 	return mem->far_pages[page][off];
 }
 
-/* MEGA65 math coprocessor — recompute results whenever an input register is
- * written.  Registers are combinatorial on real hardware; we mirror that here.
- */
-static inline void mem_math_update(memory_t *mem, unsigned short addr) {
-	if (addr >= 0xD770 && addr <= 0xD773) {
-		unsigned int a = mem->mem[0xD770] | ((unsigned int)mem->mem[0xD771] << 8);
-		unsigned int b = mem->mem[0xD772] | ((unsigned int)mem->mem[0xD773] << 8);
-		unsigned long long p = (unsigned long long)a * b;
-		mem->mem[0xD778] = (unsigned char)(p);
-		mem->mem[0xD779] = (unsigned char)(p >> 8);
-		mem->mem[0xD77A] = (unsigned char)(p >> 16);
-		mem->mem[0xD77B] = (unsigned char)(p >> 24);
-	} else if (addr >= 0xD768 && addr <= 0xD76B) {
-		unsigned int a = mem->mem[0xD768] | ((unsigned int)mem->mem[0xD769] << 8);
-		unsigned int b = mem->mem[0xD76A] | ((unsigned int)mem->mem[0xD76B] << 8);
-		unsigned int q = 0, r = 0;
-		if (b) { q = a / b; r = a % b; }
-		mem->mem[0xD778] = (unsigned char)(q);
-		mem->mem[0xD779] = (unsigned char)(q >> 8);
-		mem->mem[0xD77A] = (unsigned char)(r);
-		mem->mem[0xD77B] = (unsigned char)(r >> 8);
-	}
-}
-
-/* Forward declaration for DMA */
-static inline void mem_write_phys(memory_t *mem, unsigned int phys, unsigned char val);
-
 /* MEGA65 DMA execution */
 #define DMA_MODE_LEGACY   0
 #define DMA_MODE_ENHANCED 1
+
+static inline void mem_write_phys(memory_t *mem, unsigned int phys, unsigned char val);
 
 static inline void mem_dma_execute(memory_t *mem, unsigned char val, int mode) {
 	unsigned int job_addr = val | (mem->mem[0xD701] << 8) | (mem->mem[0xD702] << 16) | ((mem->mem[0xD704] & 0x0F) << 24);
@@ -85,11 +65,9 @@ static inline void mem_dma_execute(memory_t *mem, unsigned char val, int mode) {
 
 static inline void mem_write_phys(memory_t *mem, unsigned int phys, unsigned char val) {
 	if (phys < 0x10000) {
+		if (mem->io_handlers[phys] && mem->io_handlers[phys]->io_write(mem, (uint16_t)phys, val))
+			return;
 		mem->mem[phys] = val;
-		if (phys == 0xD702) mem->mem[0xD704] = 0;
-		mem_math_update(mem, (unsigned short)phys);
-		if (phys == 0xD705) mem_dma_execute(mem, val, DMA_MODE_ENHANCED);
-		else if (phys == 0xD700) mem_dma_execute(mem, val, DMA_MODE_LEGACY);
 		return;
 	}
 	unsigned int page = phys >> FAR_PAGE_SHIFT;
@@ -104,6 +82,9 @@ static inline unsigned char mem_read(memory_t *mem, unsigned short addr) {
 		unsigned int phys = ((unsigned int)addr + mem->map_offset[block]) & 0xFFFFF;
 		return mem_read_phys(mem, phys);
 	}
+	uint8_t val;
+	if (mem->io_handlers[addr] && mem->io_handlers[addr]->io_read(mem, addr, &val))
+		return val;
 	return mem->mem[addr];
 }
 
@@ -119,6 +100,8 @@ static inline void mem_write(memory_t *mem, unsigned short addr, unsigned char v
 		unsigned int phys = ((unsigned int)addr + mem->map_offset[block]) & 0xFFFFF;
 		mem_write_phys(mem, phys, val);
 	} else {
+		if (mem->io_handlers[addr] && mem->io_handlers[addr]->io_write(mem, addr, val))
+			return;
 		mem_write_phys(mem, addr, val);
 	}
 }
