@@ -167,6 +167,111 @@ TESTS = [
      "LDA #$42\n    PHA",             # save sentinel in A via stack
      "PLA",                            # restore A = $42
      "A=42", []),
+
+    # ── bitmap_init ────────────────────────────────────────────────────────────
+    ("bitmap_init", "initialize bitmap mode and screen RAM",
+     "",
+     "LDA $D011\n    LDX $D016\n    LDY $0400",
+     "A=3B X=C8 Y=10", []),
+
+    # ── bitmap_plot ────────────────────────────────────────────────────────────
+    ("bitmap_plot", "plot pixel (0,0) - set",
+     "LDA #0\n    STA $14\n"         # PX=0
+     "LDA #0\n    STA $15\n"         # PY=0
+     "LDA #1\n    STA $19\n"         # PLOT_OP=1 (set)
+     "LDA #0\n    STA $2000",        # clear target byte
+     "LDA $2000",                    # should be $80
+     "A=80", []),
+
+    # ── bitmap_setcell ─────────────────────────────────────────────────────────
+    ("bitmap_setcell", "set cell (0,0) to color $10",
+     "LDA #0\n    STA $10\n"         # CELL_X=0
+     "LDA #0\n    STA $11\n"         # CELL_Y=0
+     "LDA #1\n    STA $12\n"         # FG_COL=1
+     "LDA #0\n    STA $13",          # BG_COL=0
+     "LDA $0400",                    # should be $10
+     "A=10", []),
+
+    # ── bitmap_clear ───────────────────────────────────────────────────────────
+    ("bitmap_clear", "clear bitmap (software)",
+     "LDA #$FF\n    STA $2000\n"
+     "STA $3F3F",
+     "LDA $2000\n    LDX $3F3F",
+     "A=00 X=00", []),
+
+    # ── bitmap_clear_mega65 ────────────────────────────────────────────────────
+    ("bitmap_clear_mega65", "clear bitmap (DMA)",
+     "LDA #$FF\n    STA $2000\n"
+     "STA $3F3F",
+     "LDA $2000\n    LDX $3F3F",
+     "A=00 X=00", ["-p", "45gs02"]),
+
+    # ── dma_copy ───────────────────────────────────────────────────────────────
+    ("dma_copy", "copy 4 bytes via DMA",
+     "LDA #$AA\n    STA $0300\n"
+     "LDA #$BB\n    STA $0301\n"
+     "LDA #$CC\n    STA $0302\n"
+     "LDA #$DD\n    STA $0303\n"
+     "LDA #$00\n    STA $10\n"        # SRC_LO
+     "LDA #$03\n    STA $11\n"        # SRC_HI
+     "LDA #$00\n    STA $12\n"        # DST_LO
+     "LDA #$04\n    STA $13\n"        # DST_HI
+     "LDA #$04\n    STA $14\n"        # CNT_LO
+     "LDA #$00\n    STA $15",         # CNT_HI
+     "LDA $0400\n    LDX $0401",
+     "A=AA X=BB", ["-p", "45gs02"]),
+
+    # ── dma_fill ───────────────────────────────────────────────────────────────
+    ("dma_fill", "fill 4 bytes via DMA",
+     "LDA #$55\n    STA $10\n"        # VALUE
+     "LDA #$00\n    STA $11\n"        # DST_LO
+     "LDA #$03\n    STA $12\n"        # DST_HI
+     "LDA #$04\n    STA $13\n"        # CNT_LO
+     "LDA #$00\n    STA $14",         # CNT_HI
+     "LDA $0300\n    LDX $0301",
+     "A=55 X=55", ["-p", "45gs02"]),
+
+    # ── sprite_init ────────────────────────────────────────────────────────────
+    ("sprite_init", "initialize sprite 0",
+     "LDA #0\n    STA $10\n"         # SPRITE_NUM=0
+     "LDA #100\n  STA $11\n"         # SPR_X_LO=100
+     "LDA #0\n    STA $12\n"         # SPR_X_HI=0
+     "LDA #50\n   STA $13\n"         # SPR_Y=50
+     "LDA #1\n    STA $14\n"         # SPR_COLOR=1
+     "LDA #$80\n  STA $15",          # SPR_PTR=$80
+     "LDA $D000\n    LDX $D001\n    LDY $D015",
+     "A=64 X=32 Y=01", []),
+
+    # ── sprite_move ────────────────────────────────────────────────────────────
+    ("sprite_move", "move sprite 0 to (200, 150)",
+     "LDA #0\n    STA $10\n"         # SPRITE_NUM=0
+     "LDA #200\n  STA $11\n"         # SPR_X_LO=200
+     "LDA #0\n    STA $12\n"         # SPR_X_HI=0
+     "LDA #150\n  STA $13",          # SPR_Y=150
+     "LDA $D000\n    LDX $D001",
+     "A=C8 X=96", []),
+
+    # ── sprite_setcolor ────────────────────────────────────────────────────────
+    ("sprite_setcolor", "set sprite 0 color to 7",
+     "LDA #0\n    STA $10\n"         # SPRITE_NUM=0
+     "LDA #7\n    STA $11",          # SPR_COLOR=7
+     "LDA $D027",
+     "A=07", []),
+
+    # ── sprite_mc_init ─────────────────────────────────────────────────────────
+    ("sprite_mc_init", "enable multicolor for sprite 0",
+     "LDA #0\n    STA $10\n"         # SPRITE_NUM=0
+     "LDA #1\n    STA $11\n"         # SPR_COLOR=1
+     "LDA #2\n    STA $12\n"         # MC_COLOR0=2
+     "LDA #3\n    STA $13",          # MC_COLOR1=3
+     "LDA $D01C\n    LDX $D025\n    LDY $D026",
+     "A=01 X=02 Y=03", []),
+
+    # ── sprite_mega65_16col ────────────────────────────────────────────────────
+    ("sprite_mega65_16col", "enable 16-color mode for sprite 0",
+     "LDA #0\n    STA $10",          # SPRITE_NUM=0
+     "LDA $D04B",
+     "A=01", ["-p", "45gs02"]),
 ]
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
