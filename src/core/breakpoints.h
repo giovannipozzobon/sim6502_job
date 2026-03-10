@@ -9,6 +9,12 @@
 #define MAX_BREAKPOINTS 16
 
 typedef struct {
+	unsigned short address;
+	int enabled;
+	char condition[128];
+} breakpoint_t;
+
+typedef struct {
 	breakpoint_t breakpoints[MAX_BREAKPOINTS];
 	int count;
 } breakpoint_list_t;

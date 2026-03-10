@@ -37,12 +37,10 @@
 #include "imgui_impl_opengl3.h"
 #include "imgui_filedlg.h"
 
-extern "C" {
 #include "cpu.h"
 #include "sim_api.h"
 #include "vic2.h"
 #include "patterns.h"
-}
 
 /* --------------------------------------------------------------------------
  * Core globals
@@ -2750,7 +2748,7 @@ static int      g_tr_row_count   = 0;
 static char     g_tr_summary[64] = "";
 
 /* C++ wrapper for parse_mon_value since it takes const char ** */
-extern "C" int parse_mon_value(const char **, unsigned long *);
+int parse_mon_value(const char **, unsigned long *);
 static int parse_mon_value_cpp(const char *s, unsigned long *out) {
     const char *p = s;
     return parse_mon_value(&p, out);

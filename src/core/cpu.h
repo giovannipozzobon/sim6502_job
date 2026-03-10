@@ -9,24 +9,9 @@ typedef enum {
 	CPU_45GS02
 } cpu_type_t;
 
-typedef struct {
-	unsigned short address;
-	int enabled;
-	char condition[128];
-} breakpoint_t;
-
-typedef struct {
-	unsigned char a;
-	unsigned char x;
-	unsigned char y;
-	unsigned char z;      /* 45GS02 only */
-	unsigned char b;      /* 45GS02 only */
-	unsigned short s;     /* 16-bit on 45GS02; 8-bit (page 1) on others */
-	unsigned short pc;
-	unsigned char p;
-	unsigned long cycles;  /* Clock cycles executed */
-	unsigned char eom_prefix; /* 45GS02: 1=EOM seen, 2=active flat sentinel */
-} cpu_t;
+#define FAR_PAGE_SHIFT  12
+#define FAR_PAGE_SIZE   (1 << FAR_PAGE_SHIFT)		/* 4096 bytes per page */
+#define FAR_NUM_PAGES   (0x10000000 >> FAR_PAGE_SHIFT)	/* 65536 pages for 28-bit space */
 
 #define FLAG_C 0x01
 #define FLAG_Z 0x02
@@ -37,6 +22,114 @@ typedef struct {
 #define FLAG_E 0x20  /* Emulation flag — same bit, 65CE02/45GS02 context */
 #define FLAG_V 0x40
 #define FLAG_N 0x80
+
+struct memory_t {
+	unsigned char mem[0x10000];
+	int mem_writes;
+	unsigned short mem_addr[256];
+	unsigned char mem_val[256];     /* value AFTER write  */
+	unsigned char mem_old_val[256]; /* value BEFORE write */
+	unsigned char *far_pages[FAR_NUM_PAGES];	/* sparse 28-bit page table */
+	unsigned int map_offset[8];		/* MAP: per-8KB-block physical offset added to virtual addr; 0 = passthrough */
+};
+
+typedef struct memory_t memory_t;
+
+/* CPUState: Non-abstract POD-like state for snapshots/history */
+class CPUState {
+public:
+	unsigned char a;
+	unsigned char x;
+	unsigned char y;
+	unsigned char z;      /* 45GS02 only */
+	unsigned char b;      /* 45GS02 only */
+	unsigned short s;     /* 16-bit on 45GS02; 8-bit (page 1) on others */
+	unsigned short pc;
+	unsigned char p;
+	unsigned long cycles;  /* Clock cycles executed */
+	unsigned char eom_prefix; /* 45GS02: 1=EOM seen, 2=active flat sentinel */
+	memory_t *mem;
+
+	CPUState() : mem(nullptr) { reset(); }
+	virtual ~CPUState() {}
+
+	virtual void reset() {
+		a = 0; x = 0; y = 0; z = 0; b = 0;
+		s = 0xFF; pc = 0; p = 0;
+		cycles = 0; eom_prefix = 0;
+	}
+
+	void set_flag(unsigned char flag, int set) {
+		if (set) p |= flag;
+		else     p &= ~flag;
+	}
+
+	int get_flag(unsigned char flag) const {
+		return (p & flag) ? 1 : 0;
+	}
+
+	void update_nz(unsigned char val) {
+		set_flag(FLAG_Z, val == 0);
+		set_flag(FLAG_N, val & 0x80);
+	}
+
+	void do_adc(unsigned char val) {
+		if (get_flag(FLAG_D)) {
+			int lo = (a & 0x0F) + (val & 0x0F) + get_flag(FLAG_C);
+			int hi = (a >> 4) + (val >> 4);
+			if (lo > 9) { lo -= 10; hi++; }
+			int bin = a + val + get_flag(FLAG_C);
+			set_flag(FLAG_V, ((a ^ bin) & (val ^ bin) & 0x80) != 0);
+			if (hi > 9) { hi -= 10; set_flag(FLAG_C, 1); }
+			else        {            set_flag(FLAG_C, 0); }
+			a = (unsigned char)(((hi & 0x0F) << 4) | (lo & 0x0F));
+			update_nz(a);
+		} else {
+			int result = a + val + get_flag(FLAG_C);
+			set_flag(FLAG_C, result > 0xFF);
+			set_flag(FLAG_V, ((a ^ result) & (val ^ result) & 0x80) != 0);
+			a = result & 0xFF;
+			update_nz(a);
+		}
+	}
+
+	void do_sbc(unsigned char val) {
+		if (get_flag(FLAG_D)) {
+			int borrow = 1 - get_flag(FLAG_C);
+			int lo = (a & 0x0F) - (val & 0x0F) - borrow;
+			int hi = (a >> 4) - (val >> 4);
+			if (lo < 0) { lo += 10; hi--; }
+			int bin = a - val - borrow;
+			set_flag(FLAG_C, bin >= 0);
+			set_flag(FLAG_V, ((a ^ bin) & (~val ^ bin) & 0x80) != 0);
+			if (hi < 0) hi += 10;
+			a = (unsigned char)(((hi & 0x0F) << 4) | (lo & 0x0F));
+			update_nz(a);
+		} else {
+			int result = a - val - (1 - get_flag(FLAG_C));
+			set_flag(FLAG_C, result >= 0);
+			set_flag(FLAG_V, ((a ^ result) & (~val ^ result) & 0x80) != 0);
+			a = result & 0xFF;
+			update_nz(a);
+		}
+	}
+};
+
+typedef CPUState cpu_t;
+
+/* CPU: Abstract base class for execution */
+class CPU : public CPUState {
+public:
+	virtual int step() = 0; /* Returns number of cycles executed */
+	virtual void trigger_interrupt(int vector_addr) = 0;
+
+	CPU& operator=(const CPUState& other) {
+		a = other.a; x = other.x; y = other.y; z = other.z; b = other.b;
+		s = other.s; pc = other.pc; p = other.p;
+		cycles = other.cycles; eom_prefix = other.eom_prefix;
+		return *this;
+	}
+};
 
 #define MODE_IMPLIED 0
 #define MODE_IMMEDIATE 1
@@ -61,73 +154,27 @@ typedef struct {
 #define MODE_ZP_INDIRECT_Z_FLAT 20  /* [bp],Z — flat (32-bit) ZP indirect, Z-indexed */
 
 static inline void cpu_init(cpu_t *cpu) {
-	cpu->a = 0;
-	cpu->x = 0;
-	cpu->y = 0;
-	cpu->z = 0;
-	cpu->b = 0;
-	cpu->s = 0xFF;
-	cpu->pc = 0;
-	cpu->p = 0;
-	cpu->cycles = 0;
-	cpu->eom_prefix = 0;
+	cpu->reset();
 }
 
 static inline void set_flag(cpu_t *cpu, unsigned char flag, int set) {
-	if (set)
-		cpu->p |= flag;
-	else
-		cpu->p &= ~flag;
+	cpu->set_flag(flag, set);
 }
 
 static inline int get_flag(cpu_t *cpu, unsigned char flag) {
-	return (cpu->p & flag) ? 1 : 0;
+	return cpu->get_flag(flag);
 }
 
 static inline void update_nz(cpu_t *cpu, unsigned char val) {
-	set_flag(cpu, FLAG_Z, val == 0);
-	set_flag(cpu, FLAG_N, val & 0x80);
+	cpu->update_nz(val);
 }
 
 static inline void do_adc(cpu_t *cpu, unsigned char val) {
-	if (get_flag(cpu, FLAG_D)) {
-		int lo = (cpu->a & 0x0F) + (val & 0x0F) + get_flag(cpu, FLAG_C);
-		int hi = (cpu->a >> 4) + (val >> 4);
-		if (lo > 9) { lo -= 10; hi++; }
-		int bin = cpu->a + val + get_flag(cpu, FLAG_C);
-		set_flag(cpu, FLAG_V, ((cpu->a ^ bin) & (val ^ bin) & 0x80) != 0);
-		if (hi > 9) { hi -= 10; set_flag(cpu, FLAG_C, 1); }
-		else        {            set_flag(cpu, FLAG_C, 0); }
-		cpu->a = (unsigned char)(((hi & 0x0F) << 4) | (lo & 0x0F));
-		update_nz(cpu, cpu->a);
-	} else {
-		int result = cpu->a + val + get_flag(cpu, FLAG_C);
-		set_flag(cpu, FLAG_C, result > 0xFF);
-		set_flag(cpu, FLAG_V, ((cpu->a ^ result) & (val ^ result) & 0x80) != 0);
-		cpu->a = result & 0xFF;
-		update_nz(cpu, cpu->a);
-	}
+	cpu->do_adc(val);
 }
 
 static inline void do_sbc(cpu_t *cpu, unsigned char val) {
-	if (get_flag(cpu, FLAG_D)) {
-		int borrow = 1 - get_flag(cpu, FLAG_C);
-		int lo = (cpu->a & 0x0F) - (val & 0x0F) - borrow;
-		int hi = (cpu->a >> 4) - (val >> 4);
-		if (lo < 0) { lo += 10; hi--; }
-		int bin = cpu->a - val - borrow;
-		set_flag(cpu, FLAG_C, bin >= 0);
-		set_flag(cpu, FLAG_V, ((cpu->a ^ bin) & (~val ^ bin) & 0x80) != 0);
-		if (hi < 0) hi += 10;
-		cpu->a = (unsigned char)(((hi & 0x0F) << 4) | (lo & 0x0F));
-		update_nz(cpu, cpu->a);
-	} else {
-		int result = cpu->a - val - (1 - get_flag(cpu, FLAG_C));
-		set_flag(cpu, FLAG_C, result >= 0);
-		set_flag(cpu, FLAG_V, ((cpu->a ^ result) & (~val ^ result) & 0x80) != 0);
-		cpu->a = result & 0xFF;
-		update_nz(cpu, cpu->a);
-	}
+	cpu->do_sbc(val);
 }
 
 /* Cycle timing tables - base cycle counts per instruction */

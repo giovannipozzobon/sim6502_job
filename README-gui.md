@@ -107,6 +107,24 @@ The **Run** menu contains a **Throttle Speed** toggle and a scale slider:
 
 ---
 
+## File Structure
+
+The project is organized into modular C++ components:
+
+- **Core Engine** (`src/core/`):
+    - `cpu.h`: Abstract `CPU` base class and `CPUState` for register management.
+    - `cpu_6502.cpp`: Implementation of specific CPU variants (6502, 65C02, 45GS02).
+    - `memory.h`: Memory bus logic, including MEGA65 DMA and Math Coprocessor.
+    - `opcodes/`: Opcode implementations segregated by processor variant.
+- **CLI Frontend** (`src/cli/`):
+    - `main.cpp`: CLI entry point.
+    - `commands/`: Command Pattern implementation for interactive monitor commands.
+- **GUI Frontend** (`src/gui/`):
+    - `main.cpp`: Main application loop and GUI orchestration.
+    - `panes/`: (In Progress) Individual UI component implementations.
+
+---
+
 ## Breakpoint Conditions
 
 The GUI and CLI both support complex conditional breakpoints using standard assembler expression syntax.
@@ -146,7 +164,7 @@ The GUI and CLI both support complex conditional breakpoints using standard asse
 ## Requirements & Building
 
 ### System Requirements
-To build and run the GUI, you need a C++11 compiler and the following development libraries:
+To build and run the GUI, you need a C++17 compiler and the following development libraries:
 
 - **SDL2**: Cross-platform windowing and input handling.
 - **OpenGL**: Hardware-accelerated rendering.
