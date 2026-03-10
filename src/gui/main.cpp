@@ -92,6 +92,8 @@ static MemViewState g_mem_views[MAX_MEM_VIEWS];  /* zero-init; [0].open set at s
 static bool g_layout_save_open       = false;
 static char g_layout_save_name[64]   = "";
 static bool g_reset_layout           = false;
+static bool g_layout_refresh_needed  = false;
+static uint32_t g_main_dockspace_id  = 0;
 
 /* --------------------------------------------------------------------------
  * Phase 2 state
@@ -137,6 +139,7 @@ static bool show_symbols  = false;
 static bool show_source   = false;
 static bool show_profiler    = false;
 static bool show_snap_diff   = false;
+static bool show_test_runner = false;
 static bool show_patterns    = false;
 
 /* ---- Phase 6 pane visibility ---- */
@@ -481,8 +484,32 @@ static void apply_theme(void)
  *   │          │  Console             │
  *   └──────────┴──────────────────────┘
  * -------------------------------------------------------------------------- */
+static void reset_visibility_to_default(void)
+{
+    show_registers = true;
+    show_disassembly = true;
+    show_console = true;
+    g_mem_views[0].open = true;
+    for (int i = 1; i < MAX_MEM_VIEWS; i++) g_mem_views[i].open = false;
+    show_breakpoints = false;
+    show_trace = false;
+    show_stack = false;
+    show_watches = false;
+    show_iref = false;
+    show_symbols = false;
+    show_source = false;
+    show_profiler = false;
+    show_snap_diff = false;
+    show_test_runner = false;
+    show_patterns = false;
+    show_vic_screen = false;
+    show_vic_sprites = false;
+    show_vic_regs = false;
+}
+
 static void setup_default_layout(ImGuiID dockspace_id, ImVec2 size)
 {
+    reset_visibility_to_default();
     ImGui::DockBuilderRemoveNode(dockspace_id);
     ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
     ImGui::DockBuilderSetNodeSize(dockspace_id, size);
@@ -2842,7 +2869,6 @@ struct TestRow {
     int   act_a, act_x, act_y, act_z, act_p;
 };
 
-static bool     show_test_runner = false;
 static char     g_tr_routine[8]  = "0300";
 static char     g_tr_scratch[8]  = "FFF8";
 static TestRow  g_tr_rows[TEST_RUNNER_MAX_ROWS];
@@ -4553,7 +4579,91 @@ static void layout_save_preset(const char *name)
     char path[576];
     snprintf(path, sizeof(path), "%s/%s.ini", layout_preset_dir(), name);
     ImGui::SaveIniSettingsToDisk(path);
+
+    /* Append our custom visibility state to the end of the file */
+    FILE *f = fopen(path, "a");
+    if (f) {
+        fprintf(f, "\n[sim6502][Visibility]\n");
+        fprintf(f, "Registers=%d\n", show_registers ? 1 : 0);
+        fprintf(f, "Disassembly=%d\n", show_disassembly ? 1 : 0);
+        fprintf(f, "Console=%d\n", show_console ? 1 : 0);
+        fprintf(f, "Memory0=%d\n", g_mem_views[0].open ? 1 : 0);
+        fprintf(f, "Memory1=%d\n", g_mem_views[1].open ? 1 : 0);
+        fprintf(f, "Memory2=%d\n", g_mem_views[2].open ? 1 : 0);
+        fprintf(f, "Memory3=%d\n", g_mem_views[3].open ? 1 : 0);
+        fprintf(f, "Breakpoints=%d\n", show_breakpoints ? 1 : 0);
+        fprintf(f, "Trace=%d\n", show_trace ? 1 : 0);
+        fprintf(f, "Stack=%d\n", show_stack ? 1 : 0);
+        fprintf(f, "Watches=%d\n", show_watches ? 1 : 0);
+        fprintf(f, "InstrRef=%d\n", show_iref ? 1 : 0);
+        fprintf(f, "Symbols=%d\n", show_symbols ? 1 : 0);
+        fprintf(f, "Source=%d\n", show_source ? 1 : 0);
+        fprintf(f, "Profiler=%d\n", show_profiler ? 1 : 0);
+        fprintf(f, "SnapDiff=%d\n", show_snap_diff ? 1 : 0);
+        fprintf(f, "TestRunner=%d\n", show_test_runner ? 1 : 0);
+        fprintf(f, "Patterns=%d\n", show_patterns ? 1 : 0);
+        fprintf(f, "VicScreen=%d\n", show_vic_screen ? 1 : 0);
+        fprintf(f, "VicSprites=%d\n", show_vic_sprites ? 1 : 0);
+        fprintf(f, "VicRegs=%d\n", show_vic_regs ? 1 : 0);
+        fclose(f);
+    }
+
     con_add(ImVec4(0.4f,1.0f,0.4f,1.0f), "Layout saved as '%s'", name);
+}
+
+/* Synchronize visibility booleans by parsing the .ini file for the [sim6502][Visibility] section. */
+static void sync_visibility_from_ini(const char *path)
+{
+    FILE *f = fopen(path, "r");
+    if (!f) return;
+
+    /* Reset all to false first */
+    show_registers = false; show_disassembly = false; show_console = false;
+    show_breakpoints = false; show_trace = false; show_stack = false;
+    show_watches = false; show_iref = false; show_symbols = false;
+    show_source = false; show_profiler = false; show_snap_diff = false;
+    show_test_runner = false; show_patterns = false;
+    show_vic_screen = false; show_vic_sprites = false; show_vic_regs = false;
+    for (int i = 0; i < MAX_MEM_VIEWS; i++) g_mem_views[i].open = false;
+
+    bool in_visibility_section = false;
+    char line[1024];
+    while (fgets(line, sizeof(line), f)) {
+        if (strncmp(line, "[sim6502][Visibility]", 21) == 0) {
+            in_visibility_section = true;
+            continue;
+        }
+        if (in_visibility_section) {
+            if (line[0] == '[') break; /* End of section */
+            char *eq = strchr(line, '=');
+            if (eq) {
+                *eq = '\0';
+                int val = atoi(eq + 1);
+                if      (strcmp(line, "Registers") == 0)   show_registers = val;
+                else if (strcmp(line, "Disassembly") == 0) show_disassembly = val;
+                else if (strcmp(line, "Console") == 0)     show_console = val;
+                else if (strcmp(line, "Memory0") == 0)     g_mem_views[0].open = val;
+                else if (strcmp(line, "Memory1") == 0)     g_mem_views[1].open = val;
+                else if (strcmp(line, "Memory2") == 0)     g_mem_views[2].open = val;
+                else if (strcmp(line, "Memory3") == 0)     g_mem_views[3].open = val;
+                else if (strcmp(line, "Breakpoints") == 0) show_breakpoints = val;
+                else if (strcmp(line, "Trace") == 0)       show_trace = val;
+                else if (strcmp(line, "Stack") == 0)       show_stack = val;
+                else if (strcmp(line, "Watches") == 0)     show_watches = val;
+                else if (strcmp(line, "InstrRef") == 0)    show_iref = val;
+                else if (strcmp(line, "Symbols") == 0)     show_symbols = val;
+                else if (strcmp(line, "Source") == 0)      show_source = val;
+                else if (strcmp(line, "Profiler") == 0)    show_profiler = val;
+                else if (strcmp(line, "SnapDiff") == 0)    show_snap_diff = val;
+                else if (strcmp(line, "TestRunner") == 0)  show_test_runner = val;
+                else if (strcmp(line, "Patterns") == 0)    show_patterns = val;
+                else if (strcmp(line, "VicScreen") == 0)   show_vic_screen = val;
+                else if (strcmp(line, "VicSprites") == 0)  show_vic_sprites = val;
+                else if (strcmp(line, "VicRegs") == 0)     show_vic_regs = val;
+            }
+        }
+    }
+    fclose(f);
 }
 
 /* Load a preset by name from presets/<name>.ini */
@@ -4561,7 +4671,15 @@ static void layout_load_preset(const char *name)
 {
     char path[576];
     snprintf(path, sizeof(path), "%s/%s.ini", layout_preset_dir(), name);
+    
+    /* Synchronize our visibility flags before loading the layout */
+    sync_visibility_from_ini(path);
+
+    /* Clear current dockspace before loading new settings using the stable global ID */
+    ImGui::DockBuilderRemoveNode(g_main_dockspace_id);
+    
     ImGui::LoadIniSettingsFromDisk(path);
+    g_layout_refresh_needed = true;
     con_add(ImVec4(0.4f,1.0f,0.4f,1.0f), "Layout loaded: '%s'", name);
 }
 
@@ -5022,6 +5140,9 @@ int main(int /*argc*/, char ** /*argv*/)
             ImGui::Begin("##dockspace_host", nullptr, host_flags);
             ImGui::PopStyleVar(3);
 
+            /* Cache stable ID for the dockspace */
+            g_main_dockspace_id = ImGui::GetID("MainDockspace");
+
             /* Menu bar */
             if (ImGui::BeginMenuBar()) {
                 if (ImGui::BeginMenu("File")) {
@@ -5223,15 +5344,19 @@ int main(int /*argc*/, char ** /*argv*/)
             if (ds_h < 0.0f) ds_h = 0.0f;
 
             /* Apply default layout on first run or when explicitly reset */
-            const ImGuiID dockspace_id = ImGui::GetID("MainDockspace");
             if ((first_run && !layout_applied) || g_reset_layout) {
                 layout_applied  = true;
                 g_reset_layout  = false;
-                setup_default_layout(dockspace_id,
+                g_layout_refresh_needed = false;
+                setup_default_layout(g_main_dockspace_id,
                     ImVec2(ImGui::GetContentRegionAvail().x, ds_h));
+            } else if (g_layout_refresh_needed) {
+                g_layout_refresh_needed = false;
+                /* Note: We do NOT DockBuilderAddNode here because LoadIniSettings
+                   already populated the internal dock tree for g_main_dockspace_id. */
             }
 
-            ImGui::DockSpace(dockspace_id, ImVec2(0.0f, ds_h), ImGuiDockNodeFlags_None);
+            ImGui::DockSpace(g_main_dockspace_id, ImVec2(0.0f, ds_h), ImGuiDockNodeFlags_None);
 
             /* Status bar */
             draw_statusbar();
