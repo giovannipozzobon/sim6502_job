@@ -38,7 +38,7 @@ cp mcp-server/.mcp.json.template .mcp.json
   "mcpServers": {
     "6502-simulator": {
       "command": "node",
-      "args": ["mcp-server/server.js"],
+      "args": ["mcp-server/index.js"],
       "cwd": "/absolute/path/to/6502-simulator"
     }
   }
@@ -51,7 +51,7 @@ Verify the server is loaded with `/mcp` inside the session.
 **Option B — Global registration**
 
 ```bash
-claude mcp add 6502-simulator node /absolute/path/to/6502-simulator/mcp-server/server.js
+claude mcp add 6502-simulator node /absolute/path/to/6502-simulator/mcp-server/index.js
 ```
 
 Or run the installer:
@@ -64,7 +64,7 @@ bash mcp-server/install-claude.sh
 ### Gemini CLI
 
 ```bash
-gemini mcp add 6502-simulator node /absolute/path/to/6502-simulator/mcp-server/server.js
+gemini mcp add 6502-simulator node /absolute/path/to/6502-simulator/mcp-server/index.js
 ```
 
 Or run the installer:
@@ -78,7 +78,7 @@ Or manually edit `~/.gemini/settings.json`:
   "mcpServers": {
     "6502-simulator": {
       "command": "node",
-      "args": ["/absolute/path/to/6502-simulator/mcp-server/server.js"]
+      "args": ["/absolute/path/to/6502-simulator/mcp-server/index.js"]
     }
   }
 }
@@ -101,6 +101,9 @@ Aider does not natively support MCP. To use the simulator alongside Aider:
 The MCP server starts automatically when your AI tool launches. The `sim6502` process
 itself does **not** start until `load_program` is called. A single simulator process
 then persists for the session; a new `load_program` call restarts it with fresh code.
+
+By default, the server looks for the `sim6502` binary in the parent directory. You can
+override this by setting the `SIM6502_PATH` environment variable.
 
 ### Trigger patterns
 

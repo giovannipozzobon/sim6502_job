@@ -2,10 +2,10 @@
   "name": "6502-simulator-mcp",
   "version": "0.99.0",
   "description": "A 6502 simulator MCP server.",
-  "main": "server.js",
+  "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "node server.js"
+    "start": "node index.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^0.6.0"

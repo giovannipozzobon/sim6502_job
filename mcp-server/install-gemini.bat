@@ -19,12 +19,13 @@ mkdir "%PLUGIN_DIR%"
 xcopy /s /e /i . "%PLUGIN_DIR%"
 
 echo Installation complete.
-echo To use the plugin, add the following to your gemini config file:
+echo To use the MCP server, add the following to your gemini config file (%%USERPROFILE%%\.gemini\settings.json):
 echo.
 
-echo   "plugins": {
+echo   "mcpServers": {
 echo     "6502-simulator": {
-echo       "path": "%PLUGIN_DIR%\index.js"
+echo       "command": "node",
+echo       "args": ["%PLUGIN_DIR%\index.js"]
 echo     }
 echo   }
 echo.
