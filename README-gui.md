@@ -81,11 +81,19 @@ Three panes expose the Commodore 64 VIC-II video chip state for C64 / C128 / MEG
 - **MCP equivalent**: `vic2_savescreen` and `vic2_savebitmap` tools.
 
 #### VIC-II Sprites
-- **Sprite thumbnail grid**: All 8 sprites displayed at configurable zoom (2×/3×/4×) with transparent backgrounds.
-- **Per-sprite info**: Enable status, X/Y position, colour, MCM/XE/YE/BG flags, and data address.
-- **Freeze**: Lock sprite thumbnails independently.
-- **Shared colours**: D025 (MC0) and D026 (MC1) shown in the footer.
-- **CLI equivalent**: `vic2.sprites` prints all 8 sprite states; sprites also appear in `vic2.savescreen` and `vic2.savebitmap` output.
+- **Unified Sprite Editor**: A comprehensive pane for inspecting and modifying all 8 hardware sprites.
+- **Selection Bar**: Click any of the 8 thumbnails at the top to focus the editor on that specific sprite.
+- **Interactive Bitmap Editor**: A large pixel grid for direct drawing.
+    - **1bpp mode**: Toggle pixels between transparent and the sprite colour.
+    - **2bpp (Multicolour) mode**: Cycle through the four available colour indices.
+    - **Expansion Support**: The grid dynamically reflects **Expand X** and **Expand Y** settings, doubling pixel size in the editor to match hardware output.
+    - **Aspect Ratio**: Corrected pixel proportions to emulate the taller-than-wide PAL display.
+- **Hardware Attributes**: Real-time toggles for Enable, Multicolour, Expand X/Y, and Priority ($D01B).
+- **Colour Palettes**: Interactive palettes for the sprite's main colour ($D027+N) and shared multicolours ($D025/$D026).
+- **Freeze Update**: Locks the visual state of all sprites.
+    - **Safe Editing**: Essential for manual drawing; freezing prevents a running program from overwriting your changes in memory while you work.
+    - **Capture**: Useful for inspecting high-speed animations or "flicker" effects.
+- **CLI equivalent**: `vic2.sprites` prints all 8 sprite states.
 - **MCP equivalent**: `vic2_sprites` tool.
 
 #### VIC-II Registers

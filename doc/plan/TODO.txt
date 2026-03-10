@@ -42,7 +42,7 @@ This document outlines suggested next steps, feature enhancements, and technical
 *   [X] Add support for numeric constants in decimal (`123`) and binary (`%10101010`). Also support character contants such as 'a'. 
 *   [X] Allow psuedo-op to include a binary at the current PC. (.bin "filename")). Also allow Interactive command "bload" to perform the same function using 'bload "filename" $addr'  where addr is the address to start loading at. 
 *   [X] Allow binary file saving of mem (eg: BSave "filename" START END ) will save the filename at address range.
-*   [ ] Allow disassembly of memory (eg: D or Disasm START END) if just D then use PC.
+*   [X] Allow disassembly of memory (eg: D or Disasm START END) if just D then use PC.
 *   [ ] Improved Trace Formatting: Make trace output more readable and include register changes (e.g., "A: 00 -> 01").
 *   [X] Conditional Breakpoints: Support breakpoints that trigger only when a condition is met (e.g., "PC == $1234 && A == $00").
 *   [X] Reverse Debugging / Execution History: Full forward/backward time-travel via delta-log ring buffer.

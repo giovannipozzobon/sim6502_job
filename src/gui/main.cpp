@@ -143,6 +143,7 @@ static bool show_patterns    = false;
 static bool show_vic_screen   = false;
 static bool show_vic_sprites  = false;
 static bool show_vic_regs     = false;
+static int  g_vic_sprite_edit_idx  = 0;
 
 /* ---- Phase 5: keyboard shortcut state ---- */
 static bool     g_focus_console     = false;  /* `: focus console input              */
@@ -1244,7 +1245,7 @@ static void update_spr_textures(void)
 
     for (int sn = 0; sn < 8; sn++) {
         uint8_t  ptr   = sim_mem_read_byte(g_sim, (uint16_t)((screen_base + 0x3F8 + sn) & 0xFFFF));
-        uint32_t saddr = vic_bank + (uint32_t)ptr * 64u;
+        uint32_t saddr = (vic_bank + (uint32_t)ptr * 64u) & 0xFFFF;
         uint8_t  color = sim_mem_read_byte(g_sim, (uint16_t)(0xD027 + sn)) & 0xF;
         bool     is_mcm = ((d01c >> sn) & 1) != 0;
 
@@ -1300,8 +1301,12 @@ static void update_spr_textures(void)
 static void draw_pane_vic_sprites(void)
 {
     if (!show_vic_sprites) return;
-    ImGui::Begin("VIC-II Sprites", &show_vic_sprites,
-                 ImGuiWindowFlags_HorizontalScrollbar);
+
+    ImGui::SetNextWindowSize(ImVec2(650, 600), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("VIC-II Sprites", &show_vic_sprites)) {
+        ImGui::End();
+        return;
+    }
 
     sim_state_t state = sim_get_state(g_sim);
     if (state == SIM_IDLE) {
@@ -1313,92 +1318,189 @@ static void draw_pane_vic_sprites(void)
     if (g_spr_dirty)
         update_spr_textures();
 
-    /* Scale controls */
-    static float spr_scale = 3.0f;
-    ImGui::Text("Scale:");
-    ImGui::SameLine();
-    if (ImGui::RadioButton("2x##spr", spr_scale == 2.0f)) spr_scale = 2.0f;
-    ImGui::SameLine();
-    if (ImGui::RadioButton("3x##spr", spr_scale == 3.0f)) spr_scale = 3.0f;
-    ImGui::SameLine();
-    if (ImGui::RadioButton("4x##spr", spr_scale == 4.0f)) spr_scale = 4.0f;
-    ImGui::SameLine();
-    ImGui::Checkbox("Freeze##spr", &g_spr_freeze);
+    /* --- Sprite Selection Bar --- */
+    ImGui::Text("Select Sprite:");
+    for (int i = 0; i < 8; i++) {
+        if (i > 0) ImGui::SameLine();
+        ImGui::PushID(i);
+        
+        bool is_selected = (g_vic_sprite_edit_idx == i);
+        ImVec4 tint = is_selected ? ImVec4(1,1,1,1) : ImVec4(0.5f, 0.5f, 0.5f, 0.8f);
+        ImVec4 bg   = is_selected ? ImVec4(0.3f, 0.3f, 0.3f, 1.0f) : ImVec4(0,0,0,0);
+
+        char btn_id[32];
+        snprintf(btn_id, sizeof(btn_id), "spr_sel_%d", i);
+        if (ImGui::ImageButton(btn_id, (ImTextureID)(uintptr_t)g_spr_tex[i], ImVec2(24*1.5f, 21*1.5f), ImVec2(0,0), ImVec2(1,1), bg, tint)) {
+            g_vic_sprite_edit_idx = i;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sprite %d", i);
+        ImGui::PopID();
+    }
 
     ImGui::Separator();
 
-    /* Read sprite state registers */
-    uint8_t d015  = sim_mem_read_byte(g_sim, 0xD015);
-    uint8_t d01c  = sim_mem_read_byte(g_sim, 0xD01C);
-    uint8_t d01d  = sim_mem_read_byte(g_sim, 0xD01D);  /* X-expand   */
-    uint8_t d017  = sim_mem_read_byte(g_sim, 0xD017);  /* Y-expand   */
-    uint8_t d01b  = sim_mem_read_byte(g_sim, 0xD01B);  /* behind BG  */
-    uint8_t d010  = sim_mem_read_byte(g_sim, 0xD010);  /* X MSBs     */
+    int sn = g_vic_sprite_edit_idx;
+
+    /* Read current state */
+    uint8_t d015 = sim_mem_read_byte(g_sim, 0xD015);
+    uint8_t d01c = sim_mem_read_byte(g_sim, 0xD01C);
+    uint8_t d01d = sim_mem_read_byte(g_sim, 0xD01D);
+    uint8_t d017 = sim_mem_read_byte(g_sim, 0xD017);
+    uint8_t d01b = sim_mem_read_byte(g_sim, 0xD01B);
+    uint8_t d010 = sim_mem_read_byte(g_sim, 0xD010);
+    uint8_t color = sim_mem_read_byte(g_sim, (uint16_t)(0xD027 + sn)) & 0xF;
+    uint8_t d025 = sim_mem_read_byte(g_sim, 0xD025) & 0xF;
+    uint8_t d026 = sim_mem_read_byte(g_sim, 0xD026) & 0xF;
+
     uint8_t d018  = sim_mem_read_byte(g_sim, 0xD018);
     uint8_t cia2a = sim_mem_read_byte(g_sim, 0xDD00);
     uint32_t vic_bank    = (uint32_t)((~cia2a) & 3) * 0x4000u;
     uint32_t screen_base = vic_bank + (uint32_t)((d018 >> 4) & 0xF) * 1024u;
+    uint8_t  ptr   = sim_mem_read_byte(g_sim, (uint16_t)((screen_base + 0x3F8 + sn) & 0xFFFF));
+    uint32_t saddr = (vic_bank + (uint32_t)ptr * 64u) & 0xFFFF;
 
-    ImVec2 img_sz(24.0f * spr_scale, 21.0f * spr_scale);
-    float  cell_w = img_sz.x + 14.0f;
-    float  cell_h = img_sz.y + 78.0f;
+    uint16_t sx = (uint16_t)(sim_mem_read_byte(g_sim, (uint16_t)(0xD000 + sn*2)) | (((d010 >> sn) & 1) << 8));
+    uint8_t  sy = sim_mem_read_byte(g_sim, (uint16_t)(0xD001 + sn*2));
 
-    for (int sn = 0; sn < 8; sn++) {
-        if (sn % 4 != 0) ImGui::SameLine(0.0f, 6.0f);
+    bool enabled = (d015 >> sn) & 1;
+    bool is_mcm  = (d01c >> sn) & 1;
+    bool x_exp   = (d01d >> sn) & 1;
+    bool y_exp   = (d017 >> sn) & 1;
+    bool behind  = (d01b >> sn) & 1;
 
-        bool     enabled = ((d015 >> sn) & 1) != 0;
-        uint16_t sx      = (uint16_t)(sim_mem_read_byte(g_sim, (uint16_t)(0xD000 + sn*2))
-                            | (((d010 >> sn) & 1) << 8));
-        uint8_t  sy      = sim_mem_read_byte(g_sim, (uint16_t)(0xD001 + sn*2));
-        uint8_t  color   = sim_mem_read_byte(g_sim, (uint16_t)(0xD027 + sn)) & 0xF;
-        bool     is_mcm  = ((d01c >> sn) & 1) != 0;
-        bool     x_exp   = ((d01d >> sn) & 1) != 0;
-        bool     y_exp   = ((d017 >> sn) & 1) != 0;
-        bool     behind  = ((d01b >> sn) & 1) != 0;
-        uint8_t  ptr     = sim_mem_read_byte(g_sim,
-                               (uint16_t)((screen_base + 0x3F8 + sn) & 0xFFFF));
-        uint32_t saddr   = (vic_bank + (uint32_t)ptr * 64u) & 0xFFFF;
+    /* Left side: Controls */
+    ImGui::BeginChild("##controls", ImVec2(200, 0), true);
+    ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Sprite %d", sn);
+    ImGui::Text("Pos: X=%d Y=%d", sx, sy);
+    ImGui::Text("Addr: $%04X [%02X]", (unsigned)saddr, ptr);
+    ImGui::Separator();
 
-        ImGui::PushID(sn);
-
-        ImVec4 border_col = enabled
-            ? ImVec4(0.25f, 0.75f, 0.25f, 1.0f)
-            : ImVec4(0.28f, 0.28f, 0.28f, 1.0f);
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.10f, 0.10f, 1.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
-        ImGui::PushStyleColor(ImGuiCol_Border, border_col);
-
-        if (ImGui::BeginChild("##sc", ImVec2(cell_w, cell_h), true)) {
-            /* Header */
-            if (enabled)
-                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Spr %d", sn);
-            else
-                ImGui::TextDisabled("Spr %d (off)", sn);
-
-            /* Sprite bitmap with transparent background */
-            ImGui::Image((ImTextureID)(uintptr_t)g_spr_tex[sn], img_sz);
-
-            /* Info lines */
-            ImGui::Text("X=%-3d Y=%d", sx, sy);
-            char flags[16] = "";
-            if (is_mcm) strcat(flags, "MC ");
-            if (x_exp)  strcat(flags, "XE ");
-            if (y_exp)  strcat(flags, "YE ");
-            if (behind) strcat(flags, "BG");
-            ImGui::Text("Col:%X  %s", color, flags);
-            ImGui::TextDisabled("$%04X[%02X]", (unsigned)saddr, ptr);
-        }
-        ImGui::EndChild();
-        ImGui::PopStyleColor(2);
-        ImGui::PopStyleVar();
-        ImGui::PopID();
+    ImGui::Text("Attributes");
+    if (ImGui::Checkbox("Enabled", &enabled)) {
+        sim_mem_write_byte(g_sim, 0xD015, enabled ? (d015 | (1<<sn)) : (d015 & ~(1<<sn)));
+    }
+    if (ImGui::Checkbox("Multicolour", &is_mcm)) {
+        sim_mem_write_byte(g_sim, 0xD01C, is_mcm ? (d01c | (1<<sn)) : (d01c & ~(1<<sn)));
+        g_spr_dirty = true;
+    }
+    if (ImGui::Checkbox("Expand X", &x_exp)) {
+        sim_mem_write_byte(g_sim, 0xD01D, x_exp ? (d01d | (1<<sn)) : (d01d & ~(1<<sn)));
+    }
+    if (ImGui::Checkbox("Expand Y", &y_exp)) {
+        sim_mem_write_byte(g_sim, 0xD017, y_exp ? (d017 | (1<<sn)) : (d017 & ~(1<<sn)));
+    }
+    if (ImGui::Checkbox("Behind BG", &behind)) {
+        sim_mem_write_byte(g_sim, 0xD01B, behind ? (d01b | (1<<sn)) : (d01b & ~(1<<sn)));
     }
 
-    /* Footer: shared MC colours and enable mask */
     ImGui::Separator();
-    uint8_t d025 = sim_mem_read_byte(g_sim, 0xD025) & 0xF;
-    uint8_t d026 = sim_mem_read_byte(g_sim, 0xD026) & 0xF;
-    ImGui::Text("D025 MC0:%X  D026 MC1:%X  D015 En:%02X", d025, d026, d015);
+    ImGui::Text("Colours");
+
+    auto color_selector = [&](const char* label, uint16_t reg, uint8_t current) {
+        ImGui::Text("%s:", label);
+        for (int i = 0; i < 16; i++) {
+            if (i > 0 && i % 8 == 0) ImGui::NewLine();
+            ImGui::PushID(i);
+            ImVec4 col(vic2_palette[i][0]/255.0f, vic2_palette[i][1]/255.0f, vic2_palette[i][2]/255.0f, 1.0f);
+            if (ImGui::ColorButton("##col", col, (current == i ? ImGuiColorEditFlags_None : ImGuiColorEditFlags_NoBorder), ImVec2(18,18))) {
+                sim_mem_write_byte(g_sim, reg, (uint8_t)i);
+                g_spr_dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%d: %s", i, vic2_color_names[i]);
+            ImGui::SameLine();
+            ImGui::PopID();
+        }
+        ImGui::NewLine();
+    };
+
+    color_selector("Main", 0xD027 + sn, color);
+    if (is_mcm) {
+        color_selector("MC0 ($D025)", 0xD025, d025);
+        color_selector("MC1 ($D026)", 0xD026, d026);
+    }
+
+    ImGui::Separator();
+    ImGui::Checkbox("Freeze Update", &g_spr_freeze);
+
+    ImGui::EndChild();
+
+    ImGui::SameLine();
+
+    /* Right side: Pixel Grid */
+    ImGui::BeginChild("##grid", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
+    ImGui::Text("Bitmap Editor (%s%s%s)", is_mcm ? "2bpp" : "1bpp", x_exp ? ", Exp X" : "", y_exp ? ", Exp Y" : "");
+
+    /* Base cell size: taller than wide to match C64/PAL approximate aspect ratio */
+    float base_w = 12.0f;
+    float base_h = 14.0f;
+    float cell_w = x_exp ? (base_w * 2.0f) : base_w;
+    float cell_h = y_exp ? (base_h * 2.0f) : base_h;
+
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+
+    for (int row = 0; row < 21; row++) {
+        for (int col = 0; col < 24; col++) {
+            int effective_col = is_mcm ? (col & ~1) : col;
+            int byte_off = row * 3 + (effective_col / 8);
+            uint8_t b = sim_mem_read_byte(g_sim, (uint16_t)((saddr + byte_off) & 0xFFFF));
+            
+            int color_idx = 0;
+            if (!is_mcm) {
+                if ((b >> (7 - (effective_col % 8))) & 1) color_idx = color;
+                else color_idx = -1; /* transparent */
+            } else {
+                int pair = (effective_col % 8) / 2;
+                int sel = (b >> (6 - pair * 2)) & 0x3;
+                if      (sel == 0) color_idx = -1;
+                else if (sel == 1) color_idx = d025;
+                else if (sel == 2) color_idx = color;
+                else if (sel == 3) color_idx = d026;
+            }
+
+            ImVec2 p0(pos.x + col * cell_w, pos.y + row * cell_h);
+            ImVec2 p1(p0.x + cell_w, p0.y + cell_h);
+
+            ImU32 cell_col = (color_idx == -1) ? IM_COL32(40, 40, 40, 255) :
+                IM_COL32(vic2_palette[color_idx][0], vic2_palette[color_idx][1], vic2_palette[color_idx][2], 255);
+            
+            draw_list->AddRectFilled(p0, p1, cell_col);
+            /* Only draw border if cell is large enough to not look cluttered */
+            if (cell_w >= 4.0f && cell_h >= 4.0f)
+                draw_list->AddRect(p0, p1, IM_COL32(100, 100, 100, 50));
+
+            if (ImGui::IsMouseHoveringRect(p0, p1) && ImGui::IsMouseDown(0)) {
+                if (!is_mcm) {
+                    /* Toggle bit */
+                    int bit = 7 - (col % 8);
+                    uint8_t mask = 1 << bit;
+                    /* Use a static to prevent "rapid fire" toggling while holding mouse */
+                    static int last_click_row = -1, last_click_col = -1, last_click_sn = -1;
+                    if (ImGui::IsMouseClicked(0) || last_click_row != row || last_click_col != col || last_click_sn != sn) {
+                        sim_mem_write_byte(g_sim, (uint16_t)((saddr + byte_off) & 0xFFFF), b ^ mask);
+                        g_spr_dirty = true;
+                        last_click_row = row; last_click_col = col; last_click_sn = sn;
+                    }
+                } else {
+                    /* Cycle color sel */
+                    static int last_click_row = -1, last_click_col = -1, last_click_sn = -1;
+                    if (ImGui::IsMouseClicked(0) || last_click_row != row || last_click_col != col || last_click_sn != sn) {
+                        int pair = (effective_col % 8) / 2;
+                        int sel = (b >> (6 - pair * 2)) & 0x3;
+                        sel = (sel + 1) & 0x3;
+                        uint8_t mask = 0x3 << (6 - pair * 2);
+                        uint8_t new_b = (b & ~mask) | (sel << (6 - pair * 2));
+                        sim_mem_write_byte(g_sim, (uint16_t)((saddr + byte_off) & 0xFFFF), new_b);
+                        g_spr_dirty = true;
+                        last_click_row = row; last_click_col = col; last_click_sn = sn;
+                    }
+                }
+            }
+        }
+    }
+    ImGui::Dummy(ImVec2(24 * cell_w, 21 * cell_h));
+
+    ImGui::EndChild();
 
     ImGui::End();
 }
