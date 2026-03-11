@@ -3,12 +3,16 @@
 #include "condition.h"
 #include "vic2.h"
 #include "patterns.h"
+#include "commands/CommandRegistry.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 #include <unistd.h>
 #include <time.h>
+#include <sstream>
+#include <string>
+#include <vector>
 
 /* Speed throttle: 0.0 = unlimited, 1.0 = C64 PAL (~985 kHz) */
 static float  g_cli_speed   = 0.0f;
@@ -26,7 +30,7 @@ typedef struct cli_snap_node {
 } cli_snap_node_t;
 
 static cli_snap_node_t *s_snap_buckets[256]; /* zero-initialised at start-up */
-static int              s_snap_active = 0;
+int              s_snap_active = 0;
 
 static void cli_snap_reset(void) {
     for (int i = 0; i < 256; i++) {
@@ -40,7 +44,7 @@ static void cli_snap_reset(void) {
 /* Record one virtual-memory write into the accumulator.
  * If addr is seen for the first time: stores `before` as the snapshot value.
  * On repeat writes to the same addr: updates `after` and `writer_pc` only. */
-static void cli_snap_record(uint16_t addr, uint8_t before,
+void cli_snap_record(uint16_t addr, uint8_t before,
                              uint8_t after, uint16_t writer_pc) {
     int b = addr & 0xFF;
     cli_snap_node_t *n = s_snap_buckets[b];
@@ -63,7 +67,7 @@ static int cli_diff_cmp(const void *a, const void *b) {
 static cli_diff_t s_diff_buf[CLI_DIFF_CAP];
 
 /* JSON mode flag: 0 = plain text, 1 = JSON output */
-static int g_json_mode = 0;
+int g_json_mode = 0;
 
 void cli_set_json_mode(int v) { g_json_mode = v; }
 
@@ -84,7 +88,7 @@ static int              s_cli_hist_write = 0;
 static int              s_cli_hist_count = 0;
 static int              s_cli_hist_pos   = 0;
 
-static void cli_hist_push(const cpu_t *pre, const memory_t *mem) {
+void cli_hist_push(const cpu_t *pre, const memory_t *mem) {
     if (s_cli_hist_pos > 0) {
         s_cli_hist_write = ((s_cli_hist_write - s_cli_hist_pos) % CLI_HIST_CAP + CLI_HIST_CAP) % CLI_HIST_CAP;
         s_cli_hist_count -= s_cli_hist_pos;
@@ -115,17 +119,18 @@ static int cli_hist_step_back(cpu_t *cpu, memory_t *mem) {
 }
 
 static int cli_hist_step_fwd(cpu_t *cpu, memory_t *mem, dispatch_table_t *dt, cpu_type_t cpu_type) {
+    (void)dt; (void)cpu_type;
     if (s_cli_hist_pos == 0) return 0;
     int idx = ((s_cli_hist_write - s_cli_hist_pos) % CLI_HIST_CAP + CLI_HIST_CAP) % CLI_HIST_CAP;
     cli_hist_entry_t *e = &s_cli_hist[idx];
     *cpu = e->pre_cpu;
     mem->mem_writes = 0;
-    execute_from_mem(cpu, mem, dt, cpu_type);
+    static_cast<CPU*>(cpu)->step();
     s_cli_hist_pos--;
     return 1;
 }
 
-static int handle_trap_local(const symbol_table_t *st, cpu_t *cpu, memory_t *mem) {
+int handle_trap_local(const symbol_table_t *st, cpu_t *cpu, memory_t *mem) {
     for (int i = 0; i < st->count; i++) {
         if (st->symbols[i].type != SYM_TRAP) continue;
         if (st->symbols[i].address != cpu->pc) continue;
@@ -166,7 +171,7 @@ static void json_reg_fields(const cpu_t *cpu) {
 }
 
 /* Emit a full JSON response for execution commands */
-static void json_exec_result(const char *cmd, const char *stop_reason, const cpu_t *cpu) {
+void json_exec_result(const char *cmd, const char *stop_reason, const cpu_t *cpu) {
     printf("{\"cmd\":\"%s\",\"ok\":true,\"data\":{\"stop_reason\":\"%s\",", cmd, stop_reason);
     json_reg_fields(cpu);
     printf("}}\n");
@@ -176,7 +181,7 @@ static void json_exec_result(const char *cmd, const char *stop_reason, const cpu
 static void json_ok(const char *cmd) {
     printf("{\"cmd\":\"%s\",\"ok\":true,\"data\":{}}\n", cmd);
 }
-static void json_err(const char *cmd, const char *msg) {
+void json_err(const char *cmd, const char *msg) {
     printf("{\"cmd\":\"%s\",\"ok\":false,\"error\":\"%s\"}\n", cmd, msg);
 }
 
@@ -332,9 +337,9 @@ static void cmd_validate(const char *line,
     cpu_t saved_cpu = *cpu;
 
     /* Reset CPU and apply inputs */
-    cpu_init(cpu);
+    cpu->reset();
     cpu->pc = scratch;
-    if (*p_cpu_type == CPU_45GS02) set_flag(cpu, FLAG_E, 1);
+    if (*p_cpu_type == CPU_45GS02) cpu->set_flag(FLAG_E, 1);
     if (in_a >= 0) cpu->a = (unsigned char)in_a;
     if (in_x >= 0) cpu->x = (unsigned char)in_x;
     if (in_y >= 0) cpu->y = (unsigned char)in_y;
@@ -362,7 +367,7 @@ static void cmd_validate(const char *line,
                 cli_snap_record(mem->mem_addr[_d], mem->mem_old_val[_d],
                                 mem->mem_val[_d], (uint16_t)routine_addr);
         }
-        execute_from_mem(cpu, mem, dt, *p_cpu_type);
+        static_cast<CPU*>(cpu)->step();
         steps++;
     }
 
@@ -415,6 +420,85 @@ static void cmd_validate(const char *line,
                    fail_msg,
                    (unsigned)act_a,(unsigned)act_x,(unsigned)act_y,
                    (unsigned)act_z,(unsigned)act_p);
+        }
+    }
+}
+
+/* --------------------------------------------------------------------------
+ * cmd_assemble
+ * -------------------------------------------------------------------------- */
+
+static void cmd_assemble(const char *line,
+                         memory_t *mem, symbol_table_t *symbols,
+                         opcode_handler_t *handlers, int num_handlers,
+                         cpu_type_t cpu_type, cpu_t *cpu) {
+    const char *p = line;
+    /* Skip command word */
+    while (*p && !isspace((unsigned char)*p)) p++;
+    while (*p && isspace((unsigned char)*p)) p++;
+
+    /* Optional address */
+    unsigned long tmp_pc;
+    int asm_pc = parse_mon_value(&p, &tmp_pc) ? (int)tmp_pc : (int)cpu->pc;
+    while (*p && isspace((unsigned char)*p)) p++;
+
+    /* The rest of the line is the code. In JSON mode, we might get multiple lines
+     * separated by literal '\n' if the MCP server sent them that way, but actually
+     * sendCommand joins them with spaces. So we expect the MCP server to send 
+     * one instruction at a time or use a special separator.
+     * To support multi-line from the MCP server, we'll assume they are separated by ';' 
+     * if not in a string, but for now let's just handle the string after the address.
+     */
+    
+    if (!*p) {
+        if (g_json_mode) json_err("asm", "Usage: asm [addr] <instruction>");
+        else printf("Usage: asm [addr] <instruction>\n");
+        return;
+    }
+
+    int base_pc = asm_pc;
+    int enc = -1;
+
+    if (*p == '.') {
+        handle_pseudo_op(p, &cpu_type, &asm_pc, mem, symbols, NULL);
+        enc = asm_pc - base_pc;
+    } else {
+        const char *colon = strchr(p, ':');
+        if (colon) {
+            char lname[64]; int llen = (int)(colon - p); if (llen > 63) llen = 63;
+            memcpy(lname, p, (size_t)llen); lname[llen] = '\0';
+            while (llen > 0 && isspace((unsigned char)lname[llen-1])) lname[--llen] = '\0';
+            symbol_add(symbols, lname, (unsigned short)asm_pc, SYM_LABEL, "asm");
+            p = colon + 1; while (*p && isspace((unsigned char)*p)) p++;
+            if (!*p || *p == ';') {
+                if (g_json_mode) printf("{\"cmd\":\"asm\",\"ok\":true,\"data\":{\"address\":%d,\"size\":0,\"bytes\":\"\"}}\n", base_pc);
+                return;
+            }
+        }
+        
+        instruction_t instr; parse_line(p, &instr, symbols, asm_pc);
+        if (instr.op[0]) {
+            enc = encode_to_mem(mem, asm_pc, &instr, handlers, num_handlers, cpu_type);
+            if (enc >= 0) asm_pc += enc;
+        }
+    }
+
+    if (enc < 0) {
+        if (g_json_mode) json_err("asm", "Assembly failed");
+        else printf("Assembly failed: %s\n", p);
+    } else {
+        if (g_json_mode) {
+            char hex[32] = "";
+            for (int i = 0; i < (enc < 8 ? enc : 8); i++) {
+                char t[4]; snprintf(t, sizeof(t), "%02X", mem->mem[base_pc + i]);
+                strcat(hex, t);
+            }
+            printf("{\"cmd\":\"asm\",\"ok\":true,\"data\":{\"address\":%d,\"size\":%d,\"bytes\":\"%s\"}}\n",
+                   base_pc, enc, hex);
+        } else {
+            printf("$%04X:", base_pc);
+            for (int i = 0; i < (enc < 4 ? enc : 4); i++) printf(" %02X", mem->mem[base_pc + i]);
+            printf("  %s\n", p);
         }
     }
 }
@@ -473,6 +557,16 @@ void run_asm_mode(memory_t *mem, symbol_table_t *symbols,
     }
 }
 
+static std::vector<std::string> split_line(const std::string& line) {
+    std::vector<std::string> args;
+    std::istringstream iss(line);
+    std::string arg;
+    while (iss >> arg) {
+        args.push_back(arg);
+    }
+    return args;
+}
+
 /* --------------------------------------------------------------------------
  * run_interactive_mode
  * -------------------------------------------------------------------------- */
@@ -481,23 +575,51 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
                                  opcode_handler_t **p_handlers, int *p_num_handlers,
                                  cpu_type_t *p_cpu_type, dispatch_table_t *dt,
                                  unsigned short start_addr, breakpoint_list_t *breakpoints,
-                                 symbol_table_t *symbols) {
-    char line[256]; char cmd[32];
+                                 symbol_table_t *symbols,
+                                 const char *initial_cmd) {
+    char line_buf[256];
+    CommandRegistry registry;
     setvbuf(stdout, NULL, _IONBF, 0);
+
+    if (initial_cmd) {
+        std::string line = initial_cmd;
+        std::vector<std::string> args = split_line(line);
+        if (!args.empty()) {
+            const std::string& cmd = args[0];
+            CLICommand* command = registry.getCommand(cmd);
+            if (command) {
+                command->execute(args, static_cast<CPU*>(cpu), mem, p_handlers, p_num_handlers, p_cpu_type, dt, breakpoints, symbols);
+                return;
+            } else {
+                fprintf(stderr, "Debug: Initial command '%s' not found in registry.\n", cmd.c_str());
+            }
+        }
+    }
+
     if (!g_json_mode)
         printf("6502 Simulator Interactive Mode\nType 'help' for commands.\n");
     while (1) {
-        printf("> "); if (!fgets(line, sizeof(line), stdin)) break;
-        if (sscanf(line, "%31s", cmd) != 1) {
+        printf("> "); if (!fgets(line_buf, sizeof(line_buf), stdin)) break;
+        std::string line(line_buf);
+        std::vector<std::string> args = split_line(line);
+        if (args.empty()) {
             int tr = handle_trap_local(symbols, cpu, mem);
-            if (tr == 0) { unsigned char opc = mem_read(mem, cpu->pc); if (opc != 0x00) execute_from_mem(cpu, mem, dt, *p_cpu_type); }
+            if (tr == 0) { unsigned char opc = mem_read(mem, cpu->pc); if (opc != 0x00) static_cast<CPU*>(cpu)->step(); }
             if (g_json_mode) json_exec_result("step", "step", cpu);
             else printf("STOP %04X\n", cpu->pc);
             continue;
         }
+
+        const std::string& cmd = args[0];
+        CLICommand* command = registry.getCommand(cmd);
+        if (command) {
+            command->execute(args, static_cast<CPU*>(cpu), mem, p_handlers, p_num_handlers, p_cpu_type, dt, breakpoints, symbols);
+            continue;
+        }
+
 #define SKIP_CMD(lp) do { while (*(lp) && !isspace((unsigned char)*(lp))) (lp)++; } while (0)
-        if (strcmp(cmd, "quit") == 0 || strcmp(cmd, "exit") == 0) break;
-        else if (strcmp(cmd, "help") == 0) {
+        if (cmd == "quit" || cmd == "exit") break;
+        else if (cmd == "help") {
             printf("Commands: step [n], run, stepback (sb), stepfwd (sf),\n");
             printf("          break <addr>, clear <addr>, list, regs,\n");
             printf("          mem <addr> [len], write <addr> <val>, reset,\n");
@@ -511,18 +633,8 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
             printf("          snapshot, diff,\n");
             printf("          list_patterns, get_pattern <name>,\n");
             printf("          speed [scale]  (1.0=C64, 0=unlimited), quit\n");
-        } else if (strcmp(cmd, "break") == 0) {
-            const char *p = line; SKIP_CMD(p); unsigned long addr;
-            if (parse_mon_value(&p, &addr)) {
-                while (*p && isspace((unsigned char)*p)) p++;
-                breakpoint_add(breakpoints, (unsigned short)addr, *p ? p : NULL);
-                if (g_json_mode) printf("{\"cmd\":\"break\",\"ok\":true,\"data\":{\"address\":%lu}}\n", addr & 0xFFFF);
-            } else {
-                if (g_json_mode) json_err("break", "Usage: break <addr> [condition]");
-                else printf("Usage: break <addr> [condition]\n");
-            }
-        } else if (strcmp(cmd, "clear") == 0) {
-            const char *p = line; SKIP_CMD(p); unsigned long addr;
+        } else if (cmd == "clear") {
+            const char *p = line.c_str(); SKIP_CMD(p); unsigned long addr;
             if (parse_mon_value(&p, &addr)) {
                 breakpoint_remove(breakpoints, (unsigned short)addr);
                 if (g_json_mode) printf("{\"cmd\":\"clear\",\"ok\":true,\"data\":{\"address\":%lu}}\n", addr & 0xFFFF);
@@ -530,7 +642,7 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
                 if (g_json_mode) json_err("clear", "Usage: clear <addr>");
                 else printf("Usage: clear <addr>\n");
             }
-        } else if (strcmp(cmd, "list") == 0) {
+        } else if (cmd == "list") {
             if (g_json_mode) {
                 printf("{\"cmd\":\"list\",\"ok\":true,\"data\":{\"breakpoints\":[");
                 for (int i = 0; i < breakpoints->count; i++) {
@@ -544,8 +656,8 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
             } else {
                 breakpoint_list(breakpoints);
             }
-        } else if (strcmp(cmd, "jump") == 0) {
-            const char *p = line; SKIP_CMD(p); unsigned long addr;
+        } else if (cmd == "jump") {
+            const char *p = line.c_str(); SKIP_CMD(p); unsigned long addr;
             if (parse_mon_value(&p, &addr)) {
                 cpu->pc = (unsigned short)addr;
                 if (g_json_mode) printf("{\"cmd\":\"jump\",\"ok\":true,\"data\":{\"pc\":%d}}\n", cpu->pc);
@@ -554,9 +666,9 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
                 if (g_json_mode) json_err("jump", "Usage: jump <addr>");
                 else printf("Usage: jump <addr>\n");
             }
-        } else if (strcmp(cmd, "set") == 0) {
-            char reg[16]; if (sscanf(line, "%*s %15s", reg) == 1) {
-                const char *p = line; SKIP_CMD(p); while (*p && isspace((unsigned char)*p)) p++; SKIP_CMD(p);
+        } else if (cmd == "set") {
+            char reg[16]; if (sscanf(line.c_str(), "%*s %15s", reg) == 1) {
+                const char *p = line.c_str(); SKIP_CMD(p); while (*p && isspace((unsigned char)*p)) p++; SKIP_CMD(p);
                 unsigned long val; if (parse_mon_value(&p, &val)) {
                     if      (strcmp(reg, "A") == 0 || strcmp(reg, "a") == 0) cpu->a = (unsigned char)val;
                     else if (strcmp(reg, "X") == 0 || strcmp(reg, "x") == 0) cpu->x = (unsigned char)val;
@@ -573,9 +685,9 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
                     if (g_json_mode) json_ok("set");
                 }
             }
-        } else if (strcmp(cmd, "flag") == 0) {
+        } else if (cmd == "flag") {
             char fname[8]; int fval;
-            if (sscanf(line, "%*s %7s %d", fname, &fval) == 2) {
+            if (sscanf(line.c_str(), "%*s %7s %d", fname, &fval) == 2) {
                 unsigned char fbit = 0;
                 if      (fname[0]=='C'||fname[0]=='c') fbit = FLAG_C;
                 else if (fname[0]=='Z'||fname[0]=='z') fbit = FLAG_Z;
@@ -585,7 +697,7 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
                 else if (fname[0]=='V'||fname[0]=='v') fbit = FLAG_V;
                 else if (fname[0]=='N'||fname[0]=='n') fbit = FLAG_N;
                 if (fbit) {
-                    set_flag(cpu, fbit, fval);
+                    cpu->set_flag(fbit, fval);
                     if (g_json_mode) json_ok("flag");
                 } else {
                     if (g_json_mode) { char buf[64]; snprintf(buf, sizeof(buf), "Unknown flag: %s", fname); json_err("flag", buf); }
@@ -595,10 +707,10 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
                 if (g_json_mode) json_err("flag", "Usage: flag <C|Z|I|D|B|V|N> <0|1>");
                 else printf("Usage: flag <C|Z|I|D|B|V|N> <0|1>\n");
             }
-        } else if (strcmp(cmd, "write") == 0) {
-            const char *p = line; SKIP_CMD(p); unsigned long addr, val;
+        } else if (cmd == "write") {
+            const char *p = line.c_str(); SKIP_CMD(p); unsigned long addr, val;
             if (parse_mon_value(&p, &addr) && parse_mon_value(&p, &val)) {
-                mem->mem[addr & 0xFFFF] = (unsigned char)(val & 0xFF);
+                mem_write(mem, (unsigned short)addr, (unsigned char)val);
                 if (g_json_mode) printf("{\"cmd\":\"write\",\"ok\":true,\"data\":{\"address\":%lu,\"value\":%lu}}\n",
                                         addr & 0xFFFF, val & 0xFF);
                 else printf("OK\n");
@@ -606,7 +718,7 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
                 if (g_json_mode) json_err("write", "Usage: write <addr> <val>");
                 else printf("Usage: write <addr> <val>\n");
             }
-        } else if (strcmp(cmd, "run") == 0) {
+        } else if (cmd == "run") {
             const char *stop_reason = "brk";
             struct timespec t0; clock_gettime(CLOCK_MONOTONIC, &t0);
             unsigned long cyc0 = cpu->cycles;
@@ -618,7 +730,7 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
                 if (te->mnemonic && strcmp(te->mnemonic, "STP") == 0) { stop_reason = "stp"; break; }
                 if (breakpoint_hit(breakpoints, cpu)) { stop_reason = "breakpoint"; break; }
                 cpu_t pre = *cpu;
-                execute_from_mem(cpu, mem, dt, *p_cpu_type);
+                static_cast<CPU*>(cpu)->step();
                 cli_hist_push(&pre, mem);
                 if (s_snap_active) {
                     int _nw = mem->mem_writes < 256 ? mem->mem_writes : 256;
@@ -639,8 +751,8 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
             }
             if (g_json_mode) json_exec_result("run", stop_reason, cpu);
             else printf("STOP at $%04X\n", cpu->pc);
-        } else if (strcmp(cmd, "trace") == 0) {
-            const char *p = line; SKIP_CMD(p);
+        } else if (cmd == "trace") {
+            const char *p = line.c_str(); SKIP_CMD(p);
             while (*p && isspace((unsigned char)*p)) p++;
             unsigned long tmp;
             /* Optional start address — only if $ prefix (bare numbers are treated as count) */
@@ -718,7 +830,7 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
                 }
 
                 unsigned long pre_cycles = cpu->cycles;
-                execute_from_mem(cpu, mem, dt, *p_cpu_type);
+                static_cast<CPU*>(cpu)->step();
                 int cdelta = (int)(cpu->cycles - pre_cycles);
                 if (s_snap_active) {
                     int _nw = mem->mem_writes < 256 ? mem->mem_writes : 256;
@@ -765,18 +877,18 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
                 printf("---\nStopped: %s  Executed: %d  Cycles: %lu\n",
                        stop_reason, n_exec, total_cycles);
             }
-        } else if (strcmp(cmd, "processors") == 0) {
+        } else if (cmd == "processors") {
             if (g_json_mode) printf("{\"cmd\":\"processors\",\"ok\":true,\"data\":{\"processors\":[\"6502\",\"65c02\",\"65ce02\",\"45gs02\"]}}\n");
             else list_processors();
-        } else if (strcmp(cmd, "info") == 0) {
-            char mnem[16]; if (sscanf(line, "%*s %15s", mnem) == 1)
+        } else if (cmd == "info") {
+            char mnem[16]; if (sscanf(line.c_str(), "%*s %15s", mnem) == 1)
                 print_opcode_info(*p_handlers, *p_num_handlers, mnem);
             else {
                 if (g_json_mode) json_err("info", "Usage: info <mnemonic>");
                 else printf("Usage: info <mnemonic>\n");
             }
-        } else if (strcmp(cmd, "processor") == 0) {
-            char type[16]; if (sscanf(line, "%*s %15s", type) == 1) {
+        } else if (cmd == "processor") {
+            char type[16]; if (sscanf(line.c_str(), "%*s %15s", type) == 1) {
                 if      (strcmp(type, "6502") == 0)   { *p_handlers = opcodes_6502;   *p_num_handlers = OPCODES_6502_COUNT;   *p_cpu_type = CPU_6502; }
                 else if (strcmp(type, "65c02") == 0)  { *p_handlers = opcodes_65c02;  *p_num_handlers = OPCODES_65C02_COUNT;  *p_cpu_type = CPU_65C02; }
                 else if (strcmp(type, "65ce02") == 0) { *p_handlers = opcodes_65ce02; *p_num_handlers = OPCODES_65CE02_COUNT; *p_cpu_type = CPU_65CE02; }
@@ -784,7 +896,7 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
                 dispatch_build(dt, *p_handlers, *p_num_handlers, *p_cpu_type);
                 if (g_json_mode) printf("{\"cmd\":\"processor\",\"ok\":true,\"data\":{\"type\":\"%s\"}}\n", type);
             }
-        } else if (strcmp(cmd, "regs") == 0) {
+        } else if (cmd == "regs") {
             if (g_json_mode) {
                 printf("{\"cmd\":\"regs\",\"ok\":true,\"data\":{");
                 json_reg_fields(cpu);
@@ -793,8 +905,8 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
                 printf("REGS A=%02X X=%02X Y=%02X S=%02X P=%02X PC=%04X Cycles=%lu\n",
                        cpu->a, cpu->x, cpu->y, cpu->s, cpu->p, cpu->pc, cpu->cycles);
             }
-        } else if (strcmp(cmd, "mem") == 0) {
-            const char *p = line; SKIP_CMD(p); unsigned long addr, len = 16, tmp;
+        } else if (cmd == "mem") {
+            const char *p = line.c_str(); SKIP_CMD(p); unsigned long addr, len = 16, tmp;
             if (parse_mon_value(&p, &addr)) {
                 if (parse_mon_value(&p, &tmp)) len = tmp;
                 if (g_json_mode) {
@@ -802,13 +914,13 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
                            addr & 0xFFFF, len);
                     for (unsigned long i = 0; i < len; i++) {
                         if (i > 0) printf(",");
-                        printf("%d", mem->mem[(addr + i) & 0xFFFF]);
+                        printf("%d", mem_read(mem, (unsigned short)(addr + i)));
                     }
                     printf("]}}\n");
                 } else {
                     for (unsigned long i = 0; i < len; i++) {
                         if (i % 16 == 0) printf("\n%04lX: ", addr + i);
-                        printf("%02X ", mem->mem[addr + i]);
+                        printf("%02X ", mem_read(mem, (unsigned short)(addr + i)));
                     }
                     printf("\n");
                 }
@@ -816,12 +928,16 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
                 if (g_json_mode) json_err("mem", "Usage: mem <addr> [len]");
                 else printf("Usage: mem <addr> [len]\n");
             }
-        } else if (strcmp(cmd, "asm") == 0) {
-            const char *p = line; SKIP_CMD(p); unsigned long tmp;
-            int asm_pc = parse_mon_value(&p, &tmp) ? (int)tmp : (int)cpu->pc;
-            run_asm_mode(mem, symbols, *p_handlers, *p_num_handlers, *p_cpu_type, &asm_pc);
-        } else if (strcmp(cmd, "disasm") == 0) {
-            const char *p = line; SKIP_CMD(p); unsigned long tmp;
+        } else if (cmd == "asm") {
+            if (g_json_mode) {
+                cmd_assemble(line.c_str(), mem, symbols, *p_handlers, *p_num_handlers, *p_cpu_type, cpu);
+            } else {
+                const char *p = line.c_str(); SKIP_CMD(p); unsigned long tmp;
+                int asm_pc = parse_mon_value(&p, &tmp) ? (int)tmp : (int)cpu->pc;
+                run_asm_mode(mem, symbols, *p_handlers, *p_num_handlers, *p_cpu_type, &asm_pc);
+            }
+        } else if (cmd == "disasm") {
+            const char *p = line.c_str(); SKIP_CMD(p); unsigned long tmp;
             unsigned short daddr = parse_mon_value(&p, &tmp) ? (unsigned short)tmp : cpu->pc;
             int dcount = parse_mon_value(&p, &tmp) ? (int)tmp : 15;
             if (g_json_mode) {
@@ -845,33 +961,11 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
                     daddr = (unsigned short)(daddr + consumed);
                 }
             }
-        } else if (strcmp(cmd, "reset") == 0) {
-            cpu_init(cpu); cpu->pc = start_addr;
-            if (*p_cpu_type == CPU_45GS02) set_flag(cpu, FLAG_E, 1);
+        } else if (cmd == "reset") {
+            cpu->reset(); cpu->pc = start_addr;
+            if (*p_cpu_type == CPU_45GS02) cpu->set_flag(FLAG_E, 1);
             if (g_json_mode) json_ok("reset");
-        } else if (strcmp(cmd, "step") == 0) {
-            const char *p = line; SKIP_CMD(p); unsigned long tmp;
-            int steps = parse_mon_value(&p, &tmp) ? (int)tmp : 1;
-            const char *stop_reason = "step";
-            for (int i = 0; i < steps; i++) {
-                mem->mem_writes = 0;
-                int tr = handle_trap_local(symbols, cpu, mem); if (tr < 0) { stop_reason = "trap"; break; } if (tr > 0) continue;
-                unsigned char opc = mem_read(mem, cpu->pc); if (opc == 0x00) { stop_reason = "brk"; break; }
-                const dispatch_entry_t *te = peek_dispatch(cpu, mem, dt, *p_cpu_type);
-                if (te->mnemonic && strcmp(te->mnemonic, "STP") == 0) { stop_reason = "stp"; break; }
-                cpu_t pre = *cpu;
-                execute_from_mem(cpu, mem, dt, *p_cpu_type);
-                cli_hist_push(&pre, mem);
-                if (s_snap_active) {
-                    int _nw = mem->mem_writes < 256 ? mem->mem_writes : 256;
-                    for (int _d = 0; _d < _nw; _d++)
-                        cli_snap_record(mem->mem_addr[_d], mem->mem_old_val[_d],
-                                        mem->mem_val[_d], pre.pc);
-                }
-            }
-            if (g_json_mode) json_exec_result("step", stop_reason, cpu);
-            else printf("STOP $%04X\n", cpu->pc);
-        } else if (strcmp(cmd, "stepback") == 0 || strcmp(cmd, "sb") == 0) {
+        } else if (cmd == "stepback" || cmd == "sb") {
             if (cli_hist_step_back(cpu, mem)) {
                 if (g_json_mode) json_exec_result("stepback", "back", cpu);
                 else printf("BACK $%04X\n", cpu->pc);
@@ -879,7 +973,7 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
                 if (g_json_mode) json_err("stepback", "No history to step back into");
                 else printf("No history to step back into.\n");
             }
-        } else if (strcmp(cmd, "stepfwd") == 0 || strcmp(cmd, "sf") == 0) {
+        } else if (cmd == "stepfwd" || cmd == "sf") {
             if (cli_hist_step_fwd(cpu, mem, dt, *p_cpu_type)) {
                 if (g_json_mode) json_exec_result("stepfwd", "forward", cpu);
                 else printf("FWD $%04X\n", cpu->pc);
@@ -887,8 +981,8 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
                 if (g_json_mode) json_err("stepfwd", "Already at the present");
                 else printf("Already at the present.\n");
             }
-        } else if (strcmp(cmd, "bload") == 0) {
-            const char *p = line; SKIP_CMD(p);
+        } else if (cmd == "bload") {
+            const char *p = line.c_str(); SKIP_CMD(p);
             while (*p && isspace((unsigned char)*p)) p++;
             if (*p != '"') {
                 if (g_json_mode) json_err("bload", "Usage: bload \\\"file\\\" [addr]");
@@ -937,8 +1031,8 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
                     }
                 }
             }
-        } else if (strcmp(cmd, "bsave") == 0) {
-            const char *p = line; SKIP_CMD(p);
+        } else if (cmd == "bsave") {
+            const char *p = line.c_str(); SKIP_CMD(p);
             while (*p && isspace((unsigned char)*p)) p++;
             if (*p != '"') { printf("Usage: bsave \"file\" <start> <end>\n"); }
             else {
@@ -974,9 +1068,9 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
                     }
                 }
             }
-        } else if (strcmp(cmd, "speed") == 0) {
+        } else if (cmd == "speed") {
             float s = 0.0f;
-            const char *p = line; while (*p && !isspace((unsigned char)*p)) p++;
+            const char *p = line.c_str(); while (*p && !isspace((unsigned char)*p)) p++;
             if (sscanf(p, " %f", &s) == 1) {
                 if (s < 0.0f) s = 0.0f;
                 g_cli_speed = s;
@@ -1002,7 +1096,7 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
                     else printf("Speed: %.4fx C64 (%.0f Hz)\n", g_cli_speed, CLI_C64_HZ * g_cli_speed);
                 }
             }
-        } else if (strcmp(cmd, "symbols") == 0) {
+        } else if (cmd == "symbols") {
             if (g_json_mode) {
                 printf("{\"cmd\":\"symbols\",\"ok\":true,\"data\":{\"count\":%d,\"symbols\":[",
                        symbols->count);
@@ -1047,16 +1141,16 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
                     printf("%d symbol(s)\n", symbols->count);
                 }
             }
-        } else if (strcmp(cmd, "validate") == 0) {
-            cmd_validate(line, cpu, mem, dt, p_cpu_type, breakpoints, symbols);
-        } else if (strcmp(cmd, "snapshot") == 0) {
+        } else if (cmd == "validate") {
+            cmd_validate(line.c_str(), cpu, mem, dt, p_cpu_type, breakpoints, symbols);
+        } else if (cmd == "snapshot") {
             cli_snap_reset();
             s_snap_active = 1;
             if (g_json_mode)
                 printf("{\"cmd\":\"snapshot\",\"ok\":true,\"data\":{\"message\":\"snapshot taken\"}}\n");
             else
                 printf("Memory snapshot taken.\n");
-        } else if (strcmp(cmd, "diff") == 0) {
+        } else if (cmd == "diff") {
             if (!s_snap_active) {
                 if (g_json_mode) json_err("diff", "No snapshot taken; use 'snapshot' first");
                 else printf("No snapshot taken; use 'snapshot' first.\n");
@@ -1124,7 +1218,7 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
                     }
                 }
             }
-        } else if (strcmp(cmd, "list_patterns") == 0) {
+        } else if (cmd == "list_patterns") {
             if (g_json_mode) {
                 printf("{\"cmd\":\"list_patterns\",\"ok\":true,\"data\":{\"patterns\":[");
                 for (int i = 0; i < g_snippet_count; i++) {
@@ -1149,8 +1243,8 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
                 }
                 printf("\nUse: get_pattern <name>\n");
             }
-        } else if (strcmp(cmd, "get_pattern") == 0) {
-            const char *p = line; SKIP_CMD(p);
+        } else if (cmd == "get_pattern") {
+            const char *p = line.c_str(); SKIP_CMD(p);
             while (*p && isspace((unsigned char)*p)) p++;
             /* strip trailing whitespace */
             char pname[64] = "";
@@ -1183,7 +1277,7 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
                 printf("; %s\n;\n", sn->summary);
                 printf("%s", sn->body);
             }
-        } else if (strcmp(cmd, "vic2.info") == 0) {
+        } else if (cmd == "vic2.info") {
             if (g_json_mode) {
                 printf("{\"cmd\":\"vic2.info\",\"ok\":true,\"data\":");
                 vic2_json_info(mem);
@@ -1191,7 +1285,7 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
             } else {
                 vic2_print_info(mem);
             }
-        } else if (strcmp(cmd, "vic2.regs") == 0) {
+        } else if (cmd == "vic2.regs") {
             if (g_json_mode) {
                 printf("{\"cmd\":\"vic2.regs\",\"ok\":true,\"data\":");
                 vic2_json_regs(mem);
@@ -1199,7 +1293,7 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
             } else {
                 vic2_print_regs(mem);
             }
-        } else if (strcmp(cmd, "vic2.sprites") == 0) {
+        } else if (cmd == "vic2.sprites") {
             if (g_json_mode) {
                 printf("{\"cmd\":\"vic2.sprites\",\"ok\":true,\"data\":");
                 vic2_json_sprites(mem);
@@ -1207,8 +1301,8 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
             } else {
                 vic2_print_sprites(mem);
             }
-        } else if (strcmp(cmd, "vic2.savescreen") == 0) {
-            const char *p = line; SKIP_CMD(p);
+        } else if (cmd == "vic2.savescreen") {
+            const char *p = line.c_str(); SKIP_CMD(p);
             while (*p && isspace((unsigned char)*p)) p++;
             char fbuf[512];
             if (*p && *p != '\n' && *p != '\r') {
@@ -1226,8 +1320,8 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
                 if (g_json_mode) { char buf[576]; snprintf(buf, sizeof(buf), "cannot write %s", fbuf); json_err("vic2.savescreen", buf); }
                 else printf("Error: cannot write '%s'\n", fbuf);
             }
-        } else if (strcmp(cmd, "vic2.savebitmap") == 0) {
-            const char *p = line; SKIP_CMD(p);
+        } else if (cmd == "vic2.savebitmap") {
+            const char *p = line.c_str(); SKIP_CMD(p);
             while (*p && isspace((unsigned char)*p)) p++;
             char fbuf[512];
             if (*p && *p != '\n' && *p != '\r') {

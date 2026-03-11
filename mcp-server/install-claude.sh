@@ -12,5 +12,5 @@ if ! command -v claude &>/dev/null; then
   exit 1
 fi
 
-claude mcp add 6502-simulator node "$SCRIPT_DIR/server.js"
+claude mcp add 6502-simulator node "$SCRIPT_DIR/index.js"
 echo "Registered. Run 'claude' inside $PROJECT_DIR to use the simulator tools."

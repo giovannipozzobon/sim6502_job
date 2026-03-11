@@ -16,6 +16,7 @@
 #include "disassembler.h"
 #include "commands.h"
 #include "cpu_engine.h"
+#include "mega65_io.h"
 
 static instruction_t rom[65536];
 
@@ -60,6 +61,7 @@ int main(int argc, char *argv[]) {
 	unsigned short start_addr = 0;
 	const char *start_label = NULL;
 	int start_addr_provided = 0;
+	const char *initial_cmd = NULL;
 	
 	symbol_table_t symbols;
 	breakpoint_init(&breakpoints);
@@ -127,6 +129,8 @@ int main(int argc, char *argv[]) {
 				else if (strcmp(p, "65ce02") == 0) cpu_type = CPU_65CE02;
 				else if (strcmp(p, "45gs02") == 0) cpu_type = CPU_45GS02;
 			}
+		} else if (strcmp(argv[i], "-c") == 0 || strcmp(argv[i], "--command") == 0) {
+			if (i + 1 < argc) initial_cmd = argv[++i];
 		} else if (argv[i][0] != '-' && !filename) filename = argv[i];
 	}
 
@@ -136,11 +140,12 @@ int main(int argc, char *argv[]) {
 	else if (cpu_type == CPU_65CE02) { handlers = opcodes_65ce02; num_handlers = OPCODES_65CE02_COUNT; }
 	else if (cpu_type == CPU_45GS02) { handlers = opcodes_45gs02; num_handlers = OPCODES_45GS02_COUNT; }
 
-	if (!filename && !interactive_mode) { print_help(argv[0]); return 1; }
+	if (!filename && !interactive_mode && !initial_cmd) { print_help(argv[0]); return 1; }
 	if (symbol_file) symbol_load_file(&symbols, symbol_file);
 
 	cpu_t cpu;
 	memory_t mem; memset(&mem, 0, sizeof(mem));
+	if (cpu_type == CPU_45GS02) mega65_io_register(&mem);
 
 	if (filename) {
 		FILE *f = fopen(filename, "r");
@@ -154,13 +159,26 @@ int main(int argc, char *argv[]) {
 			const char *colon = strchr(ptr, ':');
 			/* Dot-prefixed local label (.name:) must be checked before pseudo-op */
 			if (*ptr == '.' && !(colon && (!semi1 || colon < semi1))) {
-				handle_pseudo_op(ptr, &cpu_type, &pc, NULL, NULL, NULL); continue;
+				handle_pseudo_op(ptr, &cpu_type, &pc, NULL, NULL, NULL); 
+				if (cpu_type == CPU_65C02) { handlers = opcodes_65c02; num_handlers = OPCODES_65C02_COUNT; }
+				else if (cpu_type == CPU_65CE02) { handlers = opcodes_65ce02; num_handlers = OPCODES_65CE02_COUNT; }
+				else if (cpu_type == CPU_45GS02) { handlers = opcodes_45gs02; num_handlers = OPCODES_45GS02_COUNT; }
+				else if (cpu_type == CPU_6502_UNDOCUMENTED) { handlers = opcodes_6502_undoc; num_handlers = OPCODES_6502_UNDOC_COUNT; }
+				else { handlers = opcodes_6502; num_handlers = OPCODES_6502_COUNT; }
+				continue;
 			}
 			if (colon && (!semi1 || colon < semi1)) {
 				char l[64]; int len = colon - ptr; if (len >= 64) len = 63;
 				strncpy(l, ptr, len); l[len] = 0; symbol_add(&symbols, l, pc, SYM_LABEL, "Source");
 				const char *after = colon + 1; while (*after && isspace(*after)) after++;
-				if (*after == '.') { handle_pseudo_op(after, &cpu_type, &pc, NULL, NULL, NULL); continue; }
+				if (*after == '.') { 
+					handle_pseudo_op(after, &cpu_type, &pc, NULL, NULL, NULL); 
+					if (cpu_type == CPU_65C02) { handlers = opcodes_65c02; num_handlers = OPCODES_65C02_COUNT; }
+					else if (cpu_type == CPU_65CE02) { handlers = opcodes_65ce02; num_handlers = OPCODES_65CE02_COUNT; }
+					else if (cpu_type == CPU_45GS02) { handlers = opcodes_45gs02; num_handlers = OPCODES_45GS02_COUNT; }
+					else { handlers = opcodes_6502; num_handlers = OPCODES_6502_COUNT; }
+					continue; 
+				}
 			} else {
 				/* Equate:  NAME = VALUE  (no colon, '=' before any ';') */
 				const char *eq = strchr(ptr, '=');
@@ -178,7 +196,9 @@ int main(int argc, char *argv[]) {
 			}
 			instruction_t instr; parse_line(line, &instr, NULL, pc);
 			if (instr.op[0]) {
-				pc += get_encoded_length(instr.op, instr.mode, handlers, num_handlers, cpu_type);
+				int len = get_encoded_length(instr.op, instr.mode, handlers, num_handlers, cpu_type);
+				if (len < 0) { fprintf(stderr, "Pass 1: Error assembling '%s' at $%04X\n", line, pc); return 1; }
+				pc += len;
 			}
 		}
 		if (start_label && !start_addr_provided) { symbol_lookup_name(&symbols, start_label, &start_addr); start_addr_provided = 1; }
@@ -195,9 +215,25 @@ int main(int argc, char *argv[]) {
 			const char *colon2 = strchr(ptr, ':');
 			/* Dot-prefixed local label (.name:) must be checked before pseudo-op */
 			if (*ptr == '.' && !(colon2 && (!semi2 || colon2 < semi2))) {
-				handle_pseudo_op(ptr, &cpu_type, &pc, &mem, &symbols, NULL); continue;
+				handle_pseudo_op(ptr, &cpu_type, &pc, &mem, &symbols, NULL); 
+				if (cpu_type == CPU_65C02) { handlers = opcodes_65c02; num_handlers = OPCODES_65C02_COUNT; }
+				else if (cpu_type == CPU_65CE02) { handlers = opcodes_65ce02; num_handlers = OPCODES_65CE02_COUNT; }
+				else if (cpu_type == CPU_45GS02) { handlers = opcodes_45gs02; num_handlers = OPCODES_45GS02_COUNT; }
+				else if (cpu_type == CPU_6502_UNDOCUMENTED) { handlers = opcodes_6502_undoc; num_handlers = OPCODES_6502_UNDOC_COUNT; }
+				else { handlers = opcodes_6502; num_handlers = OPCODES_6502_COUNT; }
+				continue;
 			}
-			if (colon2 && (!semi2 || colon2 < semi2)) { const char *after = colon2 + 1; while (*after && isspace(*after)) after++; if (*after == '.') { handle_pseudo_op(after, &cpu_type, &pc, &mem, &symbols, NULL); continue; } }
+			if (colon2 && (!semi2 || colon2 < semi2)) { 
+				const char *after = colon2 + 1; while (*after && isspace(*after)) after++; 
+				if (*after == '.') { 
+					handle_pseudo_op(after, &cpu_type, &pc, &mem, &symbols, NULL); 
+					if (cpu_type == CPU_65C02) { handlers = opcodes_65c02; num_handlers = OPCODES_65C02_COUNT; }
+					else if (cpu_type == CPU_65CE02) { handlers = opcodes_65ce02; num_handlers = OPCODES_65CE02_COUNT; }
+					else if (cpu_type == CPU_45GS02) { handlers = opcodes_45gs02; num_handlers = OPCODES_45GS02_COUNT; }
+					else { handlers = opcodes_6502; num_handlers = OPCODES_6502_COUNT; }
+					continue; 
+				} 
+			}
 			else {
 				/* Skip equate lines in second pass (already in symbol table) */
 				const char *eq2 = strchr(ptr, '=');
@@ -206,7 +242,9 @@ int main(int argc, char *argv[]) {
 			instruction_t instr; parse_line(line, &instr, &symbols, pc);
 			if (instr.op[0]) {
 				rom[pc] = instr;
-				pc += encode_to_mem(&mem, pc, &instr, handlers, num_handlers, cpu_type);
+				int enc = encode_to_mem(&mem, pc, &instr, handlers, num_handlers, cpu_type);
+				if (enc < 0) { fprintf(stderr, "Pass 2: Error assembling '%s' at $%04X\n", line, pc); return 1; }
+				pc += enc;
 			}
 		}
 		fclose(f);
@@ -219,7 +257,7 @@ int main(int argc, char *argv[]) {
 	if (enable_trace && trace_file) trace_enable_file(&trace_info, trace_file);
 	else if (enable_trace) trace_enable_stdout(&trace_info);
 
-	if (interactive_mode) { run_interactive_mode(&cpu, &mem, &handlers, &num_handlers, &cpu_type, &dt, cpu.pc, &breakpoints, &symbols); return 0; }
+	if (interactive_mode || initial_cmd) { run_interactive_mode(&cpu, &mem, &handlers, &num_handlers, &cpu_type, &dt, cpu.pc, &breakpoints, &symbols, initial_cmd); return 0; }
 
     printf("\nStarting execution at 0x%04X...\n", cpu.pc);
 	while (cpu.cycles < 1000000) {

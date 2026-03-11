@@ -27,15 +27,25 @@ void execute_from_mem(cpu_t *cpu, memory_t *mem, const dispatch_table_t *dt, cpu
 			if (byte2 == 0xEA) {
 				unsigned char base = mem_read(mem, (unsigned short)(cpu->pc + 3));
 				const dispatch_entry_t *e = &dt->quad_eom[base];
-				if (e->fn) { cpu->pc += 3; cpu->eom_prefix = 2; unsigned short arg = decode_operand(cpu, mem, e->mode); e->fn(cpu, mem, arg); return; }
+				if (e->fn) { 
+					fprintf(stderr, "[DEBUG] Executing QUAD_EOM opcode $%02X at $%04X (%s)\n", base, cpu->pc, e->mnemonic);
+					cpu->pc += 3; cpu->eom_prefix = 2; unsigned short arg = decode_operand(cpu, mem, e->mode); e->fn(cpu, mem, arg); return; 
+				}
 			} else {
 				const dispatch_entry_t *e = &dt->quad[byte2];
-				if (e->fn) { cpu->pc += 2; cpu->eom_prefix = (cpu->eom_prefix == 1) ? 2 : 0; unsigned short arg = decode_operand(cpu, mem, e->mode); e->fn(cpu, mem, arg); return; }
+				if (e->fn) { 
+					fprintf(stderr, "[DEBUG] Executing QUAD opcode $%02X at $%04X (%s)\n", byte2, cpu->pc, e->mnemonic);
+					cpu->pc += 2; cpu->eom_prefix = (cpu->eom_prefix == 1) ? 2 : 0; unsigned short arg = decode_operand(cpu, mem, e->mode); e->fn(cpu, mem, arg); return; 
+				}
 			}
 		}
 	}
 	cpu->eom_prefix = (cpu->eom_prefix == 1) ? 2 : 0;
 	const dispatch_entry_t *e = &dt->base[byte0];
-	if (!e->fn) { cpu->pc++; return; }
+	if (!e->fn) { 
+		fprintf(stderr, "[DEBUG] No handler for opcode $%02X at $%04X (CPU type %d)\n", byte0, cpu->pc, (int)cpu_type);
+		cpu->pc++; return; 
+	}
+	fprintf(stderr, "[DEBUG] Executing opcode $%02X at $%04X (%s)\n", byte0, cpu->pc, e->mnemonic);
 	unsigned short arg = decode_operand(cpu, mem, e->mode); e->fn(cpu, mem, arg);
 }

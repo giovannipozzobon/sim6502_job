@@ -5,37 +5,47 @@ CXXFLAGS = -Wall -Wextra -O2 -I src -I src/core -I src/core/opcodes
 
 # --- Core Engine (Static Library) ---
 CORE_SRCS = \
-	src/core/cpu_engine.c \
-	src/core/sim_api.c \
-	src/core/interrupts.c \
-	src/core/assembler.c \
-	src/core/disassembler.c \
-	src/core/condition.c \
-	src/core/vic2.c \
-	src/core/patterns.c
+	src/core/cpu_engine.cpp \
+	src/core/cpu_6502.cpp \
+	src/core/sim_api.cpp \
+	src/core/interrupts.cpp \
+	src/core/assembler.cpp \
+	src/core/disassembler.cpp \
+	src/core/condition.cpp \
+	src/core/vic2.cpp \
+	src/core/vic2_io.cpp \
+	src/core/mega65_io.cpp \
+	src/core/patterns.cpp \
+	src/core/project_manager.cpp
 
 OPCODE_SRCS = \
-	src/core/opcodes/6502.c \
-	src/core/opcodes/6502_undoc.c \
-	src/core/opcodes/65c02.c \
-	src/core/opcodes/65ce02.c \
-	src/core/opcodes/45gs02.c
+	src/core/opcodes/6502.cpp \
+	src/core/opcodes/6502_undoc.cpp \
+	src/core/opcodes/65c02.cpp \
+	src/core/opcodes/65ce02.cpp \
+	src/core/opcodes/45gs02.cpp
 
-CORE_OBJS = $(CORE_SRCS:.c=.o) $(OPCODE_SRCS:.c=.o)
+CORE_OBJS = $(CORE_SRCS:.cpp=.o) $(OPCODE_SRCS:.cpp=.o)
 LIB_TARGET = libsim6502.a
 
-all: sim6502
+all: sim6502 gui
 
 $(LIB_TARGET): $(CORE_OBJS)
 	ar rcs $@ $^
 
 # --- CLI Frontend ---
-CLI_SRCS = src/cli/main.c src/cli/commands.c
-CLI_OBJS = $(CLI_SRCS:.c=.o)
+CLI_COMMANDS_SRCS = \
+	src/cli/commands/StepCmd.cpp \
+	src/cli/commands/BreakCmd.cpp \
+	src/cli/commands/EnvCmd.cpp \
+	src/cli/commands/CommandRegistry.cpp
+
+CLI_SRCS = src/cli/main.cpp src/cli/commands.cpp $(CLI_COMMANDS_SRCS)
+CLI_OBJS = $(CLI_SRCS:.cpp=.o)
 TARGET   = sim6502
 
 $(TARGET): $(CLI_OBJS) $(LIB_TARGET)
-	$(CC) $(CFLAGS) -o $@ $^
+	$(CXX) $(CXXFLAGS) -o $@ $^
 
 # --- GUI Frontend ---
 IMGUI_DIR  = src/gui/imgui
