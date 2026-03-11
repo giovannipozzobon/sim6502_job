@@ -3016,7 +3016,9 @@ static void draw_pane_test_runner(void)
             auto inp_field = [&](int col, char *buf, size_t bufsz) {
                 ImGui::TableSetColumnIndex(col);
                 ImGui::SetNextItemWidth(-1);
+                ImGui::PushID(col);
                 ImGui::InputText("##f", buf, bufsz, ImGuiInputTextFlags_CharsHexadecimal);
+                ImGui::PopID();
             };
             inp_field(2, row.in_a, sizeof(row.in_a));
             inp_field(3, row.in_x, sizeof(row.in_x));
