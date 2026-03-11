@@ -10,6 +10,7 @@ typedef struct {
     const char *category;   /* "math", "memory", "io", "time"    */
     const char *summary;    /* one-line description               */
     const char *processor;  /* "6502", "65c02", "45gs02"         */
+    const char *requires_device; /* e.g. "vic2", "mega65_dma", can be NULL */
     const char *body;       /* full documented assembly source    */
 } snippet_t;
 

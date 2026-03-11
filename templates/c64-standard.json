@@ -12,7 +12,7 @@
     {
       "target": "src/main.asm",
       "content": "; Project: {{PROJECT_NAME}}
-.processor 6502
+.target c64
 .org {{START_ADDR}}
 
 ; BASIC stub: 10 SYS 2061 ($080D)

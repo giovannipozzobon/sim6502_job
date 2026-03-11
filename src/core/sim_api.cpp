@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <vector>
 
 /* --- Snapshot linked-list accumulator ---
  * One node per unique virtual address written since the last snapshot.
@@ -37,6 +38,7 @@ struct sim_session {
     dispatch_table_t  dt;
     symbol_table_t    symbols;
     breakpoint_list_t breakpoints;
+    machine_type_t    machine_type;
     cpu_type_t        cpu_type;
     sim_state_t       state;
     unsigned short    start_addr;
@@ -65,6 +67,7 @@ struct sim_session {
     int                  hist_count;   /* entries stored (0 .. hist_cap)         */
     int                  hist_enabled; /* 1 = recording active                   */
     int                  hist_pos;     /* 0 = present, N = N steps back          */
+    std::vector<IOHandler*> dynamic_handlers;
 };
 
 /* --- Internal Helpers --- */
@@ -146,26 +149,58 @@ static const char *processor_name_local(cpu_type_t type) {
 	}
 }
 
+static const char *machine_name_local(machine_type_t type) {
+    switch (type) {
+    case MACHINE_RAW6502: return "raw6502";
+    case MACHINE_C64:     return "c64";
+    case MACHINE_C128:    return "c128";
+    case MACHINE_MEGA65:  return "mega65";
+    case MACHINE_X16:     return "x16";
+    default:              return "unknown";
+    }
+}
+
+static void machine_init_hardware(sim_session_t *s) {
+    if (s->mem.io_registry) {
+        delete s->mem.io_registry;
+    }
+    s->mem.io_registry = new IORegistry(s->cpu->get_interrupt_controller());
+    
+    switch (s->machine_type) {
+        case MACHINE_RAW6502:
+            // No I/O devices registered
+            break;
+        case MACHINE_MEGA65:
+            mega65_io_register(&s->mem);
+            break;
+        case MACHINE_C64:
+        case MACHINE_C128:
+        case MACHINE_X16:
+        default:
+            vic2_io_register(&s->mem);
+            s->mem.io_registry->rebuild_map(&s->mem);
+            break;
+    }
+}
+
 /* --- API Implementation --- */
 
 sim_session_t *sim_create(const char *processor) {
     sim_session_t *s = (sim_session_t *)calloc(1, sizeof(*s));
     if (!s) return NULL;
     s->cpu_type = CPU_6502;
+    s->machine_type = MACHINE_C64; // Default to C64 for backward compatibility with 6502 scripts
     if (processor) {
         if      (strcmp(processor, "6502-undoc") == 0) s->cpu_type = CPU_6502_UNDOCUMENTED;
-        else if (strcmp(processor, "65c02")      == 0) s->cpu_type = CPU_65C02;
+        else if (strcmp(processor, "65c02")      == 0) { s->cpu_type = CPU_65C02; s->machine_type = MACHINE_X16; }
         else if (strcmp(processor, "65ce02")     == 0) s->cpu_type = CPU_65CE02;
-        else if (strcmp(processor, "45gs02")     == 0) s->cpu_type = CPU_45GS02;
+        else if (strcmp(processor, "45gs02")     == 0) { s->cpu_type = CPU_45GS02; s->machine_type = MACHINE_MEGA65; }
     }
     api_select_handlers(s);
     s->cpu = CPUFactory::create(s->cpu_type);
     s->cpu->mem = &s->mem;
     memset(&s->mem, 0, sizeof(s->mem));
-    s->mem.io_registry = new IORegistry(static_cast<CPU6502*>(s->cpu)->get_interrupt_controller());
-    vic2_io_register(&s->mem);
-    if (s->cpu_type == CPU_45GS02) mega65_io_register(&s->mem);
-    else s->mem.io_registry->rebuild_map(&s->mem);
+    machine_init_hardware(s);
     symbol_table_init(&s->symbols, "Session");
     breakpoint_init(&s->breakpoints);
     s->state = SIM_IDLE;
@@ -188,6 +223,7 @@ void sim_destroy(sim_session_t *s) {
         while (n) { snap_node_t *nx = n->next; free(n); n = nx; }
     }
     free(s->hist_buf);
+    for (auto h : s->dynamic_handlers) delete h;
     if (s->mem.io_registry) delete s->mem.io_registry;
     delete s->cpu;
     free(s);
@@ -211,7 +247,14 @@ int sim_load_asm(sim_session_t *s, const char *path) {
         char *ptr = line;
         while (*ptr && isspace(*ptr)) ptr++;
         if (!*ptr || *ptr == ';') continue;
-        if (*ptr == '.') { handle_pseudo_op(ptr, &cpu_type, &pc, NULL, NULL, NULL); continue; }
+        if (*ptr == '.') { 
+            if (!handle_pseudo_op(ptr, &s->machine_type, &cpu_type, &pc, NULL, NULL, NULL)) {
+                fclose(f); return -1;
+            }
+            s->cpu_type = cpu_type;
+            api_select_handlers(s);
+            continue; 
+        }
         char *semi  = strchr(ptr, ';');
         char *colon = strchr(ptr, ':');
         if (colon && (!semi || colon < semi)) {
@@ -220,7 +263,14 @@ int sim_load_asm(sim_session_t *s, const char *path) {
             symbol_add(&s->symbols, label_name, (unsigned short)pc, SYM_LABEL, "Source");
             const char *after = colon + 1;
             while (*after && isspace(*after)) after++;
-            if (*after == '.') { handle_pseudo_op(after, &cpu_type, &pc, NULL, NULL, NULL); continue; }
+            if (*after == '.') { 
+                if (!handle_pseudo_op(after, &s->machine_type, &cpu_type, &pc, NULL, NULL, NULL)) {
+                    fclose(f); return -1;
+                }
+                s->cpu_type = cpu_type;
+                api_select_handlers(s);
+                continue; 
+            }
         }
         instruction_t instr; parse_line(line, &instr, NULL, pc);
         if (instr.op[0]) {
@@ -235,11 +285,7 @@ int sim_load_asm(sim_session_t *s, const char *path) {
     }
     s->cpu_type = cpu_type;
     api_select_handlers(s);
-    if (s->cpu_type == CPU_45GS02) mega65_io_register(&s->mem);
-    else {
-        vic2_io_register(&s->mem);
-        s->mem.io_registry->rebuild_map(&s->mem);
-    }
+    machine_init_hardware(s);
     s->cpu->reset();
     s->cpu->pc = 0x0200;
     s->start_addr = 0x0200;
@@ -250,13 +296,27 @@ int sim_load_asm(sim_session_t *s, const char *path) {
         const char *ptr = line;
         while (*ptr && isspace(*ptr)) ptr++;
         if (!*ptr || *ptr == ';') continue;
-        if (*ptr == '.') { handle_pseudo_op(ptr, &s->cpu_type, &pc, &s->mem, &s->symbols, NULL); continue; }
+        if (*ptr == '.') { 
+            if (!handle_pseudo_op(ptr, &s->machine_type, &s->cpu_type, &pc, &s->mem, &s->symbols, NULL)) {
+                fclose(f); return -1;
+            }
+            api_select_handlers(s);
+            machine_init_hardware(s);
+            continue; 
+        }
         const char *semi2  = strchr(ptr, ';');
         const char *colon = strchr(ptr, ':');
         if (colon && (!semi2 || colon < semi2)) {
             const char *after = colon + 1;
             while (*after && isspace(*after)) after++;
-            if (*after == '.') { handle_pseudo_op(after, &s->cpu_type, &pc, &s->mem, &s->symbols, NULL); continue; }
+            if (*after == '.') { 
+                if (!handle_pseudo_op(after, &s->machine_type, &s->cpu_type, &pc, &s->mem, &s->symbols, NULL)) {
+                    fclose(f); return -1;
+                }
+                api_select_handlers(s);
+                machine_init_hardware(s);
+                continue; 
+            }
         }
         instruction_t instr; parse_line(line, &instr, &s->symbols, pc);
         if (instr.op[0]) {
@@ -296,11 +356,10 @@ int sim_load_bin(sim_session_t *s, const char *path, uint16_t load_addr)
     if (!s || !path) return -1;
     FILE *f = fopen(path, "rb");
     if (!f) return -1;
+    IORegistry *old_registry = s->mem.io_registry;
     memset(&s->mem, 0, sizeof(s->mem));
-    s->mem.io_registry = new IORegistry(s->cpu->get_interrupt_controller());
-    vic2_io_register(&s->mem);
-    if (s->cpu_type == CPU_45GS02) mega65_io_register(&s->mem);
-    else s->mem.io_registry->rebuild_map(&s->mem);
+    s->mem.io_registry = old_registry;
+    machine_init_hardware(s);
     memset(s->session_rom, 0, sizeof(s->session_rom));
     symbol_table_init(&s->symbols, "Session");
     breakpoint_init(&s->breakpoints);
@@ -328,11 +387,10 @@ int sim_load_prg(sim_session_t *s, const char *path, uint16_t override_addr)
     uint16_t load_addr = override_addr
         ? override_addr
         : (uint16_t)((unsigned)lo | ((unsigned)hi << 8));
+    IORegistry *old_registry = s->mem.io_registry;
     memset(&s->mem, 0, sizeof(s->mem));
-    s->mem.io_registry = new IORegistry(s->cpu->get_interrupt_controller());
-    vic2_io_register(&s->mem);
-    if (s->cpu_type == CPU_45GS02) mega65_io_register(&s->mem);
-    else s->mem.io_registry->rebuild_map(&s->mem);
+    s->mem.io_registry = old_registry;
+    machine_init_hardware(s);
     memset(s->session_rom, 0, sizeof(s->session_rom));
     symbol_table_init(&s->symbols, "Session");
     breakpoint_init(&s->breakpoints);
@@ -539,6 +597,63 @@ void sim_mem_write_byte(sim_session_t *s, uint16_t addr, uint8_t val) { if (s) m
 sim_state_t sim_get_state(sim_session_t *s) { return s ? s->state : SIM_IDLE; }
 const char *sim_get_filename(sim_session_t *s) { return (s && s->filename[0]) ? s->filename : "(none)"; }
 const char *sim_processor_name(sim_session_t *s) { return s ? processor_name_local(s->cpu_type) : "6502"; }
+
+machine_type_t sim_get_machine_type(sim_session_t *s) { return s ? s->machine_type : MACHINE_RAW6502; }
+const char *sim_machine_name(machine_type_t type) { return machine_name_local(type); }
+
+int sim_device_add(sim_session_t *s, const char *name, uint16_t address) {
+    if (!s || !name || !s->mem.io_registry) return -1;
+
+    IOHandler *h = nullptr;
+    uint16_t end = address;
+
+    if (strcmp(name, "vic2") == 0) {
+        h = new VIC2Handler();
+        end = address + 0x2E;
+    } else if (strcmp(name, "mega65_math") == 0) {
+        h = new MathCoprocessorHandler();
+        end = address + 0x03;
+    } else if (strcmp(name, "mega65_dma") == 0) {
+        h = new DMAControllerHandler();
+        end = address + 0x05;
+    } else if (strcmp(name, "sid") == 0) {
+        /* SIDHandler implementation is in sid.plan.md, not yet in code.
+         * For now, we will return -1 or stub it. 
+         * Once SIDHandler is added to the project, this can be uncommented.
+         */
+        // h = new SIDHandler();
+        // end = address + 0x1F;
+        return -1;
+    }
+
+    if (h) {
+        s->dynamic_handlers.push_back(h);
+        s->mem.io_registry->register_handler(address, end, h);
+        s->mem.io_registry->rebuild_map(&s->mem);
+        return 0;
+    }
+
+    return -1;
+}
+
+void sim_set_machine_type(sim_session_t *s, machine_type_t machine) {
+    if (!s) return;
+    s->machine_type = machine;
+    // Hardware purge: Dynamic handlers are tied to the machine context
+    for (auto h : s->dynamic_handlers) delete h;
+    s->dynamic_handlers.clear();
+
+    switch (machine) {
+        case MACHINE_C64:      s->cpu_type = CPU_6502; break;
+        case MACHINE_C128:     s->cpu_type = CPU_6502; break; // Actually 8502 but we use 6502
+        case MACHINE_MEGA65:   s->cpu_type = CPU_45GS02; break;
+        case MACHINE_X16:      s->cpu_type = CPU_65C02; break;
+        case MACHINE_RAW6502:  s->cpu_type = CPU_6502; break;
+    }
+    api_select_handlers(s);
+    machine_init_hardware(s);
+}
+
 const char *sim_state_name(sim_state_t state) {
     switch (state) {
     case SIM_IDLE:     return "IDLE";

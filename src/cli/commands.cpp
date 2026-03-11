@@ -460,8 +460,11 @@ static void cmd_assemble(const char *line,
     int enc = -1;
 
     if (*p == '.') {
-        handle_pseudo_op(p, &cpu_type, &asm_pc, mem, symbols, NULL);
-        enc = asm_pc - base_pc;
+        if (!handle_pseudo_op(p, NULL, &cpu_type, &asm_pc, mem, symbols, NULL)) {
+            enc = -1;
+        } else {
+            enc = asm_pc - base_pc;
+        }
     } else {
         const char *colon = strchr(p, ':');
         if (colon) {
@@ -522,7 +525,10 @@ void run_asm_mode(memory_t *mem, symbol_table_t *symbols,
         if (!*p || *p == ';') continue;
         int base_pc = *asm_pc;
         if (*p == '.') {
-            handle_pseudo_op(p, &cpu_type, asm_pc, mem, symbols, NULL);
+            if (!handle_pseudo_op(p, NULL, &cpu_type, asm_pc, mem, symbols, NULL)) {
+                printf("       error: pseudo-op failed\n");
+                continue;
+            }
             if (*asm_pc - base_pc > 0) {
                 printf("$%04X:", base_pc);
                 int show = (*asm_pc - base_pc) < 4 ? (*asm_pc - base_pc) : 4;
@@ -540,7 +546,12 @@ void run_asm_mode(memory_t *mem, symbol_table_t *symbols,
             symbol_add(symbols, lname, (unsigned short)*asm_pc, SYM_LABEL, "asm");
             printf("       %s = $%04X\n", lname, (unsigned int)*asm_pc);
             const char *after = colon + 1; while (*after && isspace((unsigned char)*after)) after++;
-            if (*after == '.') { handle_pseudo_op(after, &cpu_type, asm_pc, mem, symbols, NULL); continue; }
+            if (*after == '.') { 
+                if (!handle_pseudo_op(after, NULL, &cpu_type, asm_pc, mem, symbols, NULL)) {
+                    printf("       error: pseudo-op failed\n");
+                }
+                continue; 
+            }
             if (!*after || *after == ';') continue;
         }
         instruction_t instr; parse_line(buf, &instr, symbols, *asm_pc);
@@ -1351,7 +1362,8 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
 void print_help(const char *progname) {
     printf("6502 Simulator v0.99\nUsage: %s [options] <file.asm>\n\n", progname);
     printf("Options:\n"
-           "  -p <CPU>  Select processor: 6502, 65c02, 65ce02, 45gs02\n"
+           "  -M, --machine <TYPE> Select machine: raw6502, c64, c128, mega65, x16\n"
+           "  -p, --processor <CPU> Select processor: 6502, 65c02, 65ce02, 45gs02\n"
            "  -I        Interactive mode\n"
            "  -J        JSON output mode (use with -I)\n"
            "  -l        List processors\n"

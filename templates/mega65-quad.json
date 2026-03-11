@@ -13,7 +13,7 @@
     {
       "target": "src/main.asm",
       "content": "; Project: {{PROJECT_NAME}}
-.processor 45gs02
+.target mega65
 .org {{START_ADDR}}
 
 ; Enable 45GS02 extended mode (SEE)

@@ -43,7 +43,7 @@ const server = new Server(
 
 // ── Simulator process management ──────────────────────────────────────────────
 
-function startSimulator(asmCode) {
+function startSimulator(asmCode, machine = null) {
   if (simulatorProcess) {
     simulatorProcess.kill();
     simulatorProcess = null;
@@ -51,8 +51,14 @@ function startSimulator(asmCode) {
 
   fs.writeFileSync(TEMP_ASM_FILE, asmCode);
 
+  const args = ['-I', '-J'];
+  if (machine) {
+    args.push('-M', machine);
+  }
+  args.push(TEMP_ASM_FILE);
+
   // -I = interactive mode, -J = JSON output for all commands
-  simulatorProcess = spawn(SIMULATOR_PATH, ['-I', '-J', TEMP_ASM_FILE]);
+  simulatorProcess = spawn(SIMULATOR_PATH, args);
   simulatorBuffer  = '';
 
   simulatorProcess.stdout.on('data', (data) => {
@@ -196,7 +202,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       name: "load_program",
       description: "Assemble and load 6502/65xx assembly code into the simulator.",
       inputSchema: { type: "object", properties: {
-        code: { type: "string", description: "Assembly source code" }
+        code: { type: "string", description: "Assembly source code" },
+        machine: { type: "string", description: "Optional machine target (raw6502, c64, c128, mega65, x16)" }
       }, required: ["code"] }
     },
     {
@@ -416,6 +423,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       }
     },
     {
+      name: "add_device",
+      description: "Add an optional I/O device to the current machine. Supported types: 'vic2', 'sid', 'mega65_math', 'mega65_dma'.",
+      inputSchema: {
+        type: "object",
+        required: ["type", "address"],
+        properties: {
+          type:    { type: "string", description: "Device type" },
+          address: { type: "number", description: "Base address (decimal or hex string)" }
+        }
+      }
+    },
+    {
       name: "create_project",
       description: "Create a new project directory structure from a template.",
       inputSchema: { 
@@ -449,7 +468,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     switch (name) {
 
       case "load_program": {
-        await startSimulator(args.code);
+        await startSimulator(args.code, args.machine);
         const symRaw = await sendCommand("symbols");
         const symData = parseResult(symRaw);
         const h4 = n => n.toString(16).toUpperCase().padStart(4, '0');
@@ -792,6 +811,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const raw = await sendCommand(`devices ${cmd} "${args.name}"`);
         const d   = parseResult(raw);
         return text(`Device '${d.name}' ${d.enabled ? 'enabled' : 'disabled'}.`);
+      }
+
+      case "add_device": {
+        const addrHex = typeof args.address === 'number'
+          ? '$' + args.address.toString(16)
+          : args.address;
+        const raw = await sendCommand(`devices add ${args.type} ${addrHex}`);
+        const d   = parseResult(raw);
+        const h4 = n => n.toString(16).toUpperCase().padStart(4, '0');
+        return text(`Device '${d.name}' added at $${h4(d.start)}-$${h4(d.end)}.`);
       }
 
       case "create_project": {

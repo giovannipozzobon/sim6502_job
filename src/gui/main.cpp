@@ -72,7 +72,11 @@ static bool g_focus_filename    = false;
 
 static const char *g_proc_labels[] = { "6502", "6502-undoc", "65C02", "65CE02", "45GS02" };
 static const char *g_proc_ids[]    = { "6502", "6502-undoc", "65c02", "65ce02", "45gs02" };
-static int  g_proc_idx             = 0;
+static int         g_proc_idx      = 0;
+
+static const char *g_mach_labels[] = { "raw6502", "c64", "c128", "mega65", "x16" };
+static machine_type_t g_mach_ids[] = { MACHINE_RAW6502, MACHINE_C64, MACHINE_C128, MACHINE_MEGA65, MACHINE_X16 };
+static int         g_mach_idx      = 1; // default c64
 
 /* Pane visibility */
 static bool show_registers   = true;
@@ -181,6 +185,12 @@ static bool     g_binsave_open      = false;
 static char     g_binsave_path[512] = "";
 static char     g_binsave_start[8]  = "0200";
 static char     g_binsave_count[8]  = "0100";
+
+/* ---- Hardware Expansion ---- */
+static bool     g_add_device_open      = false;
+static int      g_add_device_type_idx  = 0;
+static char     g_add_device_addr[8]   = "D420";
+static const char *g_device_types[]    = { "sid", "vic2", "mega65_math", "mega65_dma" };
 
 /* ---- Instruction Reference ---- */
 static char g_iref_filter[32] = "";
@@ -3819,6 +3829,36 @@ static void draw_toolbar(void)
     ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
     ImGui::SameLine();
 
+    /* Machine dropdown */
+    ImGui::SetNextItemWidth(combo_w);
+    if (ImGui::BeginCombo("##mach", g_mach_labels[g_mach_idx])) {
+        for (int i = 0; i < (int)(sizeof(g_mach_labels) / sizeof(g_mach_labels[0])); i++) {
+            bool selected = (i == g_mach_idx);
+            if (ImGui::Selectable(g_mach_labels[i], selected)) {
+                g_mach_idx = i;
+                sim_set_machine_type(g_sim, g_mach_ids[i]);
+                cpu_type_t ct = sim_get_cpu_type(g_sim);
+                if (ct == CPU_6502) g_proc_idx = 0;
+                else if (ct == CPU_6502_UNDOCUMENTED) g_proc_idx = 1;
+                else if (ct == CPU_65C02) g_proc_idx = 2;
+                else if (ct == CPU_65CE02) g_proc_idx = 3;
+                else if (ct == CPU_45GS02) g_proc_idx = 4;
+                /* Optional: auto-load symbols */
+                const char* sym_file = NULL;
+                if (g_mach_ids[i] == MACHINE_C64) sym_file = "symbols/c64.sym";
+                else if (g_mach_ids[i] == MACHINE_C128) sym_file = "symbols/c128.sym";
+                else if (g_mach_ids[i] == MACHINE_MEGA65) sym_file = "symbols/mega65.sym";
+                else if (g_mach_ids[i] == MACHINE_X16) sym_file = "symbols/x16.sym";
+                if (sym_file) sim_sym_load_file(g_sim, sym_file);
+            }
+            if (selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Active machine");
+
+    ImGui::SameLine();
+    
     /* Processor dropdown */
     ImGui::SetNextItemWidth(combo_w);
     if (ImGui::BeginCombo("##proc", g_proc_labels[g_proc_idx])) {
@@ -4481,6 +4521,41 @@ static void draw_binload_popup(void)
             } else {
                 con_add(CON_COL_ERR, "bload: failed to open '%s'", g_binload_path);
             }
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
+static void draw_add_device_popup(void)
+{
+    if (g_add_device_open) {
+        ImGui::OpenPopup("Add Optional Device");
+        g_add_device_open = false;
+    }
+
+    if (ImGui::BeginPopupModal("Add Optional Device", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Select device type and base address:");
+        ImGui::Separator();
+
+        ImGui::Combo("Type", &g_add_device_type_idx, g_device_types, (int)(sizeof(g_device_types)/sizeof(g_device_types[0])));
+        ImGui::InputText("Address (Hex)", g_add_device_addr, sizeof(g_add_device_addr), ImGuiInputTextFlags_CharsHexadecimal | ImGuiInputTextFlags_CharsUppercase);
+
+        ImGui::Separator();
+        if (ImGui::Button("Add", ImVec2(120, 0))) {
+            unsigned int addr = 0;
+            if (sscanf(g_add_device_addr, "%x", &addr) == 1) {
+                int res = sim_device_add(g_sim, g_device_types[g_add_device_type_idx], (uint16_t)addr);
+                if (res == 0) {
+                    con_add(CON_COL_OK, "Added device: %s at $%04X", g_device_types[g_add_device_type_idx], addr);
+                    ImGui::CloseCurrentPopup();
+                } else {
+                    con_add(CON_COL_ERR, "Failed to add device: %s (maybe not implemented yet)", g_device_types[g_add_device_type_idx]);
+                }
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -5419,6 +5494,12 @@ int main(int /*argc*/, char ** /*argv*/)
                     }
                     ImGui::EndMenu();
                 }
+                if (ImGui::BeginMenu("Hardware")) {
+                    if (ImGui::MenuItem("Add Optional Device...")) {
+                        g_add_device_open = true;
+                    }
+                    ImGui::EndMenu();
+                }
                 if (ImGui::BeginMenu("View")) {
                     ImGui::MenuItem("Registers",   nullptr, &show_registers);
                     ImGui::MenuItem("Disassembly", nullptr, &show_disassembly);
@@ -5601,6 +5682,7 @@ int main(int /*argc*/, char ** /*argv*/)
         /* Popups */
         draw_binload_popup();
         draw_binsave_popup();
+        draw_add_device_popup();
         draw_symload_popup();
         draw_layout_save_popup();
         draw_new_project_wizard();

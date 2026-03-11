@@ -79,7 +79,7 @@ TESTS = [
      "LDA #$0C\n    STA $10\n"
      "LDA #$0B\n    STA $11",
      "LDA $13\n    LDX $12",          # A=RESULT_HI=00, X=RESULT_LO=84
-     "A=00 X=84", ["-p", "45gs02"]),
+     "A=00 X=84", ["-M", "mega65"]),
 
     # ── div16 ──────────────────────────────────────────────────────────────────
     # 100 / 7 = 14 remainder 2
@@ -99,7 +99,7 @@ TESTS = [
      "LDA #$07\n    STA $12\n"
      "LDA #$00\n    STA $13",
      "LDA $14\n    LDX $15\n    LDY $16",  # A=RESULT_LO=1C, X=RESULT_HI=00, Y=REM=04
-     "A=1C X=00 Y=04", ["-p", "45gs02"]),
+     "A=1C X=00 Y=04", ["-M", "mega65"]),
 
     # ── bin_to_bcd ─────────────────────────────────────────────────────────────
     # 150 = 1*100 + 5*10 + 0  →  HUNDREDS=1, TENS=5, UNITS=0
@@ -204,7 +204,7 @@ TESTS = [
      "LDA #$FF\n    STA $2000\n"
      "STA $3F3F",
      "LDA $2000\n    LDX $3F3F",
-     "A=00 X=00", ["-p", "45gs02"]),
+     "A=00 X=00", ["-M", "mega65"]),
 
     # ── dma_copy ───────────────────────────────────────────────────────────────
     ("dma_copy", "copy 4 bytes via DMA",
@@ -219,7 +219,7 @@ TESTS = [
      "LDA #$04\n    STA $14\n"        # CNT_LO
      "LDA #$00\n    STA $15",         # CNT_HI
      "LDA $0400\n    LDX $0401",
-     "A=AA X=BB", ["-p", "45gs02"]),
+     "A=AA X=BB", ["-M", "mega65"]),
 
     # ── dma_fill ───────────────────────────────────────────────────────────────
     ("dma_fill", "fill 4 bytes via DMA",
@@ -229,7 +229,7 @@ TESTS = [
      "LDA #$04\n    STA $13\n"        # CNT_LO
      "LDA #$00\n    STA $14",         # CNT_HI
      "LDA $0300\n    LDX $0301",
-     "A=55 X=55", ["-p", "45gs02"]),
+     "A=55 X=55", ["-M", "mega65"]),
 
     # ── sprite_init ────────────────────────────────────────────────────────────
     ("sprite_init", "initialize sprite 0",
@@ -271,7 +271,7 @@ TESTS = [
     ("sprite_mega65_16col", "enable 16-color mode for sprite 0",
      "LDA #0\n    STA $10",          # SPRITE_NUM=0
      "LDA $D04B",
-     "A=01", ["-p", "45gs02"]),
+     "A=01", ["-M", "mega65"]),
 ]
 
 # ── Helpers ────────────────────────────────────────────────────────────────────

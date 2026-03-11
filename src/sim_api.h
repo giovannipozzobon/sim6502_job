@@ -70,6 +70,12 @@ const char  *sim_state_name(sim_state_t state);
 void sim_set_processor(sim_session_t *s, const char *name);
 cpu_type_t sim_get_cpu_type(sim_session_t *s);
 
+/* Machine state */
+machine_type_t sim_get_machine_type(sim_session_t *s);
+void sim_set_machine_type(sim_session_t *s, machine_type_t machine);
+const char *sim_machine_name(machine_type_t type);
+int sim_device_add(sim_session_t *s, const char *name, uint16_t address);
+
 /* Event callbacks */
 void sim_set_event_callback(sim_session_t *s, sim_event_cb cb, void *userdata);
 

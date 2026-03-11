@@ -155,13 +155,59 @@ int load_binary_to_mem(memory_t *mem, int addr, const char *filename) {
 	return (int)size;
 }
 
-void handle_pseudo_op(const char *line, cpu_type_t *cpu_type, int *pc,
+static const char *machine_name_local(machine_type_t type) {
+    switch (type) {
+    case MACHINE_RAW6502: return "raw6502";
+    case MACHINE_C64:     return "c64";
+    case MACHINE_C128:    return "c128";
+    case MACHINE_MEGA65:  return "mega65";
+    case MACHINE_X16:     return "x16";
+    default:              return "unknown";
+    }
+}
+
+static bool is_device_available(machine_type_t machine, const char *device) {
+    if (strcmp(device, "vic2") == 0) {
+        return machine == MACHINE_C64 || machine == MACHINE_C128 || machine == MACHINE_MEGA65 || machine == MACHINE_X16;
+    }
+    if (strcmp(device, "mega65_math") == 0 || strcmp(device, "mega65_dma") == 0) {
+        return machine == MACHINE_MEGA65;
+    }
+    return false;
+}
+
+bool handle_pseudo_op(const char *line, machine_type_t *machine_type, cpu_type_t *cpu_type, int *pc,
                               memory_t *mem, symbol_table_t *symbols,
                               struct source_stack *ss) {
     (void)ss;
 	while (*line && isspace(*line)) line++;
-	if (*line != '.') return;
+	if (*line != '.') return true;
 	line++;
+	if (strncmp(line, "target", 6) == 0 && (!line[6] || isspace(line[6]))) {
+		line += 6;
+		while (*line && isspace(*line)) line++;
+		if (machine_type && cpu_type) {
+			if (strncmp(line, "raw6502", 7) == 0)      { *machine_type = MACHINE_RAW6502; *cpu_type = CPU_6502; }
+			else if (strncmp(line, "c64", 3) == 0)     { *machine_type = MACHINE_C64;     *cpu_type = CPU_6502; }
+			else if (strncmp(line, "c128", 4) == 0)    { *machine_type = MACHINE_C128;    *cpu_type = CPU_6502; }
+			else if (strncmp(line, "mega65", 6) == 0)  { *machine_type = MACHINE_MEGA65;  *cpu_type = CPU_45GS02; }
+			else if (strncmp(line, "x16", 3) == 0)     { *machine_type = MACHINE_X16;     *cpu_type = CPU_65C02; }
+		}
+		return true;
+	}
+	if (strncmp(line, "requires", 8) == 0 && (!line[8] || isspace(line[8]))) {
+		line += 8;
+		while (*line && isspace(*line)) line++;
+		char device[64]; int j = 0;
+		while (*line && !isspace(*line) && *line != ';' && j < 63) device[j++] = *line++;
+		device[j] = '\0';
+		if (machine_type && !is_device_available(*machine_type, device)) {
+			fprintf(stderr, "Error: Machine '%s' does not provide required device '%s'\n",
+			        machine_name_local(*machine_type), device);
+			return false;
+		}
+		return true;
+	}
 	if (strncmp(line, "processor", 9) == 0 && (!line[9] || isspace(line[9]))) {
 		line += 9;
 		while (*line && isspace(*line)) line++;
@@ -179,13 +225,13 @@ void handle_pseudo_op(const char *line, cpu_type_t *cpu_type, int *pc,
 			else
 				*cpu_type = CPU_6502;
 		}
-		return;
+		return true;
 	}
 	if (strncmp(line, "org", 3) == 0 && (!line[3] || isspace(line[3]))) {
 		line += 3;
 		while (*line && isspace(*line)) line++;
 		*pc = (int)parse_value(line, NULL);
-		return;
+		return true;
 	}
 	if (strncmp(line, "byte", 4) == 0 && (!line[4] || isspace(line[4]))) {
 		line += 4;
@@ -212,7 +258,7 @@ void handle_pseudo_op(const char *line, cpu_type_t *cpu_type, int *pc,
 			while (*line && isspace((unsigned char)*line)) line++;
 			if (*line == ',') line++;
 		}
-		return;
+		return true;
 	}
 	if (strncmp(line, "word", 4) == 0 && (!line[4] || isspace(line[4]))) {
 		line += 4;
@@ -242,7 +288,7 @@ void handle_pseudo_op(const char *line, cpu_type_t *cpu_type, int *pc,
 			while (*line && isspace((unsigned char)*line)) line++;
 			if (*line == ',') line++;
 		}
-		return;
+		return true;
 	}
 	if (strncmp(line, "text", 4) == 0 && (!line[4] || isspace(line[4]))) {
 		line += 4;
@@ -270,7 +316,7 @@ void handle_pseudo_op(const char *line, cpu_type_t *cpu_type, int *pc,
 				else (*pc)++;
 			}
 		}
-		return;
+		return true;
 	}
 	if (strncmp(line, "align", 5) == 0 && (!line[5] || isspace(line[5]))) {
 		line += 5;
@@ -287,7 +333,7 @@ void handle_pseudo_op(const char *line, cpu_type_t *cpu_type, int *pc,
 				}
 			}
 		}
-		return;
+		return true;
 	}
 	if (strncmp(line, "bin", 3) == 0 && (!line[3] || isspace(line[3]))) {
 		line += 3;
@@ -300,8 +346,9 @@ void handle_pseudo_op(const char *line, cpu_type_t *cpu_type, int *pc,
 			int n = load_binary_to_mem(mem, *pc, fname);
 			if (n > 0) *pc += n;
 		}
-		return;
+		return true;
 	}
+	return true;
 }
 
 void parse_line(const char *line, instruction_t *instr, symbol_table_t *symbols, int pc) {

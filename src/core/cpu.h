@@ -9,6 +9,14 @@ typedef enum {
 	CPU_45GS02
 } cpu_type_t;
 
+typedef enum {
+	MACHINE_RAW6502,
+	MACHINE_C64,
+	MACHINE_C128,
+	MACHINE_MEGA65,
+	MACHINE_X16
+} machine_type_t;
+
 #define FAR_PAGE_SHIFT  12
 #define FAR_PAGE_SIZE   (1 << FAR_PAGE_SHIFT)		/* 4096 bytes per page */
 #define FAR_NUM_PAGES   (0x10000000 >> FAR_PAGE_SHIFT)	/* 65536 pages for 28-bit space */

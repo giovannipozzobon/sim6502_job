@@ -3,5 +3,4 @@ LDA #$42
 STA $80
 INC $80
 DEC $80
-WAI
-STP
+BRK

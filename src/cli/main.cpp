@@ -49,6 +49,7 @@ static int handle_trap_main(const symbol_table_t *st, cpu_t *cpu, memory_t *mem)
 }
 
 int main(int argc, char *argv[]) {
+	machine_type_t machine_type = MACHINE_C64;
 	cpu_type_t cpu_type = CPU_6502;
 	const char *filename = NULL;
 	int interactive_mode = 0;
@@ -76,6 +77,16 @@ int main(int argc, char *argv[]) {
 		else if (strcmp(argv[i], "-I") == 0 || strcmp(argv[i], "--interactive") == 0) interactive_mode = 1;
 		else if (strcmp(argv[i], "-J") == 0 || strcmp(argv[i], "--json") == 0) cli_set_json_mode(1);
 		else if (strcmp(argv[i], "-l") == 0 || strcmp(argv[i], "--list") == 0) { list_processors(); return 0; }
+		else if (strcmp(argv[i], "-M") == 0 || strcmp(argv[i], "--machine") == 0) {
+			if (i + 1 < argc) {
+				const char *m = argv[++i];
+				if (strcmp(m, "raw6502") == 0) { machine_type = MACHINE_RAW6502; cpu_type = CPU_6502; }
+				else if (strcmp(m, "c64") == 0) { machine_type = MACHINE_C64; cpu_type = CPU_6502; symbol_file = "symbols/c64.sym"; }
+				else if (strcmp(m, "c128") == 0) { machine_type = MACHINE_C128; cpu_type = CPU_6502; symbol_file = "symbols/c128.sym"; }
+				else if (strcmp(m, "mega65") == 0) { machine_type = MACHINE_MEGA65; cpu_type = CPU_45GS02; symbol_file = "symbols/mega65.sym"; }
+				else if (strcmp(m, "x16") == 0) { machine_type = MACHINE_X16; cpu_type = CPU_65C02; symbol_file = "symbols/x16.sym"; }
+			}
+		}
 		else if (strcmp(argv[i], "-b") == 0 || strcmp(argv[i], "--break") == 0) { 
 			if (i + 1 < argc) {
 				const char *p = argv[++i];
@@ -150,9 +161,14 @@ int main(int argc, char *argv[]) {
 	cpu_ptr->mem = &mem;
 	mem.io_registry = new IORegistry(cpu_ptr->get_interrupt_controller());
 	if (!filename) {
-		vic2_io_register(&mem);
-		if (cpu_type == CPU_45GS02) mega65_io_register(&mem);
-		else mem.io_registry->rebuild_map(&mem);
+		switch (machine_type) {
+			case MACHINE_RAW6502: break;
+			case MACHINE_MEGA65:  mega65_io_register(&mem); break;
+			case MACHINE_C64:
+			case MACHINE_C128:
+			case MACHINE_X16:
+			default:              vic2_io_register(&mem); mem.io_registry->rebuild_map(&mem); break;
+		}
 	}
 
 	if (filename) {
@@ -167,7 +183,9 @@ int main(int argc, char *argv[]) {
 			const char *colon = strchr(ptr, ':');
 			/* Dot-prefixed local label (.name:) must be checked before pseudo-op */
 			if (*ptr == '.' && !(colon && (!semi1 || colon < semi1))) {
-				handle_pseudo_op(ptr, &cpu_type, &pc, NULL, NULL, NULL); 
+				if (!handle_pseudo_op(ptr, &machine_type, &cpu_type, &pc, NULL, NULL, NULL)) {
+					fclose(f); return 1;
+				}
 				if (cpu_type == CPU_65C02) { handlers = opcodes_65c02; num_handlers = OPCODES_65C02_COUNT; }
 				else if (cpu_type == CPU_65CE02) { handlers = opcodes_65ce02; num_handlers = OPCODES_65CE02_COUNT; }
 				else if (cpu_type == CPU_45GS02) { handlers = opcodes_45gs02; num_handlers = OPCODES_45GS02_COUNT; }
@@ -180,7 +198,9 @@ int main(int argc, char *argv[]) {
 				strncpy(l, ptr, len); l[len] = 0; symbol_add(&symbols, l, pc, SYM_LABEL, "Source");
 				const char *after = colon + 1; while (*after && isspace(*after)) after++;
 				if (*after == '.') { 
-					handle_pseudo_op(after, &cpu_type, &pc, NULL, NULL, NULL); 
+					if (!handle_pseudo_op(after, &machine_type, &cpu_type, &pc, NULL, NULL, NULL)) {
+						fclose(f); return 1;
+					}
 					if (cpu_type == CPU_65C02) { handlers = opcodes_65c02; num_handlers = OPCODES_65C02_COUNT; }
 					else if (cpu_type == CPU_65CE02) { handlers = opcodes_65ce02; num_handlers = OPCODES_65CE02_COUNT; }
 					else if (cpu_type == CPU_45GS02) { handlers = opcodes_45gs02; num_handlers = OPCODES_45GS02_COUNT; }
@@ -215,10 +235,13 @@ int main(int argc, char *argv[]) {
 		else if (cpu_type == CPU_45GS02) { handlers = opcodes_45gs02; num_handlers = OPCODES_45GS02_COUNT; }
 		else if (cpu_type == CPU_6502_UNDOCUMENTED) { handlers = opcodes_6502_undoc; num_handlers = OPCODES_6502_UNDOC_COUNT; }
 
-		if (cpu_type == CPU_45GS02) mega65_io_register(&mem);
-		else {
-			vic2_io_register(&mem);
-			mem.io_registry->rebuild_map(&mem);
+		switch (machine_type) {
+			case MACHINE_RAW6502: break;
+			case MACHINE_MEGA65:  mega65_io_register(&mem); break;
+			case MACHINE_C64:
+			case MACHINE_C128:
+			case MACHINE_X16:
+			default:              vic2_io_register(&mem); mem.io_registry->rebuild_map(&mem); break;
 		}
 
 		cpu_ptr->reset(); cpu_ptr->pc = start_addr_provided ? start_addr : 0x0200;
@@ -231,7 +254,9 @@ int main(int argc, char *argv[]) {
 			const char *colon2 = strchr(ptr, ':');
 			/* Dot-prefixed local label (.name:) must be checked before pseudo-op */
 			if (*ptr == '.' && !(colon2 && (!semi2 || colon2 < semi2))) {
-				handle_pseudo_op(ptr, &cpu_type, &pc, &mem, &symbols, NULL); 
+				if (!handle_pseudo_op(ptr, &machine_type, &cpu_type, &pc, &mem, &symbols, NULL)) {
+					fclose(f); return 1;
+				}
 				if (cpu_type == CPU_65C02) { handlers = opcodes_65c02; num_handlers = OPCODES_65C02_COUNT; }
 				else if (cpu_type == CPU_65CE02) { handlers = opcodes_65ce02; num_handlers = OPCODES_65CE02_COUNT; }
 				else if (cpu_type == CPU_45GS02) { handlers = opcodes_45gs02; num_handlers = OPCODES_45GS02_COUNT; }
@@ -242,7 +267,9 @@ int main(int argc, char *argv[]) {
 			if (colon2 && (!semi2 || colon2 < semi2)) { 
 				const char *after = colon2 + 1; while (*after && isspace(*after)) after++; 
 				if (*after == '.') { 
-					handle_pseudo_op(after, &cpu_type, &pc, &mem, &symbols, NULL); 
+					if (!handle_pseudo_op(after, &machine_type, &cpu_type, &pc, &mem, &symbols, NULL)) {
+						fclose(f); return 1;
+					}
 					if (cpu_type == CPU_65C02) { handlers = opcodes_65c02; num_handlers = OPCODES_65C02_COUNT; }
 					else if (cpu_type == CPU_65CE02) { handlers = opcodes_65ce02; num_handlers = OPCODES_65CE02_COUNT; }
 					else if (cpu_type == CPU_45GS02) { handlers = opcodes_45gs02; num_handlers = OPCODES_45GS02_COUNT; }

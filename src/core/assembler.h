@@ -21,14 +21,16 @@ typedef struct {
 
 /* 
  * handle_pseudo_op: process a assembler directive line.
- * line     — points at or before the leading '.' (leading whitespace is skipped)
- * cpu_type — updated by .processor
- * pc       — updated by .org / .byte / .word / .text / .align
- * mem      — if non-NULL (second pass) bytes are written; if NULL (first pass) only pc advances
- * symbols  — used in second pass to resolve label operands in .word/.byte; may be NULL
- * ss       — optional source stack for macros/includes/loops
+ * line         — points at or before the leading '.' (leading whitespace is skipped)
+ * machine_type — updated by .target (may be NULL)
+ * cpu_type     — updated by .processor or .target
+ * pc           — updated by .org / .byte / .word / .text / .align
+ * mem          — if non-NULL (second pass) bytes are written; if NULL (first pass) only pc advances
+ * symbols      — used in second pass to resolve label operands in .word/.byte; may be NULL
+ * ss           — optional source stack for macros/includes/loops
+ * Returns true on success, false on error (e.g. missing required device).
  */
-void handle_pseudo_op(const char *line, cpu_type_t *cpu_type, int *pc,
+bool handle_pseudo_op(const char *line, machine_type_t *machine_type, cpu_type_t *cpu_type, int *pc,
                       memory_t *mem, symbol_table_t *symbols, struct source_stack *ss);
 
 /*

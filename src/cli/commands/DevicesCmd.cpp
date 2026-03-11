@@ -1,8 +1,14 @@
 #include "DevicesCmd.h"
 #include "io_registry.h"
+#include "device/vic2_io.h"
+#include "device/mega65_io.h"
 #include "../commands.h"
 #include <stdio.h>
 #include <string.h>
+#include <vector>
+
+/* Owner for dynamically added handlers in the CLI front-end */
+static std::vector<IOHandler*> g_cli_dynamic_handlers;
 
 bool DevicesCmd::execute(const std::vector<std::string>& args,
                         CPU *cpu, memory_t *mem, 
@@ -74,6 +80,56 @@ bool DevicesCmd::execute(const std::vector<std::string>& args,
         } else {
             if (g_json_mode) json_err("devices", "Device not found");
             else printf("Error: Device '%s' not found.\n", target.c_str());
+        }
+    } else if (sub == "add") {
+        if (args.size() < 4) {
+            if (g_json_mode) json_err("devices", "Usage: devices add <type> <address>");
+            else printf("Usage: devices add <type> <address>\n");
+            return false;
+        }
+
+        std::string type = args[2];
+        const char *p_addr = args[3].c_str();
+        unsigned long addr;
+        if (!parse_mon_value(&p_addr, &addr)) {
+            if (g_json_mode) json_err("devices", "Invalid address");
+            else printf("Error: Invalid address '%s'\n", args[3].c_str());
+            return false;
+        }
+
+        IOHandler *h = nullptr;
+        uint16_t end = (uint16_t)addr;
+
+        if (type == "vic2") {
+            h = new VIC2Handler();
+            end = (uint16_t)addr + 0x2E;
+        } else if (type == "mega65_math") {
+            h = new MathCoprocessorHandler();
+            end = (uint16_t)addr + 0x03;
+        } else if (type == "mega65_dma") {
+            h = new DMAControllerHandler();
+            end = (uint16_t)addr + 0x05;
+        } else if (type == "sid") {
+            // Stubbed until implemented
+            if (g_json_mode) json_err("devices", "SID not yet implemented");
+            else printf("Error: SID not yet implemented\n");
+            return false;
+        }
+
+        if (h) {
+            g_cli_dynamic_handlers.push_back(h);
+            mem->io_registry->register_handler((uint16_t)addr, end, h);
+            mem->io_registry->rebuild_map(mem);
+            if (g_json_mode) {
+                printf("{\"cmd\":\"devices\",\"ok\":true,\"data\":{\"name\":\"%s\",\"start\":%lu,\"end\":%u}}\n",
+                       h->get_handler_name(), addr, end);
+            } else {
+                printf("Device '%s' added at $%04lX-$%04X.\n", h->get_handler_name(), addr, end);
+            }
+        } else {
+            if (g_json_mode) json_err("devices", "Unknown device type");
+            else printf("Error: Unknown device type '%s'\n", type.c_str());
+            return false;
         }
     } else {
         if (g_json_mode) json_err("devices", "Unknown subcommand");

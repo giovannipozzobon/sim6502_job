@@ -11,7 +11,7 @@
     {
       "target": "src/main.asm",
       "content": "; Project: {{PROJECT_NAME}}
-.processor 6502
+.target raw6502
 .org {{START_ADDR}}
 
 start:
