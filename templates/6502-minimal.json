@@ -10,20 +10,11 @@
   "files": [
     {
       "target": "src/main.asm",
-      "content": "; Project: {{PROJECT_NAME}}
-.target raw6502
-.org {{START_ADDR}}
-
-start:
-    nop
-    rts
-"
+      "content": "// Project: {{PROJECT_NAME}}\n.cpu _6502\n* = {{START_ADDR}}\n\nstart:\n    nop\n    rts\n"
     },
     {
       "target": "README.md",
-      "content": "# {{PROJECT_NAME}}
-Minimal 6502 assembly project.
-"
+      "content": "# {{PROJECT_NAME}}\\nMinimal 6502 assembly project.\\n"
     }
   ]
 }

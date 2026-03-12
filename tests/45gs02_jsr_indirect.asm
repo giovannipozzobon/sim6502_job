@@ -1,24 +1,28 @@
-; EXPECT: A=02 X=02 Y=00 Z=00 B=00 S=FF PC=0225
-.processor 45gs02
-  JMP main
-sub:
-  LDA #$01
-  RTS
-sub2:
-  LDA #$02
-  RTS
-main:
-  ; sub is at $0203
-  LDA #$03
-  STA $1002
-  LDA #$02
-  STA $1003
-  LDX #$02
-  JSR ($1000,X)
-  ; sub2 is at $0206
-  LDA #$06
-  STA $1004
-  LDA #$02
-  STA $1005
-  JSR ($1004)
-  BRK
+* = $0200
+ // EXPECT: A=02 X=02 Y=00 Z=00 B=00 S=FF PC=0225
+
+    .cpu _45gs02
+    jmp main
+    sub:
+    lda #$01
+    rts
+    sub2:
+    lda #$02
+    rts
+    main:
+ // sub is at $0203
+
+    lda #$03
+    sta $1002
+    lda #$02
+    sta $1003
+    ldx #$02
+    jsr ($1000,x)
+ // sub2 is at $0206
+
+    lda #$06
+    sta $1004
+    lda #$02
+    sta $1005
+    jsr ($1004)
+    brk

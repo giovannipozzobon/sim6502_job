@@ -1,24 +1,30 @@
-; EXPECT: A=42 X=00 Y=00 Z=00 B=00 S=FF PC=021A
-.processor 45gs02
+* = $0200
+ // EXPECT: A=42 X=00 Y=00 Z=00 B=00 S=FF PC=021A
 
-; Store 32-bit far address $00012345 in ZP $10-$13
-LDA #$45
-STA $10
-LDA #$23
-STA $11
-LDA #$01
-STA $12
-LDA #$00
-STA $13
+    .cpu _45gs02
 
-; Write $42 to far address $00012345 using flat STA [$10],Z (Z=0)
-LDA #$42
-STA [$10],Z
+ // Store 32-bit far address $00012345 in ZP $10-$13
 
-; Clear A to prove the subsequent LDA actually reads from far memory
-LDA #$00
+    lda #$45
+    sta $10
+    lda #$23
+    sta $11
+    lda #$01
+    sta $12
+    lda #$00
+    sta $13
 
-; Read back $42 from far address $00012345 using flat LDA [$10],Z
-LDA [$10],Z
+ // Write $42 to far address $00012345 using flat STA [$10],Z (Z=0)
 
-BRK
+    lda #$42
+    sta (($10)),z
+
+ // Clear A to prove the subsequent LDA actually reads from far memory
+
+    lda #$00
+
+ // Read back $42 from far address $00012345 using flat LDA [$10],Z
+
+    lda (($10)),z
+
+    brk

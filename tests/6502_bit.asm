@@ -1,11 +1,13 @@
-; EXPECT: A=01 X=00 Y=00 S=FF PC=020C
-LDA #$01
-STA $10
-LDA #$01
-BIT $10
-BEQ error
-LDA #$01
-BRK
-error:
-LDA #$FF
-BRK
+* = $0200
+ // EXPECT: A=01 X=00 Y=00 S=FF PC=020C
+
+    lda #$01
+    sta $10
+    lda #$01
+    bit $10
+    beq error
+    lda #$01
+    brk
+    error:
+    lda #$ff
+    brk

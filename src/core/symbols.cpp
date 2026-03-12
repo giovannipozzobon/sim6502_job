@@ -132,17 +132,33 @@ int symbol_load_file(symbol_table_t *st, const char *filename) {
 	char line[256];
 	while (fgets(line, sizeof(line), f)) {
 		/* Skip comments and empty lines */
-		if (line[0] == ';' || line[0] == '#' || line[0] == '\n') {
+		if (line[0] == ';' || line[0] == '#' || line[0] == '\n' || (line[0] == '/' && line[1] == '/')) {
 			continue;
 		}
 		
-		/* Parse: ADDRESS NAME [TYPE] [COMMENT] */
-		unsigned short addr;
+		unsigned short addr = 0;
 		char name[MAX_SYMBOL_NAME];
 		char type_str[32] = "LABEL";
 		char comment[MAX_SYMBOL_COMMENT] = "";
-		
-		int parsed = sscanf(line, "%hx %63s %31s %127[^\n]", &addr, name, type_str, comment);
+		int parsed = 0;
+
+		/* Try KickAssembler format: .label name=$addr */
+		if (strncmp(line, ".label ", 7) == 0) {
+			char *eq = strchr(line, '=');
+			if (eq) {
+				*eq = ' ';
+				char *dollar = strchr(eq + 1, '$');
+				if (dollar) *dollar = ' ';
+				parsed = sscanf(line + 7, "%63s %hx", name, &addr);
+				if (parsed == 2) {
+					symbol_add(st, name, addr, SYM_LABEL, "");
+					continue;
+				}
+			}
+		}
+
+		/* Parse standard format: ADDRESS NAME [TYPE] [COMMENT] */
+		parsed = sscanf(line, "%hx %63s %31s %127[^\n]", &addr, name, type_str, comment);
 		if (parsed < 2) {
 			continue;
 		}

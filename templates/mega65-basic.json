@@ -13,7 +13,7 @@
   "files": [
     {
       "target": "src/main.asm",
-      "content": "; Project: {{PROJECT_NAME}}\\n.target {{MACHINE}}\\n.org {{START_ADDR}}\\n\\nstart:\\n    lda #$05\\n    sta $d020\\n    rts\\n"
+      "content": "// Project: {{PROJECT_NAME}}\n.cpu _45gs02\n* = {{START_ADDR}}\n\nstart:\n    lda #$05\n    sta $d020\n    rts\n"
     },
     {
       "target": "Makefile",

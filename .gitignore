@@ -1,3 +1,7 @@
+tests/*.prg
+tests/*.sym
+*.prg
+*.sym
 *.swp
 *.*~
 tags

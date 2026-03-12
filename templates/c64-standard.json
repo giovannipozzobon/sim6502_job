@@ -11,38 +11,11 @@
   "files": [
     {
       "target": "src/main.asm",
-      "content": "; Project: {{PROJECT_NAME}}
-.target c64
-.org {{START_ADDR}}
-
-; BASIC stub: 10 SYS 2061 ($080D)
-.byte $0B, $08, $0A, $00, $9E, $32, $30, $36, $31, $00, $00, $00
-
-start:
-    lda #$00
-    sta $d020 ; Border black
-    sta $d021 ; BG black
-
-    ldx #$00
-.loop:
-    lda message,x
-    beq .done
-    jsr $ffd2 ; CHROUT
-    inx
-    jmp .loop
-
-.done:
-    rts
-
-message: .text "HELLO FROM {{PROJECT_NAME}}", 0
-"
+      "content": "// Project: {{PROJECT_NAME}}\n.cpu _6502\n* = {{START_ADDR}}\n\n// BASIC stub: 10 SYS 2061 ($080D)\n.byte $0B, $08, $0A, $00, $9E, $32, $30, $36, $31, $00, $00, $00\n\nstart:\n    lda #$00\n    sta $d020 // Border black\n    sta $d021 // BG black\n\n    ldx #$00\nloop:\n    lda message,x\n    beq done\n    jsr $ffd2 // CHROUT\n    inx\n    jmp loop\n\ndone:\n    rts\n\nmessage: .text \"HELLO FROM {{PROJECT_NAME}}\"\n         .byte 0\n"
     },
     {
       "target": "README.md",
-      "content": "# {{PROJECT_NAME}}
-Commodore 64 assembly project.
-Uses standard Kernal ROM addresses for output.
-"
+      "content": "# {{PROJECT_NAME}}\nCommodore 64 assembly project.\nUses standard Kernal ROM addresses for output.\n"
     }
   ]
 }

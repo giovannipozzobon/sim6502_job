@@ -27,6 +27,10 @@
 #include "device/cia_io.h"
 
 static std::vector<IOHandler*> g_main_dynamic_handlers;
+extern int g_verbose;
+
+#define LOG_V2(...) if (g_verbose >= 2) fprintf(stderr, __VA_ARGS__)
+#define LOG_V3(...) if (g_verbose >= 3) fprintf(stderr, __VA_ARGS__)
 
 static int handle_trap_main(const symbol_table_t *st, cpu_t *cpu, memory_t *mem) {
     for (int i = 0; i < st->count; i++) {
@@ -116,15 +120,18 @@ int main(int argc, char *argv[]) {
 	unsigned long cycle_limit = 1000000;
 	float speed_scale = 1.0f; // Default to C64 speed
 	
-	symbol_table_t symbols;
-	source_map_t source_map;
+	symbol_table_t *symbols = new symbol_table_t();
+	source_map_t *source_map = new source_map_t();
 	breakpoint_init(&breakpoints);
 	trace_init(&trace_info);
-	symbol_table_init(&symbols, "Default");
-	source_map_init(&source_map);
+	symbol_table_init(symbols, "Default");
+	source_map_init(source_map);
 	
 	for (int i = 1; i < argc; i++) {
-		if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) { print_help(argv[0]); return 0; }
+		if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) { print_help(argv[0]); delete symbols; delete source_map; return 0; }
+		else if (strncmp(argv[i], "-vv", 3) == 0) {
+            for (int j = 1; argv[i][j] == 'v'; j++) g_verbose++;
+        }
 		else if (strcmp(argv[i], "-I") == 0 || strcmp(argv[i], "--interactive") == 0) interactive_mode = 1;
 		else if (strcmp(argv[i], "-J") == 0 || strcmp(argv[i], "--json") == 0) cli_set_json_mode(1);
 		else if (strcmp(argv[i], "-l") == 0 || strcmp(argv[i], "--list") == 0) { list_processors(); return 0; }
@@ -213,16 +220,32 @@ int main(int argc, char *argv[]) {
 	else if (cpu_type == CPU_65CE02) { handlers = opcodes_65ce02; num_handlers = OPCODES_65CE02_COUNT; }
 	else if (cpu_type == CPU_45GS02) { handlers = opcodes_45gs02; num_handlers = OPCODES_45GS02_COUNT; }
 
-	if (!filename && !interactive_mode && initial_cmds.empty()) { print_help(argv[0]); return 1; }
-	if (symbol_file) symbol_load_file(&symbols, symbol_file);
+	if (!filename && !interactive_mode && initial_cmds.empty()) { print_help(argv[0]); delete symbols; delete source_map; return 1; }
+	if (symbol_file) symbol_load_file(symbols, symbol_file);
 
-	memory_t mem; memset(&mem, 0, sizeof(mem));
+    LOG_V2("DEBUG: Allocating memory...\n");
+	memory_t *mem = new memory_t();
+    if (!mem) { fprintf(stderr, "ERROR: Failed to allocate memory\n"); delete symbols; delete source_map; return 1; }
+    memset(mem->mem, 0, 0x10000);
+    mem->mem_writes = 0;
+    memset(mem->io_handlers, 0, sizeof(mem->io_handlers));
+    memset(mem->far_pages, 0, sizeof(mem->far_pages));
+    memset(mem->map_offset, 0, sizeof(mem->map_offset));
+    mem->io_registry = nullptr;
+    
+    LOG_V2("DEBUG: Creating CPU...\n");
 	CPU *cpu_ptr = CPUFactory::create(cpu_type);
-	cpu_ptr->mem = &mem;
+    if (!cpu_ptr) { fprintf(stderr, "ERROR: Failed to create CPU\n"); delete mem; delete symbols; delete source_map; return 1; }
+    
+	cpu_ptr->mem = mem;
 	cpu_ptr->debug = enable_debug != 0;
-	mem.io_registry = new IORegistry(cpu_ptr->get_interrupt_controller());
+    
+    LOG_V2("DEBUG: Initializing IORegistry...\n");
+	mem->io_registry = new IORegistry(cpu_ptr->get_interrupt_controller());
+    LOG_V2("DEBUG: IORegistry initialized at %p\n", (void*)mem->io_registry);
 	
     if (filename) {
+        LOG_V2("DEBUG: Loading filename: %s\n", filename);
 		/* Toolchain-based loading (replaces legacy internal assembler) */
 		char base[512];
 		strncpy(base, filename, sizeof(base)-1);
@@ -230,19 +253,22 @@ int main(int argc, char *argv[]) {
 		char *dot = strrchr(base, '.');
 		if (dot && (strcasecmp(dot, ".asm") == 0 || strcasecmp(dot, ".s") == 0)) *dot = 0;
 
-		if (!load_toolchain_bundle(&mem, &symbols, &source_map, base)) {
+        LOG_V2("DEBUG: Calling load_toolchain_bundle with base: %s\n", base);
+		if (!load_toolchain_bundle(mem, symbols, source_map, base)) {
             /* If bundle failed, try loading as raw binary/prg if it's not .asm */
             if (dot && (strcasecmp(dot, ".asm") == 0 || strcasecmp(dot, ".s") == 0)) {
 			    fprintf(stderr, "Error: Could not load toolchain bundle for '%s'\n", filename);
+                delete mem; delete symbols; delete source_map;
 			    return 1;
             } else {
                 /* Try loading as PRG */
                 int prg_addr = 0;
-                if (load_prg(&mem, filename, &prg_addr) < 0) {
+                if (load_prg(mem, filename, &prg_addr) < 0) {
                     /* Try loading as binary */
                     int b_addr = start_addr_provided ? start_addr : 0x0200;
-                    if (load_binary(&mem, b_addr, filename) < 0) {
+                    if (load_binary(mem, b_addr, filename) < 0) {
                         fprintf(stderr, "Error: Could not load '%s'\n", filename);
+                        delete mem; delete symbols; delete source_map;
                         return 1;
                     }
                 } else if (!start_addr_provided) {
@@ -255,10 +281,10 @@ int main(int argc, char *argv[]) {
 		/* Find start address if not provided */
         if (!start_addr_provided) {
 		    unsigned short found_addr = 0x0801;
-		    if (symbol_lookup_name(&symbols, "main", &found_addr)) {
+		    if (symbol_lookup_name(symbols, "main", &found_addr)) {
                 start_addr = found_addr;
                 start_addr_provided = 1;
-            } else if (symbol_lookup_name(&symbols, "start", &found_addr)) {
+            } else if (symbol_lookup_name(symbols, "start", &found_addr)) {
                 start_addr = found_addr;
                 start_addr_provided = 1;
             }
@@ -269,18 +295,18 @@ int main(int argc, char *argv[]) {
     switch (machine_type) {
         case MACHINE_RAW6502: break;
         case MACHINE_MEGA65:  
-            mega65_io_register(&mem); 
-            sid_io_register(&mem, machine_type, g_main_dynamic_handlers);
-            cia_io_register(&mem, g_main_dynamic_handlers);
+            mega65_io_register(mem); 
+            sid_io_register(mem, machine_type, g_main_dynamic_handlers);
+            cia_io_register(mem, g_main_dynamic_handlers);
             break;
         case MACHINE_C64:
         case MACHINE_C128:
         case MACHINE_X16:
         default:              
-            vic2_io_register(&mem); 
-            sid_io_register(&mem, machine_type, g_main_dynamic_handlers);
-            cia_io_register(&mem, g_main_dynamic_handlers);
-            mem.io_registry->rebuild_map(&mem); 
+            vic2_io_register(mem); 
+            sid_io_register(mem, machine_type, g_main_dynamic_handlers);
+            cia_io_register(mem, g_main_dynamic_handlers);
+            mem->io_registry->rebuild_map(mem); 
             break;
     }
 
@@ -293,7 +319,7 @@ int main(int argc, char *argv[]) {
 	else if (enable_trace) trace_enable_stdout(&trace_info);
 
 	if (interactive_mode || !initial_cmds.empty()) { 
-        run_interactive_mode(cpu_ptr, &mem, &handlers, &num_handlers, &cpu_type, &dt, cpu_ptr->pc, &breakpoints, &symbols, initial_cmds); 
+        run_interactive_mode(cpu_ptr, mem, &handlers, &num_handlers, &cpu_type, &dt, cpu_ptr->pc, &breakpoints, symbols, initial_cmds); 
         return 0; 
     }
 	
@@ -304,7 +330,7 @@ int main(int argc, char *argv[]) {
 
     printf("\nStarting execution at 0x%04X...\n", cpu_ptr->pc);
 	while (cpu_ptr->cycles < cycle_limit) {
-		int tr = handle_trap_main(&symbols, cpu_ptr, cpu_ptr->mem); 
+		int tr = handle_trap_main(symbols, cpu_ptr, cpu_ptr->mem); 
         if (tr < 0) { stop_reason = 4; break; } 
         if (tr > 0) continue;
 
@@ -347,16 +373,19 @@ int main(int argc, char *argv[]) {
 	else
 		printf("Registers: A=%02X X=%02X Y=%02X S=%02X PC=%04X\n", cpu_ptr->a, cpu_ptr->x, cpu_ptr->y, (uint8_t)cpu_ptr->s, cpu_ptr->pc);
 
-    if (show_memory) memory_dump(&mem, mem_start, mem_end);
-	if (show_symbols) symbol_display(&symbols);
+    if (show_memory) memory_dump(mem, mem_start, mem_end);
+	if (show_symbols) symbol_display(symbols);
 
     /* Allow audio to drain */
     usleep(100000); 
 
 	delete cpu_ptr;
-	if (mem.io_registry) delete mem.io_registry;
+	if (mem->io_registry) delete mem->io_registry;
     for (auto h : g_main_dynamic_handlers) delete h;
     audio_close();
+    delete symbols;
+    delete source_map;
+    delete mem;
 
 	return 0;
 }

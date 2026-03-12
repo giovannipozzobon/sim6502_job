@@ -23,13 +23,29 @@ def run_test(asm_file):
             if m:
                 extra_flags = shlex.split(m.group(1).strip())
 
+    # Run assembler first (KickAssembler)
+    base = os.path.splitext(asm_file)[0]
+    prg_file = base + ".prg"
+    sym_file = base + ".sym"
+    
+    try:
+        # We use -symbolfile to generate symbols for the simulator
+        asm_result = subprocess.run(['java', '-jar', 'tools/KickAss65CE02.jar', asm_file, '-symbolfile', '-o', prg_file], 
+                                   capture_output=True, text=True, timeout=10)
+        if asm_result.returncode != 0:
+            print(f"FAIL (assembly error)")
+            print(asm_result.stdout)
+            print(asm_result.stderr)
+            return False
+    except Exception as e:
+        print(f"FAIL (assembler launch error: {e})")
+        return False
+
     # Run simulator
     try:
-        flags = extra_flags
-        if 'all_' in asm_file and '-a' not in ' '.join(flags):
-            flags = flags + ['-a', '$1000']
-            
-        result = subprocess.run(['./sim6502'] + flags + [asm_file], capture_output=True, text=True, timeout=5)
+        flags = extra_flags + ['-vv']
+        # Use the assembled PRG
+        result = subprocess.run(['./sim6502'] + flags + [prg_file], capture_output=True, text=True, timeout=5)
     except subprocess.TimeoutExpired:
         print("FAIL (timeout)")
         return False

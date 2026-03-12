@@ -1,63 +1,83 @@
-; EXPECT: A=55 X=00 Y=00 Z=00 B=00 S=FF PC=023D
-.processor 45gs02
+* = $0200
+ // EXPECT: A=55 X=00 Y=00 Z=00 B=00 S=FF PC=023D
 
-; Set up a pointer in zero page $10
-LDA #$00
-STA $10
-LDA #$20
-STA $11
+    .cpu _45gs02
 
-; Write value $AA at $2000
-LDA #$AA
-STA $2000
+ // Set up a pointer in zero page $10
 
-; Test LDA (zp),Z
-LDZ #$00
-LDA ($10),Z
-; Expect A = $AA
+    lda #$00
+    sta $10
+    lda #$20
+    sta $11
 
-; Test STA (zp),Z
-LDA #$BB
-LDZ #$05
-STA ($10),Z
-; Expect $2005 = $BB
+ // Write value $AA at $2000
 
-; Test ADC (zp),Z
-LDA #$10
-LDZ #$00
-CLC
-ADC ($10),Z
-; Expect A = $10 + $AA = $BA
+    lda #$aa
+    sta $2000
 
-; Test SBC (zp),Z
-LDA #$FF
-LDZ #$05
-SEC
-SBC ($10),Z
-; Expect A = $FF - $BB = $44
+ // Test LDA (zp),Z
 
-; Test CMP (zp),Z
-LDA #$AA
-LDZ #$00
-CMP ($10),Z
-; Expect Z flag set
+    ldz #$00
+    lda ($10),z
+ // Expect A = $AA
 
-; Test ORA (zp),Z
-LDA #$55
-LDZ #$00
-ORA ($10),Z
-; Expect A = $55 | $AA = $FF
 
-; Test AND (zp),Z
-LDA #$0F
-LDZ #$00
-AND ($10),Z
-; Expect A = $0F & $AA = $0A
+ // Test STA (zp),Z
 
-; Test EOR (zp),Z
-LDA #$FF
-LDZ #$00
-EOR ($10),Z
-; Expect A = $FF ^ $AA = $55
+    lda #$bb
+    ldz #$05
+    sta ($10),z
+ // Expect $2005 = $BB
 
-BRK
+
+ // Test ADC (zp),Z
+
+    lda #$10
+    ldz #$00
+    clc
+    adc ($10),z
+ // Expect A = $10 + $AA = $BA
+
+
+ // Test SBC (zp),Z
+
+    lda #$ff
+    ldz #$05
+    sec
+    sbc ($10),z
+ // Expect A = $FF - $BB = $44
+
+
+ // Test CMP (zp),Z
+
+    lda #$aa
+    ldz #$00
+    cmp ($10),z
+ // Expect Z flag set
+
+
+ // Test ORA (zp),Z
+
+    lda #$55
+    ldz #$00
+    ora ($10),z
+ // Expect A = $55 | $AA = $FF
+
+
+ // Test AND (zp),Z
+
+    lda #$0f
+    ldz #$00
+    and ($10),z
+ // Expect A = $0F & $AA = $0A
+
+
+ // Test EOR (zp),Z
+
+    lda #$ff
+    ldz #$00
+    eor ($10),z
+ // Expect A = $FF ^ $AA = $55
+
+
+    brk

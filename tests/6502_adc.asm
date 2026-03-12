@@ -1,5 +1,7 @@
-; EXPECT: A=03 X=00 Y=00 S=FF PC=0205
-CLC
-LDA #$01
-ADC #$02
-BRK
+* = $0200
+ // EXPECT: A=03 X=00 Y=00 S=FF PC=0205
+
+    clc
+    lda #$01
+    adc #$02
+    brk

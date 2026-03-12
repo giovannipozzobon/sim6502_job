@@ -9,6 +9,16 @@
 #include <algorithm>
 
 /* Very minimal JSON-like parser helper for ProjectTemplate schema */
+static size_t find_json_unescaped(const std::string& s, char c, size_t start) {
+    for (size_t i = start; i < s.length(); i++) {
+        if (s[i] == c) {
+            if (i == 0 || s[i-1] != '\\') return i;
+            /* If even number of backslashes before, it's NOT escaped. But let's keep it simple. */
+        }
+    }
+    return std::string::npos;
+}
+
 static std::string get_json_string(const std::string& json, const std::string& key) {
     std::string key_q = "\"" + key + "\"";
     size_t pos = json.find(key_q);
@@ -17,18 +27,23 @@ static std::string get_json_string(const std::string& json, const std::string& k
     if (pos == std::string::npos) return "";
     pos = json.find("\"", pos + 1);
     if (pos == std::string::npos) return "";
-    size_t end = json.find("\"", pos + 1);
+    
+    size_t end = find_json_unescaped(json, '\"', pos + 1);
     if (end == std::string::npos) return "";
     
     std::string val = json.substr(pos + 1, end - pos - 1);
-    /* Handle simple escapes like \n */
+    /* Handle simple escapes */
     size_t e = 0;
     while ((e = val.find("\\n", e)) != std::string::npos) {
-        val.replace(e, 2, "\n"); e++;
+        val.replace(e, 2, "\n");
     }
     e = 0;
     while ((e = val.find("\\t", e)) != std::string::npos) {
-        val.replace(e, 2, "\t"); e++;
+        val.replace(e, 2, "\t");
+    }
+    e = 0;
+    while ((e = val.find("\\\"", e)) != std::string::npos) {
+        val.replace(e, 2, "\"");
     }
     return val;
 }
@@ -233,24 +248,30 @@ std::string ProjectManager::substitute_vars(const std::string& input,
                                            const std::map<std::string, std::string>& vars) {
     std::string result = input;
     for (auto const& [key, val] : vars) {
+        // std::cout << "Substituing " << key << " with [" << val << "]" << std::endl;
         std::string placeholder = "{{" + key + "}}";
-        size_t pos = 0;
-        while ((pos = result.find(placeholder, pos)) != std::string::npos) {
+        size_t pos = result.find(placeholder);
+        while (pos != std::string::npos) {
             result.replace(pos, placeholder.length(), val);
-            pos += val.length();
+            pos = result.find(placeholder, pos + val.length());
         }
     }
     return result;
 }
 
 bool ProjectManager::ensure_dir(const std::string& path) {
-    /* Simple mkdir -p equivalent for relative paths */
+    /* Simple mkdir -p equivalent */
+    if (path.empty()) return true;
+    
     std::string current_path = "";
+    if (path[0] == '/') current_path = "/";
+    
     std::stringstream ss(path);
     std::string item;
     while (std::getline(ss, item, '/')) {
         if (item.empty()) continue;
-        current_path += (current_path.empty() ? "" : "/") + item;
+        if (current_path != "/" && !current_path.empty()) current_path += "/";
+        current_path += item;
         mkdir(current_path.c_str(), 0755);
     }
     return true;

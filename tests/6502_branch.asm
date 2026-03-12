@@ -1,9 +1,11 @@
-; EXPECT: A=02 X=00 Y=00 S=FF PC=020A
-LDA #$01
-SEC
-BCS label
-LDA #$05
-label:
-CLC
-ADC #$01
-BRK
+* = $0200
+ // EXPECT: A=02 X=00 Y=00 S=FF PC=020A
+
+    lda #$01
+    sec
+    bcs label
+    lda #$05
+    label:
+    clc
+    adc #$01
+    brk

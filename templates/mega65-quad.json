@@ -12,42 +12,15 @@
   "files": [
     {
       "target": "src/main.asm",
-      "content": "; Project: {{PROJECT_NAME}}
-.target mega65
-.org {{START_ADDR}}
-
-; Enable 45GS02 extended mode (SEE)
-; Note: Simulator starts with E=1 by default
-
-start:
-    cle ; Clear E bit (enable 16-bit SP and other features)
-    
-    ; Load 32-bit value into Q (A,X,Y,Z combination)
-    ; Using quad-instruction prefix $42 $42
-    lda #$11
-    ldx #$22
-    ldy #$33
-    ldz #$44
-    ; At this point Q = $44332211
-
-    ; Perform a quad addition or other 32-bit ops here...
-    
-    see ; Restore E bit before returning to BASIC/Monitor if needed
-    rts
-"
+      "content": "// Project: {{PROJECT_NAME}}\n.cpu _45gs02\n* = {{START_ADDR}}\n\n// Enable 45GS02 extended mode (SEE)\n// Note: Simulator starts with E=1 by default\n\nstart:\n    cle // Clear E bit (enable 16-bit SP and other features)\n    \n    // Load 32-bit value into Q (A,X,Y,Z combination)\n    // Using quad-instruction prefix $42 $42\n    lda #$11\n    ldx #$22\n    ldy #$33\n    ldz #$44\n    // At this point Q = $44332211\n\n    // Perform a quad addition or other 32-bit ops here...\n    \n    see // Restore E bit before returning to BASIC/Monitor if needed\n    rts\n"
     },
     {
       "target": "README.md",
-      "content": "# {{PROJECT_NAME}}
-MEGA65 45GS02 project.
-Focuses on high-performance 32-bit operations.
-"
+      "content": "# {{PROJECT_NAME}}\\nMEGA65 45GS02 project.\\nFocuses on high-performance 32-bit operations.\\n"
     },
     {
       "target": "Makefile",
-      "content": "all:
-	../sim6502 src/main.asm -o bin/{{PROJECT_NAME}}.prg
-"
+      "content": "all:\\n\\t../sim6502 src/main.asm -o bin/{{PROJECT_NAME}}.prg\\n"
     }
   ]
 }

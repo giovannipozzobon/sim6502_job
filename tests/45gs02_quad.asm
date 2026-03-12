@@ -1,38 +1,48 @@
-; EXPECT: A=0A X=00 Y=00 Z=00 B=00 S=FF PC=022C
-.processor 45gs02
+* = $0200
+ // EXPECT: A=0A X=00 Y=00 Z=00 B=00 S=FF PC=022C
 
-; Store 0x00000005 at ZP $10
-LDA #$05
-STA $10
-LDA #$00
-STA $11
-STA $12
-STA $13
+    .cpu _45gs02
 
-; Store 0x0000000F at ZP $20
-LDA #$0F
-STA $20
-LDA #$00
-STA $21
-STA $22
-STA $23
+ // Store 0x00000005 at ZP $10
 
-; LDQ $10 -> Q = 0x00000005 (A=05 X=00 Y=00 Z=00)
-LDQ $10
+    lda #$05
+    sta $10
+    lda #$00
+    sta $11
+    sta $12
+    sta $13
 
-; EORQ $20 -> Q = 0x05 XOR 0x0F = 0x0A (A=0A X=00 Y=00 Z=00)
-EORQ $20
+ // Store 0x0000000F at ZP $20
 
-; ASLQ -> Q = 0x0A << 1 = 0x14 (A=14)
-ASLQ
+    lda #$0f
+    sta $20
+    lda #$00
+    sta $21
+    sta $22
+    sta $23
 
-; LSRQ -> Q = 0x14 >> 1 = 0x0A (A=0A)
-LSRQ
+ // LDQ $10 -> Q = 0x00000005 (A=05 X=00 Y=00 Z=00)
 
-; INQ -> Q = 0x0B (A=0B)
-INQ
+    ldq $10
 
-; DEQ -> Q = 0x0A (A=0A)
-DEQ
+ // EORQ $20 -> Q = 0x05 XOR 0x0F = 0x0A (A=0A X=00 Y=00 Z=00)
 
-BRK
+    eorq $20
+
+ // ASLQ -> Q = 0x0A << 1 = 0x14 (A=14)
+
+    aslq
+
+ // LSRQ -> Q = 0x14 >> 1 = 0x0A (A=0A)
+
+    lsrq
+
+ // INQ -> Q = 0x0B (A=0B)
+
+    inq
+
+ // DEQ -> Q = 0x0A (A=0A)
+
+    deq
+
+    brk
