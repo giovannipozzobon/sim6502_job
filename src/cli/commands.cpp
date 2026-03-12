@@ -677,7 +677,12 @@ void print_help(const char *progname) {
            "  -b <ADDR> Set breakpoint\n"
            "  -L, --limit <CYCLES> Maximum cycles to execute (default 1000000)\n"
            "  -S, --speed <SCALE>  Execution speed (default 1.0 = C64 PAL, 0.0 = unlimited)\n"
-           "  --debug   Enable verbose instruction logging\n");
+           "  -a <ADDR> Start address (default $0200)\n"
+           "  -m <RANGE> Show memory dump (e.g., -m $0200:$0210)\n"
+           "  --debug   Enable verbose instruction logging\n\n"
+           "Testing:\n"
+           "  ./sim6502 -a $0200 tests/6502_basic.asm\n"
+           "  ./sim6502 -m $0200:$0210 tests/pseudoops_text_align.asm\n");
 }
 
 void print_opcode_info(opcode_handler_t *handlers, int num_handlers, const char *mnemonic) {

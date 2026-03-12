@@ -17,9 +17,7 @@ typedef enum {
 	MACHINE_X16
 } machine_type_t;
 
-#define FAR_PAGE_SHIFT  12
-#define FAR_PAGE_SIZE   (1 << FAR_PAGE_SHIFT)		/* 4096 bytes per page */
-#define FAR_NUM_PAGES   (0x10000000 >> FAR_PAGE_SHIFT)	/* 65536 pages for 28-bit space */
+#include "memory_types.h"
 
 #define FLAG_C 0x01
 #define FLAG_Z 0x02
@@ -33,20 +31,6 @@ typedef enum {
 
 class IOHandler;
 class IORegistry;
-
-struct memory_t {
-	unsigned char mem[0x10000];
-	int mem_writes;
-	unsigned short mem_addr[256];
-	unsigned char mem_val[256];     /* value AFTER write  */
-	unsigned char mem_old_val[256]; /* value BEFORE write */
-	unsigned char *far_pages[FAR_NUM_PAGES];	/* sparse 28-bit page table */
-	unsigned int map_offset[8];		/* MAP: per-8KB-block physical offset added to virtual addr; 0 = passthrough */
-	IOHandler *io_handlers[0x10000];
-	IORegistry *io_registry;
-};
-
-typedef struct memory_t memory_t;
 
 /* CPUState: Non-abstract POD-like state for snapshots/history */
 class CPUState {

@@ -252,30 +252,29 @@ int main(int argc, char *argv[]) {
 			const char *colon = strchr(ptr, ':');
 			/* Dot-prefixed local label (.name:) must be checked before pseudo-op */
 			if (*ptr == '.' && !(colon && (!semi1 || colon < semi1))) {
-				if (!handle_pseudo_op(ptr, &machine_type, &cpu_type, &pc, NULL, NULL, NULL)) {
-					fclose(f); return 1;
+				if (handle_pseudo_op(ptr, &machine_type, &cpu_type, &pc, NULL, NULL, NULL)) {
+					if (cpu_type == CPU_65C02) { handlers = opcodes_65c02; num_handlers = OPCODES_65C02_COUNT; }
+					else if (cpu_type == CPU_65CE02) { handlers = opcodes_65ce02; num_handlers = OPCODES_65CE02_COUNT; }
+					else if (cpu_type == CPU_45GS02) { handlers = opcodes_45gs02; num_handlers = OPCODES_45GS02_COUNT; }
+					else if (cpu_type == CPU_6502_UNDOCUMENTED) { handlers = opcodes_6502_undoc; num_handlers = OPCODES_6502_UNDOC_COUNT; }
+					else { handlers = opcodes_6502; num_handlers = OPCODES_6502_COUNT; }
+					continue;
 				}
-				if (cpu_type == CPU_65C02) { handlers = opcodes_65c02; num_handlers = OPCODES_65C02_COUNT; }
-				else if (cpu_type == CPU_65CE02) { handlers = opcodes_65ce02; num_handlers = OPCODES_65CE02_COUNT; }
-				else if (cpu_type == CPU_45GS02) { handlers = opcodes_45gs02; num_handlers = OPCODES_45GS02_COUNT; }
-				else if (cpu_type == CPU_6502_UNDOCUMENTED) { handlers = opcodes_6502_undoc; num_handlers = OPCODES_6502_UNDOC_COUNT; }
-				else { handlers = opcodes_6502; num_handlers = OPCODES_6502_COUNT; }
-				continue;
 			}
 			if (colon && (!semi1 || colon < semi1)) {
 				char l[64]; int len = colon - ptr; if (len >= 64) len = 63;
 				strncpy(l, ptr, len); l[len] = 0; symbol_add(&symbols, l, pc, SYM_LABEL, "Source");
 				const char *after = colon + 1; while (*after && isspace(*after)) after++;
 				if (*after == '.') { 
-					if (!handle_pseudo_op(after, &machine_type, &cpu_type, &pc, NULL, NULL, NULL)) {
-						fclose(f); return 1;
+					if (handle_pseudo_op(after, &machine_type, &cpu_type, &pc, NULL, NULL, NULL)) {
+						if (cpu_type == CPU_65C02) { handlers = opcodes_65c02; num_handlers = OPCODES_65C02_COUNT; }
+						else if (cpu_type == CPU_65CE02) { handlers = opcodes_65ce02; num_handlers = OPCODES_65CE02_COUNT; }
+						else if (cpu_type == CPU_45GS02) { handlers = opcodes_45gs02; num_handlers = OPCODES_45GS02_COUNT; }
+						else { handlers = opcodes_6502; num_handlers = OPCODES_6502_COUNT; }
+						continue; 
 					}
-					if (cpu_type == CPU_65C02) { handlers = opcodes_65c02; num_handlers = OPCODES_65C02_COUNT; }
-					else if (cpu_type == CPU_65CE02) { handlers = opcodes_65ce02; num_handlers = OPCODES_65CE02_COUNT; }
-					else if (cpu_type == CPU_45GS02) { handlers = opcodes_45gs02; num_handlers = OPCODES_45GS02_COUNT; }
-					else { handlers = opcodes_6502; num_handlers = OPCODES_6502_COUNT; }
-					continue; 
 				}
+				if (!*after || *after == ';') continue;
 			} else {
 				/* Equate:  NAME = VALUE  (no colon, '=' before any ';') */
 				const char *eq = strchr(ptr, '=');
@@ -332,34 +331,32 @@ int main(int argc, char *argv[]) {
 			const char *colon2 = strchr(ptr, ':');
 			/* Dot-prefixed local label (.name:) must be checked before pseudo-op */
 			if (*ptr == '.' && !(colon2 && (!semi2 || colon2 < semi2))) {
-				if (!handle_pseudo_op(ptr, &machine_type, &cpu_type, &pc, &mem, &symbols, NULL)) {
-					fclose(f); return 1;
+				if (handle_pseudo_op(ptr, &machine_type, &cpu_type, &pc, &mem, &symbols, NULL)) {
+					if (cpu_type == CPU_65C02) { handlers = opcodes_65c02; num_handlers = OPCODES_65C02_COUNT; }
+					else if (cpu_type == CPU_65CE02) { handlers = opcodes_65ce02; num_handlers = OPCODES_65CE02_COUNT; }
+					else if (cpu_type == CPU_45GS02) { handlers = opcodes_45gs02; num_handlers = OPCODES_45GS02_COUNT; }
+					else if (cpu_type == CPU_6502_UNDOCUMENTED) { handlers = opcodes_6502_undoc; num_handlers = OPCODES_6502_UNDOC_COUNT; }
+					else { handlers = opcodes_6502; num_handlers = OPCODES_6502_COUNT; }
+					continue;
 				}
-				if (cpu_type == CPU_65C02) { handlers = opcodes_65c02; num_handlers = OPCODES_65C02_COUNT; }
-				else if (cpu_type == CPU_65CE02) { handlers = opcodes_65ce02; num_handlers = OPCODES_65CE02_COUNT; }
-				else if (cpu_type == CPU_45GS02) { handlers = opcodes_45gs02; num_handlers = OPCODES_45GS02_COUNT; }
-				else if (cpu_type == CPU_6502_UNDOCUMENTED) { handlers = opcodes_6502_undoc; num_handlers = OPCODES_6502_UNDOC_COUNT; }
-				else { handlers = opcodes_6502; num_handlers = OPCODES_6502_COUNT; }
-				continue;
 			}
 			if (colon2 && (!semi2 || colon2 < semi2)) { 
 				const char *after = colon2 + 1; while (*after && isspace(*after)) after++; 
 				if (*after == '.') { 
-					if (!handle_pseudo_op(after, &machine_type, &cpu_type, &pc, &mem, &symbols, NULL)) {
-						fclose(f); return 1;
+					if (handle_pseudo_op(after, &machine_type, &cpu_type, &pc, &mem, &symbols, NULL)) {
+						if (cpu_type == CPU_65C02) { handlers = opcodes_65c02; num_handlers = OPCODES_65C02_COUNT; }
+						else if (cpu_type == CPU_65CE02) { handlers = opcodes_65ce02; num_handlers = OPCODES_65CE02_COUNT; }
+						else if (cpu_type == CPU_45GS02) { handlers = opcodes_45gs02; num_handlers = OPCODES_45GS02_COUNT; }
+						else { handlers = opcodes_6502; num_handlers = OPCODES_6502_COUNT; }
+						continue; 
 					}
-					if (cpu_type == CPU_65C02) { handlers = opcodes_65c02; num_handlers = OPCODES_65C02_COUNT; }
-					else if (cpu_type == CPU_65CE02) { handlers = opcodes_65ce02; num_handlers = OPCODES_65CE02_COUNT; }
-					else if (cpu_type == CPU_45GS02) { handlers = opcodes_45gs02; num_handlers = OPCODES_45GS02_COUNT; }
-					else { handlers = opcodes_6502; num_handlers = OPCODES_6502_COUNT; }
-					continue; 
-				} 
+				}
+				if (!*after || *after == ';') continue;
 			}
-			else {
-				/* Skip equate lines in second pass (already in symbol table) */
-				const char *eq2 = strchr(ptr, '=');
-				if (eq2 && (!semi2 || eq2 < semi2) && (isalpha(*ptr) || *ptr == '_')) continue;
-			}
+			/* Skip equate lines in second pass (already in symbol table) */
+			const char *eq2 = strchr(ptr, '=');
+			if (eq2 && (!semi2 || eq2 < semi2) && (isalpha(*ptr) || *ptr == '_')) continue;
+
 			instruction_t instr; parse_line(line, &instr, &symbols, pc);
 			if (instr.op[0]) {
 				rom[pc] = instr;

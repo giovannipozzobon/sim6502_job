@@ -5,6 +5,7 @@ CXXFLAGS = -pthread  -Wall -Wextra -O2 -I src -I src/core -I src/core/opcodes
 
 # --- Core Engine (Static Library) ---
 CORE_SRCS = \
+	src/core/memory.cpp \
 	src/core/cpu_engine.cpp \
 	src/core/cpu_6502.cpp \
 	src/core/sim_api.cpp \

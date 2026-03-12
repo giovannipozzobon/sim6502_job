@@ -238,8 +238,9 @@ bool handle_pseudo_op(const char *line, machine_type_t *machine_type, cpu_type_t
 		if (*line == '"') {
 			line++;
 			while (*line && *line != '"') {
-				if (mem) mem->mem[(*pc)++] = (unsigned char)*line++;
+				if (mem) mem->mem[(*pc)++] = (unsigned char)*line;
 				else (*pc)++;
+				line++;
 			}
 		}
 		return true;
@@ -267,7 +268,7 @@ bool handle_pseudo_op(const char *line, machine_type_t *machine_type, cpu_type_t
 		}
 		return true;
 	}
-	return true;
+	return false;
 }
 
 void parse_line(const char *line, instruction_t *instr, symbol_table_t *symbols, int pc) {
@@ -456,11 +457,9 @@ void parse_line(const char *line, instruction_t *instr, symbol_table_t *symbols,
 					else if (instr->mode == MODE_RELATIVE_LONG) instr->arg = (unsigned short)(addr - (pc + 3));
 					else {
 						instr->arg = addr;
-						if (addr <= 0xFF && !is_branch) {
-							if      (idx_x) instr->mode = MODE_ZP_X;
-							else if (idx_y) instr->mode = MODE_ZP_Y;
-							else            instr->mode = MODE_ZP;
-						}
+						/* NOTE: We always keep label-based operands as ABSOLUTE (3 bytes)
+						 * to ensure PC consistency between Pass 1 and Pass 2.
+						 * Zero-page optimization is only for literal $00-$FF. */
 					}
 				} else instr->arg = 0;
 			}
@@ -497,7 +496,8 @@ int encode_to_mem(memory_t *mem, int pc_base, const instruction_t *instr, const 
 	if (i >= n) return -1;
 	const instruction_t *final_instr = (i < n && adjusted_instr.mode != instr->mode) ? &adjusted_instr : instr;
 	unsigned char olen = handlers[i].opcode_len;
-	for (int j = 0; j < olen; j++) mem->mem[pc++] = handlers[i].opcode_bytes[j];
+	for (int j = 0; j < olen; j++) mem->mem[pc_base + j] = handlers[i].opcode_bytes[j];
+	pc = pc_base + olen;
 	switch (handlers[i].mode) {
 	case MODE_IMPLIED: break;
 	case MODE_IMMEDIATE: case MODE_ZP: case MODE_ZP_X: case MODE_ZP_Y:

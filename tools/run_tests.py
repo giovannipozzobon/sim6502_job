@@ -89,8 +89,11 @@ def main():
         print(f"Test directory '{test_dir}' not found.")
         return 1
         
-    tests = [os.path.join(test_dir, f) for f in os.listdir(test_dir) if f.endswith('.asm')]
-    tests.sort()
+    if len(sys.argv) > 1:
+        tests = sys.argv[1:]
+    else:
+        tests = [os.path.join(test_dir, f) for f in os.listdir(test_dir) if f.endswith('.asm')]
+        tests.sort()
     
     if not tests:
         print("No tests found.")
