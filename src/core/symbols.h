@@ -16,7 +16,8 @@ typedef enum {
 	SYM_FUNCTION = 3,
 	SYM_IO_PORT = 4,
 	SYM_MEMORY_REGION = 5,
-	SYM_TRAP = 6		/* Intercept JSR/JMP/RTS/RTN to this address; dump state and simulate RTS */
+	SYM_TRAP = 6,		/* Intercept JSR/JMP/RTS/RTN to this address; dump state and simulate RTS */
+	SYM_INSPECT = 7		/* Print device/memory state when PC hits this address */
 } symbol_type_t;
 
 typedef struct {
@@ -136,6 +137,7 @@ static inline void symbol_display(const symbol_table_t *st) {
 		case SYM_IO_PORT: type_str = "I/O Port"; break;
 		case SYM_MEMORY_REGION: type_str = "Region"; break;
 		case SYM_TRAP: type_str = "Trap"; break;
+		case SYM_INSPECT: type_str = "Inspect"; break;
 		default: type_str = "Unknown"; break;
 		}
 		
@@ -189,6 +191,8 @@ static inline int symbol_load_file(symbol_table_t *st, const char *filename) {
 			type = SYM_MEMORY_REGION;
 		} else if (strcmp(type_str, "TRAP") == 0) {
 			type = SYM_TRAP;
+		} else if (strcmp(type_str, "INSPECT") == 0) {
+			type = SYM_INSPECT;
 		}
 		
 		symbol_add(st, name, addr, type, comment);
@@ -219,6 +223,7 @@ static inline int symbol_save_file(const symbol_table_t *st, const char *filenam
 		case SYM_IO_PORT: type_str = "IO"; break;
 		case SYM_MEMORY_REGION: type_str = "REGION"; break;
 		case SYM_TRAP: type_str = "TRAP"; break;
+		case SYM_INSPECT: type_str = "INSPECT"; break;
 		default: type_str = "LABEL"; break;
 		}
 		

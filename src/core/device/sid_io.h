@@ -14,6 +14,7 @@ private:
     float phase;
     float freq;
     float pan; // -1.0 (Left) to 1.0 (Right)
+    int cycle_acc;
 
 public:
     SIDHandler(const char* chip_name = "SID", float pan_val = 0.0f);

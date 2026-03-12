@@ -677,6 +677,7 @@ void sim_set_processor(sim_session_t *s, const char *name) {
     dispatch_build(&s->dt, s->handlers, s->num_handlers, s->cpu_type);
 }
 cpu_type_t sim_get_cpu_type(sim_session_t *s) { return s ? s->cpu_type : CPU_6502; }
+void sim_set_debug(sim_session_t *s, bool debug) { if (s && s->cpu) s->cpu->debug = debug; }
 void sim_set_event_callback(sim_session_t *s, sim_event_cb cb, void *userdata) { if (s) { s->event_cb = cb; s->event_userdata = userdata; } }
 int sim_break_set(sim_session_t *s, uint16_t addr, const char *cond) { return s ? breakpoint_add(&s->breakpoints, addr, cond) : 0; }
 void sim_break_clear(sim_session_t *s, uint16_t addr) { if (s) breakpoint_remove(&s->breakpoints, addr); }

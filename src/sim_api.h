@@ -69,6 +69,7 @@ const char  *sim_processor_name(sim_session_t *s);
 const char  *sim_state_name(sim_state_t state);
 void sim_set_processor(sim_session_t *s, const char *name);
 cpu_type_t sim_get_cpu_type(sim_session_t *s);
+void sim_set_debug(sim_session_t *s, bool debug);
 
 /* Machine state */
 machine_type_t sim_get_machine_type(sim_session_t *s);

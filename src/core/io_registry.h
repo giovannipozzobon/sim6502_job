@@ -5,6 +5,7 @@
 #include "interrupts.h"
 #include <vector>
 #include <memory>
+#include <cstring>
 
 /**
  * Concrete implementation of the interrupt line for peripherals.
@@ -99,6 +100,13 @@ public:
 
     void tick_all(uint64_t cycles) {
         for (auto h : unique_handlers) h->tick(cycles);
+    }
+
+    IOHandler* find_handler(const char* name) {
+        for (auto h : unique_handlers) {
+            if (strcmp(h->get_handler_name(), name) == 0) return h;
+        }
+        return nullptr;
     }
 
     void reset_all() {

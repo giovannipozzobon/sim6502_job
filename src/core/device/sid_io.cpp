@@ -11,18 +11,13 @@ SIDHandler::SIDHandler(const char* chip_name, float pan_val) {
     pan = pan_val;
     phase = 0;
     freq = 0;
+    cycle_acc = 0;
     reset();
 }
 
 bool SIDHandler::io_write(memory_t *mem, uint16_t addr, uint8_t val) {
     (void)mem;
     regs[addr & 0x1F] = val;
-    
-    // Update simple oscillator frequency (Voice 1)
-    if ((addr & 0x1F) == 0 || (addr & 0x1F) == 1) {
-        uint16_t f = regs[0] | (regs[1] << 8);
-        freq = (float)f * 0.0596f; // Rough Hz estimate for C64
-    }
     return true;
 }
 
@@ -36,6 +31,7 @@ void SIDHandler::reset() {
     memset(regs, 0, sizeof(regs));
     total_clocks = 0;
     phase = 0;
+    cycle_acc = 0;
 }
 
 void SIDHandler::tick(uint64_t cycles) {
@@ -43,13 +39,14 @@ void SIDHandler::tick(uint64_t cycles) {
     uint64_t delta = cycles - total_clocks;
     total_clocks = cycles;
     
+    // Update frequency from current registers
+    uint16_t f = regs[0] | (regs[1] << 8);
+    freq = (float)f * 0.0596f; 
+
     // Basic pulse oscillator for verification
     if (freq > 0) {
         float step = freq / 44100.0f;
         
-        // Push a few samples based on cycles (assume 1MHz for now)
-        // 1MHz / 44100Hz = ~22 cycles per sample
-        static int cycle_acc = 0;
         cycle_acc += (int)delta;
         while (cycle_acc >= 22) {
             cycle_acc -= 22;
@@ -104,6 +101,10 @@ void sid_io_register(memory_t *mem, machine_type_t machine, std::vector<IOHandle
         num_sids = 1;
     } else if (machine == MACHINE_MEGA65) {
         num_sids = 4;
+    }
+
+    if (num_sids > 0) {
+        audio_init(44100);
     }
 
     for (int i = 0; i < num_sids; i++) {

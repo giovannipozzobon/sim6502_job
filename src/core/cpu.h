@@ -61,9 +61,10 @@ public:
 	unsigned char p;
 	unsigned long cycles;  /* Clock cycles executed */
 	unsigned char eom_prefix; /* 45GS02: 1=EOM seen, 2=active flat sentinel */
+	bool debug;
 	memory_t *mem;
 
-	CPUState() : mem(nullptr) { reset(); }
+	CPUState() : debug(false), mem(nullptr) { reset(); }
 	virtual ~CPUState() {}
 
 	virtual void reset() {

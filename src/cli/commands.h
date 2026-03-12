@@ -8,6 +8,8 @@
 #include "disassembler.h"
 #include "breakpoints.h"
 #include "symbols.h"
+#include <vector>
+#include <string>
 
 /* --- CLI Utilities --- */
 
@@ -24,7 +26,7 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
                           cpu_type_t *p_cpu_type, dispatch_table_t *dt,
                           unsigned short start_addr, breakpoint_list_t *breakpoints,
                           symbol_table_t *symbols,
-                          const char *initial_cmd);
+                          const std::vector<std::string>& initial_cmds);
 
 void run_asm_mode(memory_t *mem, symbol_table_t *symbols,
                   opcode_handler_t *handlers, int num_handlers,

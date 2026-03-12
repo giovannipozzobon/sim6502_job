@@ -1,114 +1,43 @@
 #include "assembler.h"
+#include "opcodes.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 #include <errno.h>
-
-const char *mode_name(unsigned char mode) {
-	switch (mode) {
-	case MODE_IMPLIED: return "IMP";
-	case MODE_IMMEDIATE: return "IMM";
-	case MODE_ABSOLUTE: return "ABS";
-	case MODE_ABSOLUTE_X: return "ABX";
-	case MODE_ABSOLUTE_Y: return "ABY";
-	case MODE_INDIRECT: return "IND";
-	case MODE_INDIRECT_X: return "INX";
-	case MODE_INDIRECT_Y: return "INY";
-	case MODE_ZP: return "ZP";
-	case MODE_ZP_X: return "ZPX";
-	case MODE_ZP_Y: return "ZPY";
-	case MODE_RELATIVE: return "REL";
-	case MODE_RELATIVE_LONG: return "RELL";
-	case MODE_ZP_INDIRECT: return "ZPI";
-	case MODE_ABS_INDIRECT_Y: return "AIY";
-	case MODE_ZP_INDIRECT_Z: return "ZIZ";
-	case MODE_SP_INDIRECT_Y: return "SIY";
-	case MODE_ABS_INDIRECT_X: return "AIX";
-	case MODE_IMMEDIATE_WORD: return "IMW";
-	case MODE_ZP_INDIRECT_FLAT: return "FLT";
-	case MODE_ZP_INDIRECT_Z_FLAT: return "FLZ";
-	default: return "???";
-	}
-}
-
-int get_encoded_length(const char *mnem, unsigned char mode,
-		const opcode_handler_t *handlers, int n, cpu_type_t cpu_type) {
-	if (strcmp(mnem, "BRK") == 0) return (cpu_type == CPU_45GS02) ? 1 : 2;
-	for (int i = 0; i < n; i++) {
-		if (strcmp(handlers[i].mnemonic, mnem) == 0 &&
-		    handlers[i].mode == mode &&
-		    handlers[i].opcode_len > 0) {
-			int operand = 0;
-			switch (mode) {
-			case MODE_ABSOLUTE: case MODE_ABSOLUTE_X: case MODE_ABSOLUTE_Y:
-			case MODE_INDIRECT: case MODE_ABS_INDIRECT_X: case MODE_ABS_INDIRECT_Y:
-			case MODE_RELATIVE_LONG: case MODE_IMMEDIATE_WORD:
-				operand = 2; break;
-			case MODE_IMPLIED:
-				operand = 0; break;
-			default:
-				operand = 1; break;
-			}
-			return (int)handlers[i].opcode_len + operand;
-		}
-	}
-	return get_instruction_length(mode);
-}
-
-int get_instruction_length(unsigned char mode) {
-	switch (mode) {
-	case MODE_IMPLIED: return 1;
-	case MODE_IMMEDIATE: return 2;
-	case MODE_ZP: return 2;
-	case MODE_ZP_X: return 2;
-	case MODE_ZP_Y: return 2;
-	case MODE_RELATIVE: return 2;
-	case MODE_RELATIVE_LONG: return 3;
-	case MODE_INDIRECT_X: return 2;
-	case MODE_INDIRECT_Y: return 2;
-	case MODE_ABSOLUTE: return 3;
-	case MODE_ABSOLUTE_X: return 3;
-	case MODE_ABSOLUTE_Y: return 3;
-	case MODE_INDIRECT: return 3;
-	case MODE_ZP_INDIRECT: return 2;
-	case MODE_ABS_INDIRECT_Y: return 3;
-	case MODE_ZP_INDIRECT_Z: return 2;
-	case MODE_SP_INDIRECT_Y: return 2;
-	case MODE_ABS_INDIRECT_X: return 3;
-	case MODE_IMMEDIATE_WORD: return 3;
-	case MODE_ZP_INDIRECT_FLAT: return 2;
-	case MODE_ZP_INDIRECT_Z_FLAT: return 2;
-	default: return 1;
-	}
-}
+#include <strings.h>
 
 int is_branch_opcode(const char *op) {
-	if (strcmp(op, "BCC") == 0 || strcmp(op, "LBCC") == 0) return 1;
-	if (strcmp(op, "BCS") == 0 || strcmp(op, "LBCS") == 0) return 1;
-	if (strcmp(op, "BEQ") == 0 || strcmp(op, "LBEQ") == 0) return 1;
-	if (strcmp(op, "BMI") == 0 || strcmp(op, "LBMI") == 0) return 1;
-	if (strcmp(op, "BNE") == 0 || strcmp(op, "LBNE") == 0) return 1;
-	if (strcmp(op, "BPL") == 0 || strcmp(op, "LBPL") == 0) return 1;
-	if (strcmp(op, "BVC") == 0 || strcmp(op, "LBVC") == 0) return 1;
-	if (strcmp(op, "BVS") == 0 || strcmp(op, "LBVS") == 0) return 1;
-	if (strcmp(op, "BRA") == 0 || strcmp(op, "LBRA") == 0) return 1;
-	if (strcmp(op, "BSR") == 0 || strcmp(op, "LBSR") == 0) return 1;
-	if (strcmp(op, "BRL") == 0 || strcmp(op, "LBRL") == 0) return 1;
+	if (strcasecmp(op, "BCC") == 0 || strcasecmp(op, "BCS") == 0 || 
+	    strcasecmp(op, "BEQ") == 0 || strcasecmp(op, "BNE") == 0 ||
+	    strcasecmp(op, "BMI") == 0 || strcasecmp(op, "BPL") == 0 ||
+	    strcasecmp(op, "BVC") == 0 || strcasecmp(op, "BVS") == 0 ||
+	    strcasecmp(op, "BRA") == 0 || strcasecmp(op, "BSR") == 0 ||
+	    strcasecmp(op, "BRL") == 0)
+		return 1;
+    if (strcasecmp(op, "LBCC") == 0 || strcasecmp(op, "LBCS") == 0 || 
+	    strcasecmp(op, "LBEQ") == 0 || strcasecmp(op, "LBNE") == 0 ||
+	    strcasecmp(op, "LBMI") == 0 || strcasecmp(op, "LBPL") == 0 ||
+	    strcasecmp(op, "LBVC") == 0 || strcasecmp(op, "LBVS") == 0 ||
+	    strcasecmp(op, "LBRA") == 0 || strcasecmp(op, "LBSR") == 0 ||
+        strcasecmp(op, "LBRL") == 0)
+        return 1;
 	return 0;
 }
 
 int is_long_branch_opcode(const char *op) {
-	if (op[0] == 'L' && (strcmp(op, "LBRL") != 0)) {
-		if (strcmp(op, "LBCC") == 0 || strcmp(op, "LBCS") == 0 || 
-		    strcmp(op, "LBEQ") == 0 || strcmp(op, "LBNE") == 0 ||
-		    strcmp(op, "LBMI") == 0 || strcmp(op, "LBPL") == 0 ||
-		    strcmp(op, "LBVC") == 0 || strcmp(op, "LBVS") == 0 ||
-		    strcmp(op, "LBRA") == 0 || strcmp(op, "LBSR") == 0)
+	if (toupper((unsigned char)op[0]) == 'L' && (strcasecmp(op, "LBRL") != 0)) {
+		if (strcasecmp(op, "LBCC") == 0 || strcasecmp(op, "LBCS") == 0 || 
+		    strcasecmp(op, "LBEQ") == 0 || strcasecmp(op, "LBNE") == 0 ||
+		    strcasecmp(op, "LBMI") == 0 || strcasecmp(op, "LBPL") == 0 ||
+		    strcasecmp(op, "LBVC") == 0 || strcasecmp(op, "LBVS") == 0 ||
+		    strcasecmp(op, "LBRA") == 0)
 			return 1;
 	}
-	if (strcmp(op, "BSR") == 0) return 1;
-	if (strcmp(op, "BRL") == 0) return 1;
+	if (strcasecmp(op, "BSR") == 0) return 1;
+	if (strcasecmp(op, "BRL") == 0) return 1;
+	if (strcasecmp(op, "LBSR") == 0) return 1;
+	if (strcasecmp(op, "LBRL") == 0) return 1;
 	return 0;
 }
 
@@ -148,32 +77,30 @@ int load_binary_to_mem(memory_t *mem, int addr, const char *filename) {
 			int c = fgetc(bf);
 			if (c == EOF) { size = i; break; }
 			if (addr + (int)i < 65536)
-				mem->mem[addr + (int)i] = (unsigned char)c;
+				mem->mem[addr + i] = (unsigned char)c;
 		}
 	}
 	fclose(bf);
 	return (int)size;
 }
 
-static const char *machine_name_local(machine_type_t type) {
-    switch (type) {
-    case MACHINE_RAW6502: return "raw6502";
-    case MACHINE_C64:     return "c64";
-    case MACHINE_C128:    return "c128";
-    case MACHINE_MEGA65:  return "mega65";
-    case MACHINE_X16:     return "x16";
-    default:              return "unknown";
-    }
+static bool is_device_available(machine_type_t machine, const char* name) {
+    if (strcmp(name, "vic2") == 0) return (machine != MACHINE_RAW6502 && machine != MACHINE_X16);
+    if (strcmp(name, "mega65_math") == 0) return (machine == MACHINE_MEGA65);
+    if (strcmp(name, "mega65_dma") == 0) return (machine == MACHINE_MEGA65);
+    if (strcmp(name, "sid") == 0) return (machine != MACHINE_RAW6502 && machine != MACHINE_X16);
+    return true; // Generic or unknown device
 }
 
-static bool is_device_available(machine_type_t machine, const char *device) {
-    if (strcmp(device, "vic2") == 0) {
-        return machine == MACHINE_C64 || machine == MACHINE_C128 || machine == MACHINE_MEGA65 || machine == MACHINE_X16;
+static const char* machine_name_local(machine_type_t m) {
+    switch (m) {
+        case MACHINE_RAW6502: return "raw6502";
+        case MACHINE_C64: return "c64";
+        case MACHINE_C128: return "c128";
+        case MACHINE_MEGA65: return "mega65";
+        case MACHINE_X16: return "x16";
+        default: return "unknown";
     }
-    if (strcmp(device, "mega65_math") == 0 || strcmp(device, "mega65_dma") == 0) {
-        return machine == MACHINE_MEGA65;
-    }
-    return false;
 }
 
 bool handle_pseudo_op(const char *line, machine_type_t *machine_type, cpu_type_t *cpu_type, int *pc,
@@ -205,6 +132,23 @@ bool handle_pseudo_op(const char *line, machine_type_t *machine_type, cpu_type_t
 			fprintf(stderr, "Error: Machine '%s' does not provide required device '%s'\n",
 			        machine_name_local(*machine_type), device);
 			return false;
+		}
+		return true;
+	}
+	if (strncmp(line, "inspect", 7) == 0 && (!line[7] || isspace(line[7]))) {
+		line += 7;
+		while (*line && isspace(*line)) line++;
+		if (symbols) {
+			char name[64]; int j = 0;
+			if (*line == '"') {
+				line++;
+				while (*line && *line != '"' && j < 63) name[j++] = *line++;
+				if (*line == '"') line++;
+			} else {
+				while (*line && !isspace(*line) && *line != ';' && j < 63) name[j++] = *line++;
+			}
+			name[j] = '\0';
+			symbol_add(symbols, name, (unsigned short)*pc, SYM_INSPECT, "Inspect device/memory");
 		}
 		return true;
 	}
@@ -282,9 +226,7 @@ bool handle_pseudo_op(const char *line, machine_type_t *machine_type, cpu_type_t
 			if (mem) {
 				mem->mem[(*pc)++] = val & 0xFF;
 				mem->mem[(*pc)++] = (val >> 8) & 0xFF;
-			} else {
-				(*pc) += 2;
-			}
+			} else *pc += 2;
 			while (*line && isspace((unsigned char)*line)) line++;
 			if (*line == ',') line++;
 		}
@@ -296,23 +238,7 @@ bool handle_pseudo_op(const char *line, machine_type_t *machine_type, cpu_type_t
 		if (*line == '"') {
 			line++;
 			while (*line && *line != '"') {
-				unsigned char c;
-				if (*line == '\\') {
-					line++;
-					switch (*line) {
-					case 'n':  c = '\n'; break;
-					case 'r':  c = '\r'; break;
-					case 't':  c = '\t'; break;
-					case '0':  c = '\0'; break;
-					case '\\': c = '\\'; break;
-					case '"':  c = '"';  break;
-					default:   c = (unsigned char)*line; break;
-					}
-				} else {
-					c = (unsigned char)*line;
-				}
-				line++;
-				if (mem) mem->mem[(*pc)++] = c;
+				if (mem) mem->mem[(*pc)++] = (unsigned char)*line++;
 				else (*pc)++;
 			}
 		}
@@ -321,17 +247,10 @@ bool handle_pseudo_op(const char *line, machine_type_t *machine_type, cpu_type_t
 	if (strncmp(line, "align", 5) == 0 && (!line[5] || isspace(line[5]))) {
 		line += 5;
 		while (*line && isspace(*line)) line++;
-		int n = (int)parse_value(line, NULL);
-		if (n > 1) {
-			int rem = (*pc) % n;
-			if (rem != 0) {
-				int pad = n - rem;
-				if (mem) {
-					for (int i = 0; i < pad; i++) mem->mem[(*pc)++] = 0;
-				} else {
-					*pc += pad;
-				}
-			}
+		int alignment = (int)parse_value(line, NULL);
+		if (alignment > 0) {
+			int offset = (*pc) % alignment;
+			if (offset != 0) *pc += (alignment - offset);
 		}
 		return true;
 	}
@@ -374,7 +293,6 @@ void parse_line(const char *line, instruction_t *instr, symbol_table_t *symbols,
 		else instr->mode = MODE_IMMEDIATE;
 		line++;
 		instr->arg = parse_value(line, NULL);
-		/* immediate: value must fit in one byte (or two bytes for PHW) */
 		if (instr->mode == MODE_IMMEDIATE && instr->arg > 0xFF)
 			instr->arg_overflow = 1;
 	} else if (*line == '$' || *line == '%' || *line == '\'' || isdigit(*line) || *line == '*') {
@@ -382,20 +300,27 @@ void parse_line(const char *line, instruction_t *instr, symbol_table_t *symbols,
 		if (*line == '*') {
 			instr->arg = (unsigned short)pc;
 			line++;
-			if (*line == '+') {
-				line++;
-				instr->arg += parse_value(line, NULL);
-			} else if (*line == '-') {
-				line++;
-				instr->arg -= parse_value(line, NULL);
-			}
+			if (*line == '+') { line++; instr->arg += parse_value(line, NULL); }
+			else if (*line == '-') { line++; instr->arg -= parse_value(line, NULL); }
 		} else {
 			instr->arg = parse_value(line, &digits);
 		}
-		while (*line && !isspace(*line) && *line != ',') line++;
-		while (*line && (isspace(*line) || *line == ',')) line++;
-		if (toupper(*line) == 'X') instr->mode = (digits <= 2) ? MODE_ZP_X : MODE_ABSOLUTE_X;
-		else if (toupper(*line) == 'Y') instr->mode = (digits <= 2) ? MODE_ZP_Y : MODE_ABSOLUTE_Y;
+		
+		/* Robust detection of indexed mode */
+		int idx_x = 0, idx_y = 0;
+		const char *p = line;
+        if (*p == '$' || *p == '%' || *p == '\'' || *p == '*') p++;
+        while (*p && (isxdigit((unsigned char)*p) || isdigit((unsigned char)*p))) p++;
+		while (*p && isspace((unsigned char)*p)) p++;
+		if (*p == ',') {
+			p++;
+			while (*p && isspace((unsigned char)*p)) p++;
+			if (toupper((unsigned char)*p) == 'X') idx_x = 1;
+			else if (toupper((unsigned char)*p) == 'Y') idx_y = 1;
+		}
+
+		if (idx_x) instr->mode = (digits <= 2) ? MODE_ZP_X : MODE_ABSOLUTE_X;
+		else if (idx_y) instr->mode = (digits <= 2) ? MODE_ZP_Y : MODE_ABSOLUTE_Y;
 		else if (is_branch) {
 			unsigned short target = instr->arg;
 			if (is_long_branch_opcode(instr->op)) {
@@ -406,14 +331,6 @@ void parse_line(const char *line, instruction_t *instr, symbol_table_t *symbols,
 				instr->arg = (unsigned short)(target - (pc + 2));
 			}
 		} else instr->mode = (digits <= 2) ? MODE_ZP : MODE_ABSOLUTE;
-		/* hex literals only: >4 digits means value exceeds 16-bit address space */
-		switch (instr->mode) {
-		case MODE_ABSOLUTE: case MODE_ABSOLUTE_X: case MODE_ABSOLUTE_Y:
-			if (digits > 4) instr->arg_overflow = 1;
-			break;
-		default:
-			break;
-		}
 	} else if (*line == '(') {
 		line++;
 		if (*line == '$' || *line == '%' || *line == '\'' || isdigit(*line)) {
@@ -425,11 +342,8 @@ void parse_line(const char *line, instruction_t *instr, symbol_table_t *symbols,
 				if (toupper(*line) == 'X') {
 					if (instr->arg > 0xFF) instr->mode = MODE_ABS_INDIRECT_X;
 					else instr->mode = MODE_INDIRECT_X;
-					while (*line && *line != ')') line++;
-					if (*line == ')') line++;
 				} else if (toupper(*line) == 'S') {
-					if (toupper(line[1]) == 'P') line += 2;
-					else line++;
+					if (toupper(line[1]) == 'P') line += 2; else line++;
 					while (*line && isspace(*line)) line++;
 					if (*line == ')') {
 						line++;
@@ -455,7 +369,6 @@ void parse_line(const char *line, instruction_t *instr, symbol_table_t *symbols,
 				}
 			}
 		} else if (isalpha(*line) || *line == '_') {
-			/* Symbol name inside parens: look up its value, then detect mode */
 			char lbl[64]; int j = 0;
 			while ((*line && (isalnum(*line) || *line == '_')) && j < 63) lbl[j++] = *line++;
 			lbl[j] = 0;
@@ -468,11 +381,8 @@ void parse_line(const char *line, instruction_t *instr, symbol_table_t *symbols,
 				if (toupper(*line) == 'X') {
 					if (instr->arg > 0xFF) instr->mode = MODE_ABS_INDIRECT_X;
 					else instr->mode = MODE_INDIRECT_X;
-					while (*line && *line != ')') line++;
-					if (*line == ')') line++;
 				} else if (toupper(*line) == 'S') {
-					if (toupper(line[1]) == 'P') line += 2;
-					else line++;
+					if (toupper(line[1]) == 'P') line += 2; else line++;
 					while (*line && isspace(*line)) line++;
 					if (*line == ')') {
 						line++;
@@ -508,73 +418,73 @@ void parse_line(const char *line, instruction_t *instr, symbol_table_t *symbols,
 			if (*line == ',') {
 				line++;
 				while (*line && isspace(*line)) line++;
-				if (toupper(*line) == 'Z')
-					instr->mode = MODE_ZP_INDIRECT_Z_FLAT;
-			} else {
-				instr->mode = MODE_ZP_INDIRECT_FLAT;
-			}
+				if (toupper(*line) == 'Z') instr->mode = MODE_ZP_INDIRECT_Z_FLAT;
+			} else instr->mode = MODE_ZP_INDIRECT_FLAT;
 		}
 	} else if (instr->op[0]) {
 		if (isalpha(*line) || *line == '_' || *line == '.') {
-			char label[64];
-			int j = 0;
-			if (*line == '.' && j < 63) label[j++] = *line++;  /* allow leading dot */
+			char label[64]; int j = 0;
+			if (*line == '.' && j < 63) label[j++] = *line++;
 			while ((*line && (isalnum(*line) || *line == '_')) && j < 63) label[j++] = *line++;
 			label[j] = 0;
+			
+			int idx_x = 0, idx_y = 0;
+			const char *p = line;
+			while (*p && isspace((unsigned char)*p)) p++;
+			if (*p == ',') {
+				p++;
+				while (*p && isspace((unsigned char)*p)) p++;
+				if (toupper((unsigned char)*p) == 'X') idx_x = 1;
+				else if (toupper((unsigned char)*p) == 'Y') idx_y = 1;
+			}
+
 			if (is_branch) {
-				if (is_long_branch_opcode(instr->op))
-					instr->mode = MODE_RELATIVE_LONG;
-				else
-					instr->mode = MODE_RELATIVE;
-			} else instr->mode = MODE_ABSOLUTE;
+				if (is_long_branch_opcode(instr->op)) instr->mode = MODE_RELATIVE_LONG;
+				else                                  instr->mode = MODE_RELATIVE;
+                /* Advance past label */
+                while (*line && !isspace((unsigned char)*line) && *line != ';') line++;
+			} else {
+				if      (idx_x) instr->mode = MODE_ABSOLUTE_X;
+				else if (idx_y) instr->mode = MODE_ABSOLUTE_Y;
+				else            instr->mode = MODE_ABSOLUTE;
+			}
+
 			if (symbols) {
 				unsigned short addr;
 				if (symbol_lookup_name(symbols, label, &addr)) {
 					if (instr->mode == MODE_RELATIVE) instr->arg = (unsigned short)(addr - (pc + 2));
 					else if (instr->mode == MODE_RELATIVE_LONG) instr->arg = (unsigned short)(addr - (pc + 3));
-					else instr->arg = addr;
-				} else {
-					fprintf(stderr, "Warning: undefined label '%s'\n", label);
-					instr->arg = 0;
-				}
+					else {
+						instr->arg = addr;
+						if (addr <= 0xFF && !is_branch) {
+							if      (idx_x) instr->mode = MODE_ZP_X;
+							else if (idx_y) instr->mode = MODE_ZP_Y;
+							else            instr->mode = MODE_ZP;
+						}
+					}
+				} else instr->arg = 0;
 			}
 		} else instr->mode = MODE_IMPLIED;
 	}
 }
 
-int encode_to_mem(memory_t *mem, int pc_base,
-		const instruction_t *instr,
-		const opcode_handler_t *handlers, int n,
-		cpu_type_t cpu_type) {
+int encode_to_mem(memory_t *mem, int pc_base, const instruction_t *instr, const opcode_handler_t *handlers, int n, cpu_type_t cpu_type) {
 	if (instr->arg_overflow) return -1;
 	if (strcmp(instr->op, "BRK") == 0) {
 		mem->mem[pc_base] = 0x00;
-		if (cpu_type != CPU_45GS02) {
-			mem->mem[pc_base + 1] = 0x00;
-			return 2;
-		}
+		if (cpu_type != CPU_45GS02) { mem->mem[pc_base + 1] = 0x00; return 2; }
 		return 1;
 	}
 	int pc = pc_base;
 	int i;
 	for (i = 0; i < n; i++) {
-		if (strcmp(instr->op, handlers[i].mnemonic) == 0 &&
-		    handlers[i].mode == instr->mode &&
-		    handlers[i].opcode_len > 0)
-			break;
+		if (strcmp(instr->op, handlers[i].mnemonic) == 0 && handlers[i].mode == instr->mode && handlers[i].opcode_len > 0) break;
 	}
 	instruction_t adjusted_instr = *instr;
 	if (i >= n && (instr->mode == MODE_RELATIVE || instr->mode == MODE_RELATIVE_LONG)) {
-		/* Fallback: try the other relative mode if this one didn't match.
-		 * This handles mnemonics like BRL/BSR that might be short on some CPUs and long on others. */
 		unsigned char other_mode = (instr->mode == MODE_RELATIVE) ? MODE_RELATIVE_LONG : MODE_RELATIVE;
 		for (i = 0; i < n; i++) {
-			if (strcmp(instr->op, handlers[i].mnemonic) == 0 &&
-			    handlers[i].mode == other_mode &&
-			    handlers[i].opcode_len > 0) {
-				/* Found a match in the other mode. Recalculate target address from original arg,
-				 * then recalculate relative offset for the new mode.
-				 * Original arg was (target - (pc_base + len_of_orig_mode)) */
+			if (strcmp(instr->op, handlers[i].mnemonic) == 0 && handlers[i].mode == other_mode && handlers[i].opcode_len > 0) {
 				int orig_len = (instr->mode == MODE_RELATIVE) ? 2 : 3;
 				int new_len = (other_mode == MODE_RELATIVE) ? 2 : 3;
 				unsigned short target = (unsigned short)(pc_base + orig_len + (short)instr->arg);
@@ -586,26 +496,123 @@ int encode_to_mem(memory_t *mem, int pc_base,
 	}
 	if (i >= n) return -1;
 	const instruction_t *final_instr = (i < n && adjusted_instr.mode != instr->mode) ? &adjusted_instr : instr;
-
 	unsigned char olen = handlers[i].opcode_len;
-	for (int j = 0; j < olen; j++)
-		mem->mem[pc++] = handlers[i].opcode_bytes[j];
+	for (int j = 0; j < olen; j++) mem->mem[pc++] = handlers[i].opcode_bytes[j];
 	switch (handlers[i].mode) {
-	case MODE_IMPLIED:
-		break;
+	case MODE_IMPLIED: break;
 	case MODE_IMMEDIATE: case MODE_ZP: case MODE_ZP_X: case MODE_ZP_Y:
 	case MODE_INDIRECT_X: case MODE_INDIRECT_Y:
 	case MODE_ZP_INDIRECT: case MODE_ZP_INDIRECT_Z:
 	case MODE_ZP_INDIRECT_Z_FLAT: case MODE_ZP_INDIRECT_FLAT:
 	case MODE_SP_INDIRECT_Y: case MODE_RELATIVE:
-		mem->mem[pc++] = final_instr->arg & 0xFF;
-		break;
+		mem->mem[pc++] = final_instr->arg & 0xFF; break;
 	case MODE_ABSOLUTE: case MODE_ABSOLUTE_X: case MODE_ABSOLUTE_Y:
 	case MODE_INDIRECT: case MODE_ABS_INDIRECT_X: case MODE_ABS_INDIRECT_Y:
 	case MODE_RELATIVE_LONG: case MODE_IMMEDIATE_WORD:
-		mem->mem[pc++] = final_instr->arg & 0xFF;
-		mem->mem[pc++] = (final_instr->arg >> 8) & 0xFF;
-		break;
+		mem->mem[pc++] = final_instr->arg & 0xFF; mem->mem[pc++] = (final_instr->arg >> 8) & 0xFF; break;
 	}
 	return pc - pc_base;
+}
+
+const char *mode_name(unsigned char mode) {
+	switch (mode) {
+	case MODE_IMPLIED:            return "implied";
+	case MODE_IMMEDIATE:          return "immediate";
+	case MODE_IMMEDIATE_WORD:     return "immediate_word";
+	case MODE_ZP:                 return "zp";
+	case MODE_ZP_X:               return "zp_x";
+	case MODE_ZP_Y:               return "zp_y";
+	case MODE_INDIRECT_X:         return "indirect_x";
+	case MODE_INDIRECT_Y:         return "indirect_y";
+	case MODE_ZP_INDIRECT:        return "zp_indirect";
+	case MODE_ZP_INDIRECT_Z:      return "zp_indirect_z";
+	case MODE_ZP_INDIRECT_FLAT:   return "zp_indirect_flat";
+	case MODE_ZP_INDIRECT_Z_FLAT: return "zp_indirect_z_flat";
+	case MODE_SP_INDIRECT_Y:      return "sp_indirect_y";
+	case MODE_RELATIVE:           return "relative";
+	case MODE_RELATIVE_LONG:      return "relative_long";
+	case MODE_ABSOLUTE:           return "absolute";
+	case MODE_ABSOLUTE_X:         return "absolute_x";
+	case MODE_ABSOLUTE_Y:         return "absolute_y";
+	case MODE_INDIRECT:           return "indirect";
+	case MODE_ABS_INDIRECT_X:     return "abs_indirect_x";
+	case MODE_ABS_INDIRECT_Y:     return "abs_indirect_y";
+	default:                      return "unknown";
+	}
+}
+
+const char *mode_operand_template(unsigned char mode) {
+	switch (mode) {
+	case MODE_IMPLIED:            return "";
+	case MODE_IMMEDIATE:          return " #$vv";
+	case MODE_IMMEDIATE_WORD:     return " #$vvvv";
+	case MODE_ZP:                 return " $vv";
+	case MODE_ZP_X:               return " $vv,X";
+	case MODE_ZP_Y:               return " $vv,Y";
+	case MODE_INDIRECT_X:         return " ($vv,X)";
+	case MODE_INDIRECT_Y:         return " ($vv),Y";
+	case MODE_ZP_INDIRECT:        return " ($vv)";
+	case MODE_ZP_INDIRECT_Z:      return " ($vv),Z";
+	case MODE_ZP_INDIRECT_FLAT:   return " [$vv]";
+	case MODE_ZP_INDIRECT_Z_FLAT: return " [$vv],Z";
+	case MODE_SP_INDIRECT_Y:      return " ($vv,SP),Y";
+	case MODE_RELATIVE:           return " $vvvv";
+	case MODE_RELATIVE_LONG:      return " $vvvv";
+	case MODE_ABSOLUTE:           return " $vvvv";
+	case MODE_ABSOLUTE_X:         return " $vvvv,X";
+	case MODE_ABSOLUTE_Y:         return " $vvvv,Y";
+	case MODE_INDIRECT:           return " ($vvvv)";
+	case MODE_ABS_INDIRECT_X:     return " ($vvvv,X)";
+	case MODE_ABS_INDIRECT_Y:     return " ($vvvv),Y";
+	default:                      return " ???";
+	}
+}
+
+int get_instruction_length(unsigned char mode) {
+	switch (mode) {
+	case MODE_IMPLIED:            return 1;
+	case MODE_IMMEDIATE:          return 2;
+	case MODE_ZP:                 return 2;
+	case MODE_ZP_X:               return 2;
+	case MODE_ZP_Y:               return 2;
+	case MODE_INDIRECT_X:         return 2;
+	case MODE_INDIRECT_Y:         return 2;
+	case MODE_ZP_INDIRECT:        return 2;
+	case MODE_ZP_INDIRECT_Z:      return 2;
+	case MODE_ZP_INDIRECT_FLAT:   return 2;
+	case MODE_ZP_INDIRECT_Z_FLAT: return 2;
+	case MODE_SP_INDIRECT_Y:      return 2;
+	case MODE_RELATIVE:           return 2;
+	case MODE_ABSOLUTE:           return 3;
+	case MODE_ABSOLUTE_X:         return 3;
+	case MODE_ABSOLUTE_Y:         return 3;
+	case MODE_INDIRECT:           return 3;
+	case MODE_ABS_INDIRECT_X:     return 3;
+	case MODE_ABS_INDIRECT_Y:     return 3;
+	case MODE_RELATIVE_LONG:      return 3;
+	case MODE_IMMEDIATE_WORD:     return 3;
+	default:                      return 1;
+	}
+}
+
+int get_encoded_length(const char *op, unsigned char mode, const opcode_handler_t *handlers, int n, cpu_type_t cpu_type) {
+	if (strcmp(op, "BRK") == 0) {
+		return (cpu_type == CPU_45GS02) ? 1 : 2;
+	}
+	for (int i = 0; i < n; i++) {
+		if (strcmp(op, handlers[i].mnemonic) == 0 && handlers[i].mode == mode && handlers[i].opcode_len > 0) {
+			int instr_bytes = get_instruction_length(mode);
+			return (int)handlers[i].opcode_len - 1 + instr_bytes;
+		}
+	}
+	/* Fallback for relative modes */
+	if (mode == MODE_RELATIVE || mode == MODE_RELATIVE_LONG) {
+		unsigned char other = (mode == MODE_RELATIVE) ? MODE_RELATIVE_LONG : MODE_RELATIVE;
+		for (int i = 0; i < n; i++) {
+			if (strcmp(op, handlers[i].mnemonic) == 0 && handlers[i].mode == other && handlers[i].opcode_len > 0) {
+				return (int)handlers[i].opcode_len - 1 + get_instruction_length(other);
+			}
+		}
+	}
+	return -1;
 }

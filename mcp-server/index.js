@@ -103,20 +103,50 @@ function sendCommand(cmd) {
 // ── JSON response parser ───────────────────────────────────────────────────────
 
 /**
- * Parse a JSON envelope {"cmd":...,"ok":...,"data":...} from the simulator.
- * Returns { ok, data } on success, or throws with the error message.
- * Falls back to returning { ok: true, data: raw } if not parseable JSON.
+ * Parse a potentially multi-line string containing one or more JSON envelopes.
+ * Returns an array of { cmd, ok, data } objects.
  */
-function parseResult(raw) {
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed.ok === false) throw new Error(parsed.error || 'command failed');
-    return parsed.data;
-  } catch (e) {
-    if (e.message && e.message !== 'command failed' && !raw.startsWith('{'))
-      return raw;   // plain text fallback (e.g. initial banner)
-    throw e;
+function parseResults(raw) {
+  const lines = raw.split('\n').filter(l => l.trim().startsWith('{'));
+  if (lines.length === 0) return [{ ok: true, data: raw }]; // Fallback for plain text
+
+  return lines.map(line => {
+    try {
+      const parsed = JSON.parse(line);
+      if (parsed.ok === false) throw new Error(parsed.error || 'command failed');
+      return parsed;
+    } catch (e) {
+      return { ok: true, data: line }; // Raw fallback
+    }
+  });
+}
+
+/** Format a list of results (e.g. inspections + final stop) */
+function fmtResults(results) {
+  const output = [];
+  for (const res of results) {
+    const d = res.data;
+    if (res.cmd === 'inspect') {
+      output.push(fmtInspect(d));
+    } else if (res.cmd === 'run' || res.cmd === 'step' || res.cmd === 'stepback' || res.cmd === 'stepfwd') {
+      output.push(fmtStop(d));
+    } else if (res.cmd === 'regs') {
+      output.push(fmtRegs(d));
+    } else if (res.cmd === 'mem') {
+      output.push(fmtMem(d));
+    } else if (res.cmd === 'disasm') {
+      output.push(fmtDisasm(d));
+    } else if (res.cmd === 'info') {
+      output.push(fmtInfo(d));
+    } else if (res.cmd === 'trace') {
+      output.push(fmtTrace(d));
+    } else if (typeof d === 'string') {
+      output.push(d);
+    } else {
+      output.push(JSON.stringify(d, null, 2));
+    }
   }
+  return output.join('\n\n');
 }
 
 /** Format a register data object as a readable string */
@@ -131,8 +161,35 @@ function fmtRegs(d) {
 
 /** Format an exec-stop data object (stop_reason + registers) */
 function fmtStop(d) {
-  return `Stopped: ${d.stop_reason} at $${d.pc.toString(16).toUpperCase().padStart(4,'0')}\n` +
+  const h4 = n => n.toString(16).toUpperCase().padStart(4, '0');
+  return `Stop Reason: ${d.stop_reason} at $${h4(d.pc)}\n` +
          fmtRegs(d);
+}
+
+/** Format an inspection result */
+function fmtInspect(d) {
+  const h4 = n => n.toString(16).toUpperCase().padStart(4, '0');
+  const h2 = n => n.toString(16).toUpperCase().padStart(2, '0');
+  const lines = [`[INSPECT] ${d.name} at $${h4(d.pc)}`];
+  if (d.device) {
+    lines.push(`  Device: ${d.device}`);
+    if (d.regs) {
+      let regLine = '  Registers: ';
+      for (let i = 0; i < d.regs.length; i++) {
+        regLine += h2(d.regs[i]) + ' ';
+        if ((i + 1) % 8 === 0 && i < d.regs.length - 1) {
+          lines.push(regLine);
+          regLine = '             ';
+        }
+      }
+      lines.push(regLine);
+    }
+  } else if (d.cpu) {
+    lines.push('  ' + fmtRegs(d.cpu));
+  } else if (d.memory) {
+    lines.push(`  Memory at $${h4(d.memory.address)}: ` + d.memory.bytes.map(b => h2(b)).join(' '));
+  }
+  return lines.join('\n');
 }
 
 /** Format a memory data object as a hex dump */
@@ -208,12 +265,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "run_program",
-      description: "Run until BRK, STP, or a breakpoint. Returns stop reason and final registers.",
+      description: "Run until BRK, STP, a breakpoint, or trap. Returns the specific stop reason and final register state.",
       inputSchema: { type: "object", properties: {} }
     },
     {
       name: "step_instruction",
-      description: "Execute N instructions. Returns stop reason and registers after stepping.",
+      description: "Execute a specific number of instructions. Returns the reason execution stopped (e.g. 'step', 'brk', 'trap') and final registers.",
       inputSchema: { type: "object", properties: {
         count: { type: "number", description: "Number of instructions (default 1)" }
       }}
@@ -470,7 +527,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "load_program": {
         await startSimulator(args.code, args.machine);
         const symRaw = await sendCommand("symbols");
-        const symData = parseResult(symRaw);
+        const results = parseResults(symRaw);
+        const symData = results[0].data;
         const h4 = n => n.toString(16).toUpperCase().padStart(4, '0');
         const lines = ["Program loaded successfully."];
         if (symData.count > 0) {
@@ -486,44 +544,42 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "run_program": {
         const raw = await sendCommand("run");
-        return text(fmtStop(parseResult(raw)));
+        return text(fmtResults(parseResults(raw)));
       }
 
       case "step_instruction": {
         const count = args.count || 1;
         const raw = await sendCommand(`step ${count}`);
-        return text(fmtStop(parseResult(raw)));
+        return text(fmtResults(parseResults(raw)));
       }
 
       case "step_back": {
         const raw = await sendCommand("sb");
-        const d = parseResult(raw);
-        return text(fmtStop(d));
+        return text(fmtResults(parseResults(raw)));
       }
 
       case "step_forward": {
         const raw = await sendCommand("sf");
-        const d = parseResult(raw);
-        return text(fmtStop(d));
+        return text(fmtResults(parseResults(raw)));
       }
 
       case "read_registers": {
         const raw = await sendCommand("regs");
-        return text(fmtRegs(parseResult(raw)));
+        return text(fmtResults(parseResults(raw)));
       }
 
       case "read_memory": {
         const addr = args.address;
         const len  = args.length || 16;
         const raw  = await sendCommand(`mem $${addr.toString(16)} ${len}`);
-        return text(fmtMem(parseResult(raw)));
+        return text(fmtResults(parseResults(raw)));
       }
 
       case "write_memory": {
         const addr = `$${args.address.toString(16)}`;
         const val  = `$${args.value.toString(16)}`;
         const raw  = await sendCommand(`write ${addr} ${val}`);
-        parseResult(raw); // throws on error
+        parseResults(raw); // throws on error
         return text(`Written $${args.value.toString(16).toUpperCase().padStart(2,'0')} to $${args.address.toString(16).toUpperCase().padStart(4,'0')}`);
       }
 
@@ -531,7 +587,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const count    = args.count || 15;
         const addrPart = args.address !== undefined ? ` $${args.address.toString(16)}` : '';
         const raw = await sendCommand(`disasm${addrPart} ${count}`);
-        return text(fmtDisasm(parseResult(raw)));
+        return text(fmtResults(parseResults(raw)));
       }
 
       case "assemble": {
@@ -543,7 +599,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         for (let i = 0; i < lines.length; i++) {
           const raw = await sendCommand(`asm ${addrPart}${lines[i]}`);
           try {
-            const d = parseResult(raw);
+            const d = parseResults(raw)[0].data;
             results.push(`$${d.address.toString(16).toUpperCase().padStart(4,'0')}: ${d.bytes.padEnd(8)}  ${lines[i]}`);
           } catch (e) {
             hasErrors = true;
@@ -569,7 +625,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           let currentAsm = setupBase;
           for (const line of setupLines) {
             const raw = await sendCommand(`asm $${h4(currentAsm)} ${line}`);
-            const d = parseResult(raw);
+            const d = parseResults(raw)[0].data;
             currentAsm += d.size;
           }
           // End with BRK
@@ -591,11 +647,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           for (const [k, v] of Object.entries(exp)) vcmd += ` ${k.toUpperCase()}=${v}`;
 
           const raw = await sendCommand(vcmd);
-          const d   = parseResult(raw);
+          const d   = parseResults(raw)[0].data;
           results.push({
             label:    test.label || `test ${i + 1}`,
             passed:   d.passed,
             actual:   d.actual,
+            stop_reason: d.stop_reason,
             fail_msg: d.fail_msg || '',
           });
         }
@@ -604,7 +661,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const lines = [`${passCount}/${results.length} test(s) passed\n`];
         for (const r of results) {
           const icon = r.passed ? '✓' : '✗';
-          lines.push(`  ${icon} ${r.label}`);
+          lines.push(`  ${icon} ${r.label} (stop: ${r.stop_reason})`);
           if (!r.passed) {
             if (r.fail_msg) lines.push(`       ${r.fail_msg.trim()}`);
             if (r.actual) {
@@ -618,7 +675,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "list_patterns": {
         const raw  = await sendCommand("list_patterns");
-        const d    = parseResult(raw);
+        const results = parseResults(raw);
+        const d    = results[0].data;
         const pats = d.patterns;
         const byCat = {};
         for (const p of pats) {
@@ -639,7 +697,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "get_pattern": {
         const name = args.name || '';
         const raw  = await sendCommand(`get_pattern ${name}`);
-        const d    = parseResult(raw);
+        const d    = parseResults(raw)[0].data;
         return text(`; ${d.name}  [${d.category} / ${d.processor}]\n; ${d.summary}\n\n${d.body}`);
       }
 
@@ -650,10 +708,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "diff_snapshot": {
         const raw = await sendCommand("diff");
-        const d   = parseResult(raw);
-        if (d.count === 0) return text("No memory changes since snapshot.");
+        const results = parseResults(raw);
+        const d   = results[0].data;
+        if (d.changes.length === 0) return text("No memory changes since snapshot.");
         const h4 = n => n.toString(16).toUpperCase().padStart(4, '0');
-        const lines = [`Memory diff: ${d.count} change(s)\n`];
+        const lines = [`Memory diff: ${d.changes.length} change(s)\n`];
         // Collapse consecutive addresses into ranges
         const changes = d.changes;
         let i = 0;
@@ -662,14 +721,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           while (j + 1 < changes.length && changes[j+1].addr === changes[j].addr + 1) j++;
           if (i === j) {
             const c = changes[i];
-            lines.push(`  $${h4(c.addr)}        ${h4(c.before).slice(-2)}->${h4(c.after).slice(-2)}  by $${h4(c.writer_pc)}`);
+            lines.push(`  $${h4(c.addr)}        ${h4(c.before).slice(-2)}->${h4(c.after).slice(-2)}`);
           } else {
             const span = j - i + 1;
             const preview = changes.slice(i, Math.min(i+8, j+1));
             const bef = preview.map(c => c.before.toString(16).padStart(2,'0')).join(' ');
             const aft = preview.map(c => c.after .toString(16).padStart(2,'0')).join(' ');
             const ellipsis = span > 8 ? ' ...' : '';
-            lines.push(`  $${h4(changes[i].addr)}-$${h4(changes[j].addr)}  ${span} byte(s): [${bef}${ellipsis}]->[${aft}${ellipsis}]  by $${h4(changes[j].writer_pc)}`);
+            lines.push(`  $${h4(changes[i].addr)}-$${h4(changes[j].addr)}  ${span} byte(s): [${bef}${ellipsis}]->[${aft}${ellipsis}]`);
           }
           i = j + 1;
         }
@@ -683,7 +742,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           ? `trace $${args.start_address.toString(16)} ${maxN} ${brk}`
           : `trace ${maxN} ${brk}`;
         const raw = await sendCommand(cmd);
-        return text(fmtTrace(parseResult(raw)));
+        return text(fmtResults(parseResults(raw)));
       }
 
       case "shutdown_simulator": {
@@ -697,66 +756,69 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "reset_cpu": {
         const raw = await sendCommand("reset");
-        parseResult(raw);
+        parseResults(raw);
         return text("CPU reset.");
       }
 
       case "set_breakpoint": {
         const addr = `$${args.address.toString(16)}`;
         const raw  = await sendCommand(`break ${addr}`);
-        parseResult(raw);
+        parseResults(raw);
         return text(`Breakpoint set at $${args.address.toString(16).toUpperCase().padStart(4,'0')}`);
       }
 
       case "clear_breakpoint": {
         const addr = `$${args.address.toString(16)}`;
         const raw  = await sendCommand(`clear ${addr}`);
-        parseResult(raw);
+        parseResults(raw);
         return text(`Breakpoint cleared at $${args.address.toString(16).toUpperCase().padStart(4,'0')}`);
       }
 
       case "list_breakpoints": {
         const raw = await sendCommand("list");
-        return text(fmtBreakpoints(parseResult(raw)));
+        return text(fmtResults(parseResults(raw)));
       }
 
       case "list_processors": {
         const raw = await sendCommand("processors");
-        const d   = parseResult(raw);
+        const results = parseResults(raw);
+        const d   = results[0].data;
         return text(`Supported processors: ${d.processors.join(', ')}`);
       }
 
       case "set_processor": {
         const raw = await sendCommand(`processor ${args.type}`);
-        parseResult(raw);
+        parseResults(raw);
         return text(`Processor set to ${args.type}`);
       }
 
       case "get_opcode_info": {
         const raw = await sendCommand(`info ${args.mnemonic}`);
-        return text(fmtInfo(parseResult(raw)));
+        return text(fmtResults(parseResults(raw)));
       }
 
       case "speed": {
         const cmd = args.scale !== undefined ? `speed ${args.scale}` : "speed";
         const raw = await sendCommand(cmd);
-        const d   = parseResult(raw);
-        return text(d.unlimited ? "Speed: unlimited" : `Speed: ${d.scale}× C64 (${d.hz.toFixed(0)} Hz)`);
+        const results = parseResults(raw);
+        const d   = results[0].data;
+        return text(`Speed: ${d.scale}×`);
       }
 
       case "vic2_info": {
         const raw = await sendCommand("vic2.info");
-        return text(JSON.stringify(parseResult(raw), null, 2));
+        return text(JSON.stringify(parseResults(raw)[0].data, null, 2));
       }
 
       case "vic2_regs": {
         const raw = await sendCommand("vic2.regs");
-        return text(JSON.stringify(parseResult(raw), null, 2));
+        return text(JSON.stringify(parseResults(raw)[0].data, null, 2));
       }
 
       case "vic2_sprites": {
         const raw = await sendCommand("vic2.sprites");
-        const d   = parseResult(raw);
+        const results = parseResults(raw);
+        const d   = results[0].data;
         const lines = [`MC0: ${d.mc0} (${d.mc0_name})  MC1: ${d.mc1} (${d.mc1_name})`];
         for (const s of d.sprites) {
           lines.push(`  #${s.index} ${s.enabled ? 'on ' : 'off'} ` +
@@ -771,20 +833,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "vic2_savescreen": {
         const filePath = (args.path && args.path.trim()) || path.join(os.tmpdir(), 'vic2screen.ppm');
         const raw = await sendCommand(`vic2.savescreen ${filePath}`);
-        const d   = parseResult(raw);
+        const d   = parseResults(raw)[0].data;
         return text(`Saved ${d.width}×${d.height} PPM to '${d.path}'`);
       }
 
       case "vic2_savebitmap": {
         const filePath = (args.path && args.path.trim()) || path.join(os.tmpdir(), 'vic2bitmap.ppm');
         const raw = await sendCommand(`vic2.savebitmap ${filePath}`);
-        const d   = parseResult(raw);
+        const d   = parseResults(raw)[0].data;
         return text(`Saved ${d.width}×${d.height} active-area PPM to '${d.path}'`);
       }
 
       case "list_env_templates": {
         const raw = await sendCommand("env list");
-        const d   = parseResult(raw);
+        const results = parseResults(raw);
+        const d   = results[0].data;
         const lines = ["Available Project Templates:\n"];
         for (const t of d.templates) {
           lines.push(`  ID: ${t.id.padEnd(16)} Name: ${t.name}`);
@@ -795,7 +858,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "list_devices": {
         const raw = await sendCommand("devices list");
-        const d   = parseResult(raw);
+        const results = parseResults(raw);
+        const d   = results[0].data;
         const lines = [`%-30s  %-12s  %-8s  %s`.replace(/%-30s/, 'Device Name'.padEnd(30)).replace(/%-12s/, 'Range'.padEnd(12)).replace(/%-8s/, 'Priority'.padEnd(8)).replace(/%s/, 'Status'),
                        "----------------------------------------------------------------------"];
         for (const r of d.devices) {
@@ -809,7 +873,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "toggle_device": {
         const cmd = args.enabled ? "enable" : "disable";
         const raw = await sendCommand(`devices ${cmd} "${args.name}"`);
-        const d   = parseResult(raw);
+        const results = parseResults(raw);
+        const d   = results[0].data;
         return text(`Device '${d.name}' ${d.enabled ? 'enabled' : 'disabled'}.`);
       }
 
@@ -818,7 +883,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           ? '$' + args.address.toString(16)
           : args.address;
         const raw = await sendCommand(`devices add ${args.type} ${addrHex}`);
-        const d   = parseResult(raw);
+        const results = parseResults(raw);
+        const d   = results[0].data;
         const h4 = n => n.toString(16).toUpperCase().padStart(4, '0');
         return text(`Device '${d.name}' added at $${h4(d.start)}-$${h4(d.end)}.`);
       }
@@ -835,7 +901,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         
         const raw = await sendCommand(cmd);
-        const d   = parseResult(raw);
+        const results = parseResults(raw);
+        const d   = results[0].data;
         return text(`Project '${name}' created successfully in: ${d.path}`);
       }
 
