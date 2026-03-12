@@ -17,6 +17,7 @@ CORE_SRCS = \
 	src/core/device/sid_io.cpp \
 	src/core/audio.cpp \
 	src/core/device/mega65_io.cpp \
+	src/core/device/cia_io.cpp \
 	src/core/patterns.cpp \
 	src/core/project_manager.cpp
 

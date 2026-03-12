@@ -406,7 +406,13 @@ static bool process_single_command(const std::string& line,
     std::vector<std::string> args = split_line(line);
     if (args.empty()) {
         int tr = handle_trap_local(symbols, cpu, mem);
-        if (tr == 0) { unsigned char opc = mem_read(mem, cpu->pc); if (opc != 0x00) cpu->step(); }
+        if (tr == 0) { 
+            unsigned char opc = mem_read(mem, cpu->pc); 
+            if (opc != 0x00) {
+                cpu->step();
+                if (mem->io_registry) mem->io_registry->tick_all(cpu->cycles);
+            }
+        }
         if (g_json_mode) json_exec_result("step", "step", cpu);
         else printf("STOP %04X\n", cpu->pc);
         return true;
@@ -446,6 +452,7 @@ static bool process_single_command(const std::string& line,
             if (breakpoint_hit(breakpoints, cpu)) { stop_reason = "breakpoint"; break; }
             cpu_t pre = *cpu;
             cpu->step();
+            if (mem->io_registry) mem->io_registry->tick_all(cpu->cycles);
             cli_hist_push(&pre, mem);
             if (g_cli_speed > 0.0f && ((cpu->cycles - cyc0) & 0x3FF) < 8) {
                 struct timespec tnow; clock_gettime(CLOCK_MONOTONIC, &tnow);

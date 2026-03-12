@@ -23,6 +23,7 @@
 #include "device/mega65_io.h"
 #include "device/vic2_io.h"
 #include "device/sid_io.h"
+#include "device/cia_io.h"
 
 static instruction_t rom[65536];
 static std::vector<IOHandler*> g_main_dynamic_handlers;
@@ -225,6 +226,7 @@ int main(int argc, char *argv[]) {
 			case MACHINE_MEGA65:  
                 mega65_io_register(&mem); 
                 sid_io_register(&mem, machine_type, g_main_dynamic_handlers);
+                cia_io_register(&mem, g_main_dynamic_handlers);
                 break;
 			case MACHINE_C64:
 			case MACHINE_C128:
@@ -232,6 +234,7 @@ int main(int argc, char *argv[]) {
 			default:              
                 vic2_io_register(&mem); 
                 sid_io_register(&mem, machine_type, g_main_dynamic_handlers);
+                cia_io_register(&mem, g_main_dynamic_handlers);
                 mem.io_registry->rebuild_map(&mem); 
                 break;
 		}
@@ -306,6 +309,7 @@ int main(int argc, char *argv[]) {
 			case MACHINE_MEGA65:  
                 mega65_io_register(&mem); 
                 sid_io_register(&mem, machine_type, g_main_dynamic_handlers);
+                cia_io_register(&mem, g_main_dynamic_handlers);
                 break;
 			case MACHINE_C64:
 			case MACHINE_C128:
@@ -313,6 +317,7 @@ int main(int argc, char *argv[]) {
 			default:              
                 vic2_io_register(&mem); 
                 sid_io_register(&mem, machine_type, g_main_dynamic_handlers);
+                cia_io_register(&mem, g_main_dynamic_handlers);
                 mem.io_registry->rebuild_map(&mem); 
                 break;
 		}
