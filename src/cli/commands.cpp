@@ -21,6 +21,9 @@ static const double CLI_C64_HZ = 985248.0;
 int g_json_mode = 0;
 void cli_set_json_mode(int mode) { g_json_mode = mode; }
 
+/* Forward declarations */
+void json_inspect_result(const char *name, uint16_t pc, IOHandler *h, memory_t *mem, cpu_t *cpu);
+
 /* --------------------------------------------------------------------------
  * History (simple ring buffer for CLI)
  * -------------------------------------------------------------------------- */
@@ -506,6 +509,27 @@ static bool process_single_command(const std::string& line,
     } else if (cmd == "vic2.regs") {
         if (g_json_mode) { printf("{\"cmd\":\"vic2.regs\",\"ok\":true,\"data\":"); vic2_json_regs(mem); printf("}\n"); }
         else vic2_print_regs(mem);
+    } else if (cmd == "vic2.sprites") {
+        if (g_json_mode) { printf("{\"cmd\":\"vic2.sprites\",\"ok\":true,\"data\":"); vic2_json_sprites(mem); printf("}\n"); }
+        else vic2_print_sprites(mem);
+    } else if (cmd == "vic2.savescreen") {
+        std::string path = (args.size() > 1) ? args[1] : "vic2screen.ppm";
+        if (vic2_render_ppm(mem, path.c_str()) == 0) {
+            if (g_json_mode) printf("{\"cmd\":\"vic2.savescreen\",\"ok\":true,\"data\":{\"path\":\"%s\"}}\n", path.c_str());
+            else printf("Screen saved to %s\n", path.c_str());
+        } else {
+            if (g_json_mode) json_err("vic2.savescreen", "Failed to save PPM");
+            else printf("Error: Failed to save PPM to %s\n", path.c_str());
+        }
+    } else if (cmd == "vic2.savebitmap") {
+        std::string path = (args.size() > 1) ? args[1] : "vic2bitmap.ppm";
+        if (vic2_render_ppm_active(mem, path.c_str()) == 0) {
+            if (g_json_mode) printf("{\"cmd\":\"vic2.savebitmap\",\"ok\":true,\"data\":{\"path\":\"%s\"}}\n", path.c_str());
+            else printf("Bitmap saved to %s\n", path.c_str());
+        } else {
+            if (g_json_mode) json_err("vic2.savebitmap", "Failed to save PPM");
+            else printf("Error: Failed to save PPM to %s\n", path.c_str());
+        }
     } else if (cmd == "speed") {
         float s = 0.0f; const char *p = line.c_str(); SKIP_CMD(p);
         if (sscanf(p, " %f", &s) == 1) g_cli_speed = s >= 0.0f ? s : 0.0f;
