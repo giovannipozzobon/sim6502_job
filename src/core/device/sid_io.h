@@ -3,6 +3,7 @@
 
 #include "io_handler.h"
 #include "cpu.h"
+#include "machine.h"
 #include <stdint.h>
 #include <vector>
 

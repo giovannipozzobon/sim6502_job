@@ -38,7 +38,6 @@ typedef struct snap_node {
 struct sim_session {
     CPU              *cpu;
     memory_t          mem;
-    dispatch_table_t  dt;
     symbol_table_t    symbols;
     source_map_t      source_map;
     breakpoint_list_t breakpoints;
@@ -50,8 +49,6 @@ struct sim_session {
     char              filename[512];
     sim_event_cb      event_cb;
     void             *event_userdata;
-    opcode_handler_t *handlers;
-    int               num_handlers;
     sim_trace_entry_t trace_buf[SIM_TRACE_DEPTH];
     int               trace_head;
     int               trace_count;
@@ -75,7 +72,7 @@ struct sim_session {
 
 /* --- Internal Helpers --- */
 
-static int handle_trap(const symbol_table_t *st, cpu_t *cpu, memory_t *mem) {
+static int handle_trap(const symbol_table_t *st, CPU *cpu, memory_t *mem) {
 	for (int i = 0; i < st->count; i++) {
 		if (st->symbols[i].type != SYM_TRAP) continue;
 		if (st->symbols[i].address != cpu->pc) continue;
@@ -129,16 +126,6 @@ static void snap_record_write(sim_session_t *s,
     n->writer_pc = writer_pc;
     n->next      = s->snap_buckets[bucket];
     s->snap_buckets[bucket] = n;
-}
-
-static void api_select_handlers(sim_session_t *s) {
-    switch (s->cpu_type) {
-    case CPU_65C02:          s->handlers = opcodes_65c02;    s->num_handlers = OPCODES_65C02_COUNT;    break;
-    case CPU_65CE02:         s->handlers = opcodes_65ce02;   s->num_handlers = OPCODES_65CE02_COUNT;   break;
-    case CPU_45GS02:         s->handlers = opcodes_45gs02;   s->num_handlers = OPCODES_45GS02_COUNT;   break;
-    case CPU_6502_UNDOCUMENTED: s->handlers = opcodes_6502_undoc; s->num_handlers = OPCODES_6502_UNDOC_COUNT; break;
-    default:                 s->handlers = opcodes_6502;     s->num_handlers = OPCODES_6502_COUNT;     break;
-    }
 }
 
 static const char *processor_name_local(cpu_type_t type) {
@@ -203,7 +190,6 @@ sim_session_t *sim_create(const char *processor) {
         else if (strcmp(processor, "65ce02")     == 0) s->cpu_type = CPU_65CE02;
         else if (strcmp(processor, "45gs02")     == 0) { s->cpu_type = CPU_45GS02; s->machine_type = MACHINE_MEGA65; }
     }
-    api_select_handlers(s);
     s->cpu = CPUFactory::create(s->cpu_type);
     s->cpu->mem = &s->mem;
     memset(&s->mem, 0, sizeof(s->mem));
@@ -248,7 +234,6 @@ static void binary_load_common(sim_session_t *s, uint16_t load_addr, int byte_co
     s->start_addr = load_addr;
     s->load_size  = (unsigned short)(byte_count > 0xFFFF ? 0xFFFF : byte_count);
     if (s->cpu_type == CPU_45GS02) s->cpu->set_flag( FLAG_E, 1);
-    dispatch_build(&s->dt, s->handlers, s->num_handlers, s->cpu_type);
     s->state = SIM_READY;
 }
 
@@ -271,13 +256,14 @@ int sim_load_asm(sim_session_t *s, const char *path) {
     breakpoint_init(&s->breakpoints);
     api_history_clear(s);
     
-    if (load_toolchain_bundle(&s->mem, &s->symbols, &s->source_map, base)) {
+    int bundle_load_addr = 0x0801;
+    if (load_toolchain_bundle(&s->mem, &s->symbols, &s->source_map, base, &bundle_load_addr)) {
         strncpy(s->filename, path, sizeof(s->filename) - 1);
-        /* Try to find a reasonable start address */
-        unsigned short start_addr = 0x0801;
+        /* Try to find a reasonable start address; fall back to PRG load address */
+        unsigned short start_addr = (unsigned short)bundle_load_addr;
         symbol_lookup_name(&s->symbols, "main", &start_addr);
-        if (start_addr == 0x0801) symbol_lookup_name(&s->symbols, "start", &start_addr);
-        
+        if (start_addr == (unsigned short)bundle_load_addr) symbol_lookup_name(&s->symbols, "start", &start_addr);
+
         binary_load_common(s, start_addr, 0); /* load_size will be updated if we knew it */
         return 0;
     }
@@ -393,15 +379,17 @@ int sim_step(sim_session_t *s, int count) {
             if (s->event_cb) s->event_cb(s, SIM_EVENT_BRK, s->event_userdata);
             return SIM_EVENT_BRK;
         }
-        const dispatch_entry_t *te = peek_dispatch(s->cpu, &s->mem, &s->dt, s->cpu_type);
-        if (te && te->mnemonic && strcmp(te->mnemonic, "STP") == 0) {
+
+        CPU6502* cpu_6502 = dynamic_cast<CPU6502*>(s->cpu);
+        if (!cpu_6502) {
             s->state = SIM_FINISHED;
-            if (s->event_cb) s->event_cb(s, SIM_EVENT_STP, s->event_userdata);
-            return SIM_EVENT_STP;
+            return -1;
         }
+
         uint16_t pre_pc = s->cpu->pc;
         unsigned long pre_cycles = s->cpu->cycles;
-        cpu_t pre_cpu = *s->cpu;
+        CPUState pre_cpu_state = *static_cast<CPUState*>(s->cpu);
+
         s->cpu->step();
         /* Update snapshot accumulator */
         if (s->snap_active) {
@@ -420,7 +408,7 @@ int sim_step(sim_session_t *s, int count) {
                 s->hist_pos = 0;
             }
             sim_history_entry_t *he = &s->hist_buf[s->hist_write];
-            he->pre_cpu = pre_cpu;
+            he->pre_cpu = pre_cpu_state;
             he->pc      = pre_pc;
             int dc = s->mem.mem_writes < 16 ? s->mem.mem_writes : 16;
             he->delta_count = (uint8_t)dc;
@@ -432,9 +420,11 @@ int sim_step(sim_session_t *s, int count) {
             if (s->hist_count < s->hist_cap) s->hist_count++;
         }
         if (s->trace_enabled) {
-            sim_trace_entry_t *tr = &s->trace_buf[s->trace_head];
-            tr->pc = pre_pc; tr->cpu = *s->cpu; tr->cycles_delta = (int)(s->cpu->cycles - pre_cycles);
-            disasm_one(&s->mem, &s->dt, s->cpu_type, pre_pc, tr->disasm, (int)sizeof(tr->disasm));
+            sim_trace_entry_t *tr_entry = &s->trace_buf[s->trace_head];
+            tr_entry->pc = pre_pc;
+            tr_entry->cpu = *static_cast<CPUState*>(s->cpu);
+            tr_entry->cycles_delta = (int)(s->cpu->cycles - pre_cycles);
+            // disasm_one(&s->mem, &s->dt, s->cpu_type, pre_pc, tr_entry->disasm, (int)sizeof(tr_entry->disasm));
             s->trace_head = (s->trace_head + 1) % SIM_TRACE_DEPTH;
             if (s->trace_count < SIM_TRACE_DEPTH) s->trace_count++;
         }
@@ -460,15 +450,9 @@ int sim_step_cycles(sim_session_t *s, unsigned long max_cycles) {
             if (s->event_cb) s->event_cb(s, SIM_EVENT_BRK, s->event_userdata);
             return SIM_EVENT_BRK;
         }
-        const dispatch_entry_t *te = peek_dispatch(s->cpu, &s->mem, &s->dt, s->cpu_type);
-        if (te && te->mnemonic && strcmp(te->mnemonic, "STP") == 0) {
-            s->state = SIM_FINISHED;
-            if (s->event_cb) s->event_cb(s, SIM_EVENT_STP, s->event_userdata);
-            return SIM_EVENT_STP;
-        }
         uint16_t pre_pc = s->cpu->pc;
         unsigned long pre_cycles = s->cpu->cycles;
-        cpu_t pre_cpu = *s->cpu;
+        CPUState pre_cpu_state = *static_cast<CPUState*>(s->cpu);
         s->cpu->step();
         /* Update snapshot accumulator */
         if (s->snap_active) {
@@ -485,7 +469,7 @@ int sim_step_cycles(sim_session_t *s, unsigned long max_cycles) {
                 s->hist_pos = 0;
             }
             sim_history_entry_t *he = &s->hist_buf[s->hist_write];
-            he->pre_cpu = pre_cpu;
+            he->pre_cpu = pre_cpu_state;
             he->pc      = pre_pc;
             int dc = s->mem.mem_writes < 16 ? s->mem.mem_writes : 16;
             he->delta_count = (uint8_t)dc;
@@ -498,8 +482,10 @@ int sim_step_cycles(sim_session_t *s, unsigned long max_cycles) {
         }
         if (s->trace_enabled) {
             sim_trace_entry_t *te2 = &s->trace_buf[s->trace_head];
-            te2->pc = pre_pc; te2->cpu = *s->cpu; te2->cycles_delta = (int)(s->cpu->cycles - pre_cycles);
-            disasm_one(&s->mem, &s->dt, s->cpu_type, pre_pc, te2->disasm, (int)sizeof(te2->disasm));
+            te2->pc = pre_pc;
+            te2->cpu = *static_cast<CPUState*>(s->cpu);
+            te2->cycles_delta = (int)(s->cpu->cycles - pre_cycles);
+            // disasm_one(&s->mem, &s->dt, s->cpu_type, pre_pc, te2->disasm, (int)sizeof(te2->disasm));
             s->trace_head = (s->trace_head + 1) % SIM_TRACE_DEPTH;
             if (s->trace_count < SIM_TRACE_DEPTH) s->trace_count++;
         }
@@ -519,7 +505,8 @@ void sim_reset(sim_session_t *s) {
 int sim_disassemble_one(sim_session_t *s, uint16_t addr, char *buf, size_t len) {
     if (!s || !buf || len == 0) return 1;
     if (s->state == SIM_IDLE) { snprintf(buf, len, "%04X: --", addr); return 1; }
-    return disasm_one(&s->mem, &s->dt, s->cpu_type, addr, buf, (int)len);
+    // return disasm_one(&s->mem, &s->dt, s->cpu_type, addr, buf, (int)len);
+    return 1;
 }
 
 cpu_t          *sim_get_cpu(sim_session_t *s)    { return s ? s->cpu : NULL; }
@@ -582,7 +569,6 @@ void sim_set_machine_type(sim_session_t *s, machine_type_t machine) {
         case MACHINE_X16:      s->cpu_type = CPU_65C02; break;
         case MACHINE_RAW6502:  s->cpu_type = CPU_6502; break;
     }
-    api_select_handlers(s);
     machine_init_hardware(s);
 }
 
@@ -602,8 +588,6 @@ void sim_set_processor(sim_session_t *s, const char *name) {
     else if (strcmp(name, "65c02") == 0) s->cpu_type = CPU_65C02;
     else if (strcmp(name, "65ce02") == 0) s->cpu_type = CPU_65CE02;
     else if (strcmp(name, "45gs02") == 0) s->cpu_type = CPU_45GS02;
-    api_select_handlers(s);
-    dispatch_build(&s->dt, s->handlers, s->num_handlers, s->cpu_type);
 }
 cpu_type_t sim_get_cpu_type(sim_session_t *s) { return s ? s->cpu_type : CPU_6502; }
 void sim_set_debug(sim_session_t *s, bool debug) { if (s && s->cpu) s->cpu->debug = debug; }
@@ -625,8 +609,7 @@ int sim_trace_get(sim_session_t *s, int slot, sim_trace_entry_t *entry) {
 int sim_has_breakpoint(sim_session_t *s, uint16_t addr) { if (!s) return 0; for (int i = 0; i < s->breakpoints.count; i++) if (s->breakpoints.breakpoints[i].address == addr) return 1; return 0; }
 int sim_get_opcode_cycles(sim_session_t *s, uint16_t addr) {
     if (!s) return 0;
-    const dispatch_entry_t *e = peek_dispatch(s->cpu, &s->mem, &s->dt, s->cpu_type);
-    return e ? e->cycles : 0;
+    return 0;
 }
 int sim_get_last_writes(sim_session_t *s, uint16_t *addrs, int max_count) {
     if (!s || !addrs || max_count <= 0) return 0;
@@ -653,26 +636,13 @@ int sim_break_get(sim_session_t *s, int idx, uint16_t *addr, char *cond, int con
     if (cond && s->breakpoints.breakpoints[idx].condition[0]) strncpy(cond, s->breakpoints.breakpoints[idx].condition, cond_sz);
     return 1;
 }
-int sim_opcode_count(sim_session_t *s) { return s ? s->num_handlers : 0; }
+int sim_opcode_count(sim_session_t *s) { return 0; }
 int sim_opcode_get(sim_session_t *s, int idx, sim_opcode_info_t *info) {
-    if (!s || idx < 0 || idx >= s->num_handlers || !info) return 0;
-    strncpy(info->mnemonic, s->handlers[idx].mnemonic, 7); info->mnemonic[7] = 0;
-    info->mode = s->handlers[idx].mode;
-    memcpy(info->opcode_bytes, s->handlers[idx].opcode_bytes, 4);
-    info->opcode_len = s->handlers[idx].opcode_len;
-    info->cycles = s->handlers[idx].cycles_6502;
-    info->instr_bytes = get_instruction_length(info->mode) + info->opcode_len - 1;
-    return 1;
+    return 0;
 }
 int sim_opcode_by_byte(sim_session_t *s, uint8_t byte_val, sim_opcode_info_t *info) {
     if (!s || !info) return 0;
-    const dispatch_entry_t *e = &s->dt.base[byte_val];
-    if (!e || !e->mnemonic) return 0;
-    strncpy(info->mnemonic, e->mnemonic, 7); info->mnemonic[7] = 0;
-    info->mode = e->mode;
-    info->cycles = e->cycles;
-    info->instr_bytes = get_instruction_length(e->mode);
-    return 1;
+    return 0;
 }
 int sim_sym_count(sim_session_t *s) { return s ? s->symbols.count : 0; }
 int sim_sym_get_idx(sim_session_t *s, int idx, uint16_t *addr, char *name_buf, int name_sz, int *type_out, char *comment_buf, int comment_sz) {
@@ -713,7 +683,7 @@ int sim_history_step_back(sim_session_t *s) {
     unsigned idx = ((unsigned)s->hist_write - 1u - (unsigned)s->hist_pos) & (unsigned)s->hist_mask;
     sim_history_entry_t *he = &s->hist_buf[idx];
     /* Restore CPU */
-    *s->cpu = he->pre_cpu;
+    *static_cast<CPUState*>(s->cpu) = he->pre_cpu;
     /* Restore memory: write old values directly (no write-log side effect) */
     for (int d = 0; d < he->delta_count; d++)
         s->mem.mem[he->delta_addr[d]] = he->delta_old[d];
@@ -728,7 +698,7 @@ int sim_history_step_fwd(sim_session_t *s) {
     unsigned idx = ((unsigned)s->hist_write - (unsigned)s->hist_pos) & (unsigned)s->hist_mask;
     sim_history_entry_t *he = &s->hist_buf[idx];
     /* Restore CPU to pre-execution state, then re-execute */
-    *s->cpu = he->pre_cpu;
+    *static_cast<CPUState*>(s->cpu) = he->pre_cpu;
     s->mem.mem_writes = 0;
     s->cpu->step();
     s->hist_pos--;
@@ -820,12 +790,12 @@ int sim_trace_run(sim_session_t *s,
         unsigned char opc = mem_read(&s->mem, pre_pc);
 
         /* Disassemble before executing */
-        disasm_one(&s->mem, &s->dt, s->cpu_type, pre_pc, entries[n].disasm,
-                   (int)sizeof(entries[n].disasm));
+        // disasm_one(&s->mem, &s->dt, s->cpu_type, pre_pc, entries[n].disasm,
+                //    (int)sizeof(entries[n].disasm));
         entries[n].pc = pre_pc;
 
         if (opc == 0x00) {
-            entries[n].cpu = *s->cpu;
+            entries[n].cpu = *static_cast<CPUState*>(s->cpu);
             entries[n].cycles_delta = 0;
             n++;
             reason = "brk";
@@ -833,19 +803,9 @@ int sim_trace_run(sim_session_t *s,
             break;  /* always stop at BRK (recording it) regardless of stop_on_brk */
         }
 
-        const dispatch_entry_t *te = peek_dispatch(s->cpu, &s->mem, &s->dt, s->cpu_type);
-        if (te && te->mnemonic && strcmp(te->mnemonic, "STP") == 0) {
-            entries[n].cpu = *s->cpu;
-            entries[n].cycles_delta = 0;
-            n++;
-            reason = "stp";
-            s->state = SIM_FINISHED;
-            break;
-        }
-
         unsigned long pre_cycles = s->cpu->cycles;
         s->cpu->step();
-        entries[n].cpu = *s->cpu;
+        entries[n].cpu = *static_cast<CPUState*>(s->cpu);
         entries[n].cycles_delta = (int)(s->cpu->cycles - pre_cycles);
         if (s->snap_active) {
             int _nw = s->mem.mem_writes < 256 ? s->mem.mem_writes : 256;
@@ -889,7 +849,7 @@ int sim_validate_routine(sim_session_t          *s,
     s->mem.mem[(scratch_addr + 2) & 0xFFFF] = (uint8_t)(routine_addr >> 8);
     s->mem.mem[(scratch_addr + 3) & 0xFFFF] = 0x00;
 
-    cpu_t       saved_cpu   = *s->cpu;
+    CPUState saved_cpu_state = *static_cast<CPUState*>(s->cpu);
     sim_state_t saved_state = s->state;
     int         total_pass  = 0;
 
@@ -964,7 +924,7 @@ int sim_validate_routine(sim_session_t          *s,
 
     /* Restore scratch area and CPU */
     for (int i = 0; i < 4; i++) s->mem.mem[(scratch_addr + i) & 0xFFFF] = saved[i];
-    *s->cpu   = saved_cpu;
+    *static_cast<CPUState*>(s->cpu) = saved_cpu_state;
     s->state = saved_state;
     return total_pass;
 }

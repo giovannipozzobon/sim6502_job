@@ -7,32 +7,32 @@ void bra_rel(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 void bit_imm(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = arg & 0xFF;
-	set_flag(cpu, FLAG_Z, (cpu->a & val) == 0);
+	cpu->set_flag(FLAG_Z, (cpu->a & val) == 0);
 	cpu->cycles += 2;
 	cpu->pc += 2;
 }
 
 void bit_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, (arg + cpu->x) & 0xFF);
-	set_flag(cpu, FLAG_Z, (cpu->a & val) == 0);
-	set_flag(cpu, FLAG_N, val & 0x80);
-	set_flag(cpu, FLAG_V, val & 0x40);
+	cpu->set_flag(FLAG_Z, (cpu->a & val) == 0);
+	cpu->set_flag(FLAG_N, val & 0x80);
+	cpu->set_flag(FLAG_V, val & 0x40);
 	cpu->cycles += 4;
 	cpu->pc += 2;
 }
 
 void bit_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg + cpu->x);
-	set_flag(cpu, FLAG_Z, (cpu->a & val) == 0);
-	set_flag(cpu, FLAG_N, val & 0x80);
-	set_flag(cpu, FLAG_V, val & 0x40);
+	cpu->set_flag(FLAG_Z, (cpu->a & val) == 0);
+	cpu->set_flag(FLAG_N, val & 0x80);
+	cpu->set_flag(FLAG_V, val & 0x40);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
 void trb_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg & 0xFF);
-	set_flag(cpu, FLAG_Z, (cpu->a & val) == 0);
+	cpu->set_flag(FLAG_Z, (cpu->a & val) == 0);
 	val &= ~cpu->a;
 	mem_write(mem, arg & 0xFF, val);
 	cpu->cycles += 5;
@@ -41,7 +41,7 @@ void trb_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 void trb_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg);
-	set_flag(cpu, FLAG_Z, (cpu->a & val) == 0);
+	cpu->set_flag(FLAG_Z, (cpu->a & val) == 0);
 	val &= ~cpu->a;
 	mem_write(mem, arg, val);
 	cpu->cycles += 6;
@@ -50,7 +50,7 @@ void trb_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 void tsb_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg & 0xFF);
-	set_flag(cpu, FLAG_Z, (cpu->a & val) == 0);
+	cpu->set_flag(FLAG_Z, (cpu->a & val) == 0);
 	val |= cpu->a;
 	mem_write(mem, arg & 0xFF, val);
 	cpu->cycles += 5;
@@ -59,7 +59,7 @@ void tsb_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 void tsb_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg);
-	set_flag(cpu, FLAG_Z, (cpu->a & val) == 0);
+	cpu->set_flag(FLAG_Z, (cpu->a & val) == 0);
 	val |= cpu->a;
 	mem_write(mem, arg, val);
 	cpu->cycles += 6;
@@ -516,7 +516,7 @@ extern void op_nop(cpu_t *cpu, memory_t *mem, unsigned short arg);
 
 void lda_imm_65c02(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a = arg & 0xFF;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 2;
 	cpu->pc += 2;
 }

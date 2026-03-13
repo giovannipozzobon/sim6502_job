@@ -1,23 +1,10 @@
 #ifndef CPU_H
 #define CPU_H
 
-typedef enum {
-	CPU_6502,
-	CPU_6502_UNDOCUMENTED,
-	CPU_65C02,
-	CPU_65CE02,
-	CPU_45GS02
-} cpu_type_t;
-
-typedef enum {
-	MACHINE_RAW6502,
-	MACHINE_C64,
-	MACHINE_C128,
-	MACHINE_MEGA65,
-	MACHINE_X16
-} machine_type_t;
-
+#include "cpu_types.h"
+#include "cpu_state.h"
 #include "memory_types.h"
+#include "dispatch.h"
 
 #define FLAG_C 0x01
 #define FLAG_Z 0x02
@@ -32,24 +19,14 @@ typedef enum {
 class IOHandler;
 class IORegistry;
 
-/* CPUState: Non-abstract POD-like state for snapshots/history */
-class CPUState {
+/* CPU: Abstract base class for execution, incorporating the state. */
+class CPU : public CPUState {
 public:
-	unsigned char a;
-	unsigned char x;
-	unsigned char y;
-	unsigned char z;      /* 45GS02 only */
-	unsigned char b;      /* 45GS02 only */
-	unsigned short s;     /* 16-bit on 45GS02; 8-bit (page 1) on others */
-	unsigned short pc;
-	unsigned char p;
-	unsigned long cycles;  /* Clock cycles executed */
-	unsigned char eom_prefix; /* 45GS02: 1=EOM seen, 2=active flat sentinel */
 	bool debug;
 	memory_t *mem;
 
-	CPUState() : debug(false), mem(nullptr) { reset(); }
-	virtual ~CPUState() {}
+	CPU() : debug(false), mem(nullptr) { reset(); }
+	virtual ~CPU() {}
 
 	virtual void reset() {
 		a = 0; x = 0; y = 0; z = 0; b = 0;
@@ -111,16 +88,11 @@ public:
 			update_nz(a);
 		}
 	}
-};
 
-typedef CPUState cpu_t;
-
-/* CPU: Abstract base class for execution */
-class CPU : public CPUState {
-public:
 	virtual int step() = 0; /* Returns number of cycles executed */
 	virtual void trigger_interrupt(int vector_addr) = 0;
 	virtual void* get_interrupt_controller() = 0;
+	virtual dispatch_table_t* dispatch_table() = 0;
 
 	CPU& operator=(const CPUState& other) {
 		a = other.a; x = other.x; y = other.y; z = other.z; b = other.b;
@@ -129,6 +101,8 @@ public:
 		return *this;
 	}
 };
+
+typedef CPU cpu_t;
 
 #define MODE_IMPLIED 0
 #define MODE_IMMEDIATE 1
@@ -152,30 +126,6 @@ public:
 #define MODE_ZP_INDIRECT_FLAT   19  /* [bp]   — flat (32-bit) ZP indirect, no Z offset */
 #define MODE_ZP_INDIRECT_Z_FLAT 20  /* [bp],Z — flat (32-bit) ZP indirect, Z-indexed */
 
-static inline void cpu_init(cpu_t *cpu) {
-	cpu->reset();
-}
-
-static inline void set_flag(cpu_t *cpu, unsigned char flag, int set) {
-	cpu->set_flag(flag, set);
-}
-
-static inline int get_flag(cpu_t *cpu, unsigned char flag) {
-	return cpu->get_flag(flag);
-}
-
-static inline void update_nz(cpu_t *cpu, unsigned char val) {
-	cpu->update_nz(val);
-}
-
-static inline void do_adc(cpu_t *cpu, unsigned char val) {
-	cpu->do_adc(val);
-}
-
-static inline void do_sbc(cpu_t *cpu, unsigned char val) {
-	cpu->do_sbc(val);
-}
-
 /* Cycle timing tables - base cycle counts per instruction */
 /* All processors support these base cycles */
 #define CYC_IMPLIED_BASE 2
@@ -197,3 +147,4 @@ static inline void do_sbc(cpu_t *cpu, unsigned char val) {
 #define CYC_PAGE_CROSS 1
 
 #endif
+

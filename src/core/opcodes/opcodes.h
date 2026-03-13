@@ -3,10 +3,9 @@
 
 #include "cpu.h"
 #include "memory.h"
+#include "dispatch.h"
 
-typedef void (*opcode_fn)(cpu_t *cpu, memory_t *mem, unsigned short arg);
-
-typedef struct {
+typedef struct opcode_handler_t {
 	const char *mnemonic;
 	unsigned char mode;
 	opcode_fn fn;

@@ -12,3 +12,6 @@ TAGS
 *.ini
 *.o
 src/gui/imgui
+.plan/
+ref/
+.idea

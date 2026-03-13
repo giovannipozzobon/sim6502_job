@@ -6,6 +6,7 @@
 #include <vector>
 #include <string>
 #include "cpu.h"
+#include "machine.h"
 #include "memory.h"
 #include "opcodes.h"
 #include "cycles.h"
@@ -214,12 +215,6 @@ int main(int argc, char *argv[]) {
 		} else if (argv[i][0] != '-' && !filename) filename = argv[i];
 	}
 
-	opcode_handler_t *handlers = opcodes_6502;
-	int num_handlers = OPCODES_6502_COUNT;
-	if (cpu_type == CPU_65C02) { handlers = opcodes_65c02; num_handlers = OPCODES_65C02_COUNT; }
-	else if (cpu_type == CPU_65CE02) { handlers = opcodes_65ce02; num_handlers = OPCODES_65CE02_COUNT; }
-	else if (cpu_type == CPU_45GS02) { handlers = opcodes_45gs02; num_handlers = OPCODES_45GS02_COUNT; }
-
 	if (!filename && !interactive_mode && initial_cmds.empty()) { print_help(argv[0]); delete symbols; delete source_map; return 1; }
 	if (symbol_file) symbol_load_file(symbols, symbol_file);
 
@@ -238,7 +233,7 @@ int main(int argc, char *argv[]) {
     if (!cpu_ptr) { fprintf(stderr, "ERROR: Failed to create CPU\n"); delete mem; delete symbols; delete source_map; return 1; }
     
 	cpu_ptr->mem = mem;
-	cpu_ptr->debug = enable_debug != 0;
+	cpu_ptr->debug = enable_debug != 0 || g_verbose >= 3;
     
     LOG_V2("DEBUG: Initializing IORegistry...\n");
 	mem->io_registry = new IORegistry(cpu_ptr->get_interrupt_controller());
@@ -254,7 +249,8 @@ int main(int argc, char *argv[]) {
 		if (dot && (strcasecmp(dot, ".asm") == 0 || strcasecmp(dot, ".s") == 0)) *dot = 0;
 
         LOG_V2("DEBUG: Calling load_toolchain_bundle with base: %s\n", base);
-		if (!load_toolchain_bundle(mem, symbols, source_map, base)) {
+        int bundle_load_addr = 0x0801;
+		if (!load_toolchain_bundle(mem, symbols, source_map, base, &bundle_load_addr)) {
             /* If bundle failed, try loading as raw binary/prg if it's not .asm */
             if (dot && (strcasecmp(dot, ".asm") == 0 || strcasecmp(dot, ".s") == 0)) {
 			    fprintf(stderr, "Error: Could not load toolchain bundle for '%s'\n", filename);
@@ -287,6 +283,10 @@ int main(int argc, char *argv[]) {
             } else if (symbol_lookup_name(symbols, "start", &found_addr)) {
                 start_addr = found_addr;
                 start_addr_provided = 1;
+            } else {
+                /* Fall back to PRG load address from bundle */
+                start_addr = (unsigned short)bundle_load_addr;
+                start_addr_provided = 1;
             }
         }
     }
@@ -312,41 +312,46 @@ int main(int argc, char *argv[]) {
 
     cpu_ptr->reset(); 
     cpu_ptr->pc = start_addr_provided ? start_addr : (filename ? 0x0801 : 0x0200);
-    if (cpu_type == CPU_45GS02) set_flag(cpu_ptr, FLAG_E, 1);
+    if (cpu_type == CPU_45GS02) cpu_ptr->set_flag(FLAG_E, 1);
 
-	dispatch_table_t dt; dispatch_build(&dt, handlers, num_handlers, cpu_type);
+	LOG_V2("DEBUG: CPU ready. PC=$%04X interactive=%d cmds=%d\n",
+	        cpu_ptr->pc, interactive_mode, (int)initial_cmds.size());
 	if (enable_trace && trace_file) trace_enable_file(&trace_info, trace_file);
 	else if (enable_trace) trace_enable_stdout(&trace_info);
 
-	if (interactive_mode || !initial_cmds.empty()) { 
-        run_interactive_mode(cpu_ptr, mem, &handlers, &num_handlers, &cpu_type, &dt, cpu_ptr->pc, &breakpoints, symbols, initial_cmds); 
-        return 0; 
+	if (interactive_mode || !initial_cmds.empty()) {
+        run_interactive_mode(cpu_ptr, mem, &cpu_type, cpu_ptr->pc, &breakpoints, symbols, initial_cmds);
+        return 0;
     }
-	
+
     int stop_reason = 0; // 0=limit, 1=brk, 2=stp, 3=bp, 4=trap
     struct timespec t0; clock_gettime(CLOCK_MONOTONIC, &t0);
     unsigned long cyc0 = cpu_ptr->cycles;
     const double C64_HZ = 985248.0;
 
+    LOG_V2("DEBUG: Entering execution loop. PC=$%04X cycles=%lu limit=%lu speed=%.2f\n",
+           cpu_ptr->pc, cpu_ptr->cycles, cycle_limit, (double)speed_scale);
     printf("\nStarting execution at 0x%04X...\n", cpu_ptr->pc);
+    fflush(stdout);
 	while (cpu_ptr->cycles < cycle_limit) {
-		int tr = handle_trap_main(symbols, cpu_ptr, cpu_ptr->mem); 
-        if (tr < 0) { stop_reason = 4; break; } 
+		int tr = handle_trap_main(symbols, cpu_ptr, cpu_ptr->mem);
+        if (tr < 0) { LOG_V3("DEBUG: trap stop at PC=$%04X\n", cpu_ptr->pc); stop_reason = 4; break; }
         if (tr > 0) continue;
 
 		unsigned char opc = mem_read(cpu_ptr->mem, cpu_ptr->pc);
+		LOG_V3("DEBUG: PC=$%04X opc=$%02X cycles=%lu\n", cpu_ptr->pc, opc, cpu_ptr->cycles);
 		if (opc == 0x00) { stop_reason = 1; break; }
 
-		const dispatch_entry_t *te = peek_dispatch(cpu_ptr, cpu_ptr->mem, &dt, cpu_type);
+		const dispatch_entry_t *te = peek_dispatch(cpu_ptr, cpu_ptr->mem, cpu_ptr->dispatch_table(), cpu_type);
 		if (te && te->mnemonic && strcmp(te->mnemonic, "STP") == 0) { stop_reason = 2; break; }
 
-		if (breakpoint_hit(&breakpoints, cpu_ptr)) { 
-            printf("STOP at $%04X\n", cpu_ptr->pc); 
-            stop_reason = 3; break; 
+		if (breakpoint_hit(&breakpoints, cpu_ptr)) {
+            printf("STOP at $%04X\n", cpu_ptr->pc);
+            stop_reason = 3; break;
         }
 
 		if (trace_info.enabled) { trace_instruction_full(&trace_info, cpu_ptr, te->mnemonic, mode_name(te->mode), cpu_ptr->cycles); }
-		execute_from_mem(cpu_ptr, cpu_ptr->mem, &dt, cpu_type);
+		cpu_ptr->step();
 
         /* Throttling */
         if (speed_scale > 0.0f && ((cpu_ptr->cycles - cyc0) & 0x3FF) < 8) {

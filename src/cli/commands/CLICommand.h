@@ -5,10 +5,9 @@
 #include <vector>
 #include "cpu.h"
 #include "memory.h"
-#include "opcodes.h"
+#include "dispatch.h"
 #include "breakpoints.h"
 #include "symbols.h"
-#include "disassembler.h"
 
 class CLICommand {
 public:
@@ -16,8 +15,7 @@ public:
     virtual std::string name() const = 0;
     virtual std::string help() const = 0;
     virtual bool execute(const std::vector<std::string>& args,
-                         CPU *cpu, memory_t *mem, 
-                         opcode_handler_t **p_handlers, int *p_num_handlers,
+                         CPU *cpu, memory_t *mem,
                          cpu_type_t *p_cpu_type, dispatch_table_t *dt,
                          breakpoint_list_t *breakpoints,
                          symbol_table_t *symbols) = 0;

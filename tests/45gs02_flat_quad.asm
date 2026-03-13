@@ -35,6 +35,6 @@
 
  // Read Q back from far address $00020000 using flat LDQ [$10],Z (Z=0)
 
-    ldq ($10),z
+    ldq (($10)),z
 
     brk

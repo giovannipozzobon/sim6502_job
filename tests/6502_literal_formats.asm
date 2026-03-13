@@ -7,6 +7,6 @@
 
     ldy #%11111111 // binary %11111111 = $FF
 
-    lda #'a' // character 'A' = $41
+    lda #$41 // character 'A' = $41
 
     brk

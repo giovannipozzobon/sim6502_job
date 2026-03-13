@@ -8,13 +8,20 @@ import shlex
 def run_test(asm_file):
     print(f"Running test: {asm_file}...", end=" ", flush=True)
 
-    # Read expectations and optional FLAGS from leading comment lines
+    # Read expectations, FLAGS, and CPU directive from file
     expectations = None
     extra_flags = []
+    cpu_flag = []
+    cpu_map = {
+        '_45gs02': ['-p', '45gs02'],
+        '_65ce02': ['-p', '65ce02'],
+        '_65c02':  ['-p', '65c02'],
+        '_6502':   ['-p', '6502'],
+    }
     with open(asm_file, 'r') as f:
-        for _ in range(10):
+        for _ in range(30):
             line = f.readline()
-            if not line or not line.startswith(';'):
+            if not line:
                 break
             m = re.search(r'EXPECT: (.*)', line)
             if m:
@@ -22,6 +29,11 @@ def run_test(asm_file):
             m = re.search(r'FLAGS: (.*)', line)
             if m:
                 extra_flags = shlex.split(m.group(1).strip())
+            m = re.search(r'\.cpu\s+(\S+)', line)
+            if m and not cpu_flag:
+                directive = m.group(1).strip().rstrip(';')
+                if directive in cpu_map:
+                    cpu_flag = cpu_map[directive]
 
     # Run assembler first (KickAssembler)
     base = os.path.splitext(asm_file)[0]
@@ -43,7 +55,7 @@ def run_test(asm_file):
 
     # Run simulator
     try:
-        flags = extra_flags + ['-vv']
+        flags = cpu_flag + extra_flags + ['-vv']
         # Use the assembled PRG
         result = subprocess.run(['./sim6502'] + flags + [prg_file], capture_output=True, text=True, timeout=5)
     except subprocess.TimeoutExpired:

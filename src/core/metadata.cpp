@@ -65,15 +65,16 @@ int load_prg(memory_t *mem, const char *filename, int *out_load_addr) {
     return (int)size;
 }
 
-bool load_toolchain_bundle(memory_t *mem, symbol_table_t *st, source_map_t *sm, const char *base_path) {
+bool load_toolchain_bundle(memory_t *mem, symbol_table_t *st, source_map_t *sm, const char *base_path, int *out_load_addr) {
     LOG_V2("DEBUG: ENTER load_toolchain_bundle mem=%p base=%s\n", (void*)mem, base_path);
     char path[512];
-    
+
     /* Try .prg first */
     snprintf(path, sizeof(path), "%s.prg", base_path);
     LOG_V2("DEBUG: Attempting to load PRG: %s\n", path);
     int load_addr = 0x0801;
     int n = load_prg(mem, path, &load_addr);
+    if (out_load_addr) *out_load_addr = load_addr;
     LOG_V2("DEBUG: load_prg returned %d\n", n);
     if (n < 0) {
         /* Try .bin */

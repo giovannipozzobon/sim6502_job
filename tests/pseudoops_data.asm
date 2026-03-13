@@ -11,7 +11,7 @@
     brk
 
     bytedata:
-    .byte 'h' // $48 at $0208
+    .byte $48 // ASCII 'H' = $48 at $0208
 
     wordlo:
     .word 10 // $0A,$00 at $0209

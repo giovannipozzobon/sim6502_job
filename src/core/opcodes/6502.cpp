@@ -1,165 +1,165 @@
 #include "opcodes.h"
 
-void lda_imm(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void lda_imm(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a = arg & 0xFF;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 2;
 	cpu->pc += 2;
 }
 
-void lda_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void lda_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a = mem_read(mem, arg);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
-void lda_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void lda_abs_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a = mem_read(mem, arg + cpu->x);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
-void lda_abs_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void lda_abs_y(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a = mem_read(mem, arg + cpu->y);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
-void lda_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void lda_zp(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a = mem_read(mem, arg & 0xFF);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 3;
 	cpu->pc += 2;
 }
 
-void lda_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void lda_zp_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a = mem_read(mem, (arg + cpu->x) & 0xFF);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 4;
 	cpu->pc += 2;
 }
 
-void lda_ind_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void lda_ind_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, (arg + cpu->x) & 0xFF) |
 		(mem_read(mem, (arg + cpu->x + 1) & 0xFF) << 8);
 	cpu->a = mem_read(mem, addr);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 6;
 	cpu->pc += 2;
 }
 
-void lda_ind_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void lda_ind_y(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, arg) | (mem_read(mem, (arg + 1) & 0xFF) << 8);
 	cpu->a = mem_read(mem, addr + cpu->y);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 5;
 	cpu->pc += 2;
 }
 
-void ldx_imm(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void ldx_imm(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->x = arg & 0xFF;
-	update_nz(cpu, cpu->x);
+	cpu->update_nz(cpu->x);
 	cpu->cycles += 2;
 	cpu->pc += 2;
 }
 
-void ldx_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void ldx_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->x = mem_read(mem, arg);
-	update_nz(cpu, cpu->x);
+	cpu->update_nz(cpu->x);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
-void ldx_abs_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void ldx_abs_y(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->x = mem_read(mem, arg + cpu->y);
-	update_nz(cpu, cpu->x);
+	cpu->update_nz(cpu->x);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
-void ldx_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void ldx_zp(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->x = mem_read(mem, arg & 0xFF);
-	update_nz(cpu, cpu->x);
+	cpu->update_nz(cpu->x);
 	cpu->cycles += 3;
 	cpu->pc += 2;
 }
 
-void ldx_zp_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void ldx_zp_y(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->x = mem_read(mem, (arg + cpu->y) & 0xFF);
-	update_nz(cpu, cpu->x);
+	cpu->update_nz(cpu->x);
 	cpu->cycles += 4;
 	cpu->pc += 2;
 }
 
-void ldy_imm(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void ldy_imm(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->y = arg & 0xFF;
-	update_nz(cpu, cpu->y);
+	cpu->update_nz(cpu->y);
 	cpu->cycles += 2;
 	cpu->pc += 2;
 }
 
-void ldy_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void ldy_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->y = mem_read(mem, arg);
-	update_nz(cpu, cpu->y);
+	cpu->update_nz(cpu->y);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
-void ldy_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void ldy_abs_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->y = mem_read(mem, arg + cpu->x);
-	update_nz(cpu, cpu->y);
+	cpu->update_nz(cpu->y);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
-void ldy_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void ldy_zp(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->y = mem_read(mem, arg & 0xFF);
-	update_nz(cpu, cpu->y);
+	cpu->update_nz(cpu->y);
 	cpu->cycles += 3;
 	cpu->pc += 2;
 }
 
-void ldy_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void ldy_zp_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->y = mem_read(mem, (arg + cpu->x) & 0xFF);
-	update_nz(cpu, cpu->y);
+	cpu->update_nz(cpu->y);
 	cpu->cycles += 4;
 	cpu->pc += 2;
 }
 
-void sta_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void sta_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	mem_write(mem, arg, cpu->a);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
-void sta_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void sta_abs_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	mem_write(mem, arg + cpu->x, cpu->a);
 	cpu->cycles += 5;
 	cpu->pc += 3;
 }
 
-void sta_abs_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void sta_abs_y(CPU *cpu, memory_t *mem, unsigned short arg) {
 	mem_write(mem, arg + cpu->y, cpu->a);
 	cpu->cycles += 5;
 	cpu->pc += 3;
 }
 
-void sta_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void sta_zp(CPU *cpu, memory_t *mem, unsigned short arg) {
 	mem_write(mem, arg & 0xFF, cpu->a);
 	cpu->cycles += 3;
 	cpu->pc += 2;
 }
 
-void sta_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void sta_zp_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	mem_write(mem, (arg + cpu->x) & 0xFF, cpu->a);
 	cpu->cycles += 4;
 	cpu->pc += 2;
 }
 
-void sta_ind_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void sta_ind_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, (arg + cpu->x) & 0xFF) |
 		(mem_read(mem, (arg + cpu->x + 1) & 0xFF) << 8);
 	mem_write(mem, addr, cpu->a);
@@ -167,358 +167,358 @@ void sta_ind_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->pc += 2;
 }
 
-void sta_ind_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void sta_ind_y(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, arg) | (mem_read(mem, (arg + 1) & 0xFF) << 8);
 	mem_write(mem, addr + cpu->y, cpu->a);
 	cpu->cycles += 6;
 	cpu->pc += 2;
 }
 
-void stx_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void stx_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	mem_write(mem, arg, cpu->x);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
-void stx_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void stx_zp(CPU *cpu, memory_t *mem, unsigned short arg) {
 	mem_write(mem, arg & 0xFF, cpu->x);
 	cpu->cycles += 3;
 	cpu->pc += 2;
 }
 
-void stx_zp_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void stx_zp_y(CPU *cpu, memory_t *mem, unsigned short arg) {
 	mem_write(mem, (arg + cpu->y) & 0xFF, cpu->x);
 	cpu->cycles += 4;
 	cpu->pc += 2;
 }
 
-void sty_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void sty_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	mem_write(mem, arg, cpu->y);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
-void sty_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void sty_zp(CPU *cpu, memory_t *mem, unsigned short arg) {
 	mem_write(mem, arg & 0xFF, cpu->y);
 	cpu->cycles += 3;
 	cpu->pc += 2;
 }
 
-void sty_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void sty_zp_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	mem_write(mem, (arg + cpu->x) & 0xFF, cpu->y);
 	cpu->cycles += 4;
 	cpu->pc += 2;
 }
 
-void adc_imm(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void adc_imm(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = arg & 0xFF;
-	do_adc(cpu, val);
+	cpu->do_adc(val);
 	cpu->cycles += 2;
 	cpu->pc += 2;
 }
 
-void adc_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void adc_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg);
-	do_adc(cpu, val);
+	cpu->do_adc(val);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
-void adc_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void adc_abs_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg + cpu->x);
-	do_adc(cpu, val);
+	cpu->do_adc(val);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
-void adc_abs_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void adc_abs_y(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg + cpu->y);
-	do_adc(cpu, val);
+	cpu->do_adc(val);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
-void adc_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void adc_zp(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg & 0xFF);
-	do_adc(cpu, val);
+	cpu->do_adc(val);
 	cpu->cycles += 3;
 	cpu->pc += 2;
 }
 
-void adc_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void adc_zp_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, (arg + cpu->x) & 0xFF);
-	do_adc(cpu, val);
+	cpu->do_adc(val);
 	cpu->cycles += 4;
 	cpu->pc += 2;
 }
 
-void adc_ind_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void adc_ind_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, (arg + cpu->x) & 0xFF) |
 		(mem_read(mem, (arg + cpu->x + 1) & 0xFF) << 8);
 	unsigned char val = mem_read(mem, addr);
-	do_adc(cpu, val);
+	cpu->do_adc(val);
 	cpu->cycles += 6;
 	cpu->pc += 2;
 }
 
-void adc_ind_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void adc_ind_y(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, arg) | (mem_read(mem, (arg + 1) & 0xFF) << 8);
 	unsigned char val = mem_read(mem, addr + cpu->y);
-	do_adc(cpu, val);
+	cpu->do_adc(val);
 	cpu->cycles += 5;
 	cpu->pc += 2;
 }
 
-void sbc_imm(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void sbc_imm(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = arg & 0xFF;
-	do_sbc(cpu, val);
+	cpu->do_sbc(val);
 	cpu->cycles += 2;
 	cpu->pc += 2;
 }
 
-void sbc_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void sbc_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg);
-	do_sbc(cpu, val);
+	cpu->do_sbc(val);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
-void cmp_imm(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void cmp_imm(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = arg & 0xFF;
 	int result = cpu->a - val;
-	set_flag(cpu, FLAG_C, cpu->a >= val);
-	update_nz(cpu, result & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->a >= val);
+	cpu->update_nz(result & 0xFF);
 	cpu->cycles += 2;
 	cpu->pc += 2;
 }
 
-void cmp_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void cmp_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg);
 	int result = cpu->a - val;
-	set_flag(cpu, FLAG_C, cpu->a >= val);
-	update_nz(cpu, result & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->a >= val);
+	cpu->update_nz(result & 0xFF);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
-void cpx_imm(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void cpx_imm(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = arg & 0xFF;
 	int result = cpu->x - val;
-	set_flag(cpu, FLAG_C, cpu->x >= val);
-	update_nz(cpu, result & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->x >= val);
+	cpu->update_nz(result & 0xFF);
 	cpu->cycles += 2;
 	cpu->pc += 2;
 }
 
-void cpy_imm(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void cpy_imm(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = arg & 0xFF;
 	int result = cpu->y - val;
-	set_flag(cpu, FLAG_C, cpu->y >= val);
-	update_nz(cpu, result & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->y >= val);
+	cpu->update_nz(result & 0xFF);
 	cpu->cycles += 2;
 	cpu->pc += 2;
 }
 
-void inc_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void inc_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = (mem_read(mem, arg) + 1) & 0xFF;
 	mem_write(mem, arg, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 6;
 	cpu->pc += 3;
 }
 
-void ina(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void ina(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a = (cpu->a + 1) & 0xFF;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
-void inx(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void inx(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->x = (cpu->x + 1) & 0xFF;
-	update_nz(cpu, cpu->x);
+	cpu->update_nz(cpu->x);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
-void iny(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void iny(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->y = (cpu->y + 1) & 0xFF;
-	update_nz(cpu, cpu->y);
+	cpu->update_nz(cpu->y);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
-void dec_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void dec_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = (mem_read(mem, arg) - 1) & 0xFF;
 	mem_write(mem, arg, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 6;
 	cpu->pc += 3;
 }
 
-void dea(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void dea(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a = (cpu->a - 1) & 0xFF;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
-void dex(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void dex(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->x = (cpu->x - 1) & 0xFF;
-	update_nz(cpu, cpu->x);
+	cpu->update_nz(cpu->x);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
-void dey(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void dey(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->y = (cpu->y - 1) & 0xFF;
-	update_nz(cpu, cpu->y);
+	cpu->update_nz(cpu->y);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
-void asl_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void asl_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg);
-	set_flag(cpu, FLAG_C, val & 0x80);
+	cpu->set_flag(FLAG_C, val & 0x80);
 	val = (val << 1) & 0xFF;
 	mem_write(mem, arg, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 6;
 	cpu->pc += 3;
 }
 
-void asla(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	set_flag(cpu, FLAG_C, cpu->a & 0x80);
+void asla(CPU *cpu, memory_t *mem, unsigned short arg) {
+	cpu->set_flag(FLAG_C, cpu->a & 0x80);
 	cpu->a = (cpu->a << 1) & 0xFF;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
-void lsr_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void lsr_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg);
-	set_flag(cpu, FLAG_C, val & 0x01);
+	cpu->set_flag(FLAG_C, val & 0x01);
 	val >>= 1;
 	mem_write(mem, arg, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 6;
 	cpu->pc += 3;
 }
 
-void lsra(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	set_flag(cpu, FLAG_C, cpu->a & 0x01);
+void lsra(CPU *cpu, memory_t *mem, unsigned short arg) {
+	cpu->set_flag(FLAG_C, cpu->a & 0x01);
 	cpu->a >>= 1;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
-void rol_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void rol_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg);
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, val & 0x80);
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, val & 0x80);
 	val = ((val << 1) | c) & 0xFF;
 	mem_write(mem, arg, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 6;
 	cpu->pc += 3;
 }
 
-void rola(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, cpu->a & 0x80);
+void rola(CPU *cpu, memory_t *mem, unsigned short arg) {
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, cpu->a & 0x80);
 	cpu->a = ((cpu->a << 1) | c) & 0xFF;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
-void ror_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void ror_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg);
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, val & 0x01);
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, val & 0x01);
 	val = ((val >> 1) | (c << 7)) & 0xFF;
 	mem_write(mem, arg, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 6;
 	cpu->pc += 3;
 }
 
-void rora(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, cpu->a & 0x01);
+void rora(CPU *cpu, memory_t *mem, unsigned short arg) {
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, cpu->a & 0x01);
 	cpu->a = ((cpu->a >> 1) | (c << 7)) & 0xFF;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
-void and_imm(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void and_imm(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a &= arg & 0xFF;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 2;
 	cpu->pc += 2;
 }
 
-void and_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void and_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a &= mem_read(mem, arg);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
-void eor_imm(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void eor_imm(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a ^= arg & 0xFF;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 2;
 	cpu->pc += 2;
 }
 
-void eor_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void eor_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a ^= mem_read(mem, arg);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
-void ora_imm(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void ora_imm(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a |= arg & 0xFF;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 2;
 	cpu->pc += 2;
 }
 
-void ora_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void ora_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a |= mem_read(mem, arg);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
-void bit_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void bit_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg);
-	set_flag(cpu, FLAG_Z, (cpu->a & val) == 0);
-	set_flag(cpu, FLAG_N, val & 0x80);
-	set_flag(cpu, FLAG_V, val & 0x40);
+	cpu->set_flag(FLAG_Z, (cpu->a & val) == 0);
+	cpu->set_flag(FLAG_N, val & 0x80);
+	cpu->set_flag(FLAG_V, val & 0x40);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
-void bit_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void bit_zp(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg & 0xFF);
-	set_flag(cpu, FLAG_Z, (cpu->a & val) == 0);
-	set_flag(cpu, FLAG_N, val & 0x80);
-	set_flag(cpu, FLAG_V, val & 0x40);
+	cpu->set_flag(FLAG_Z, (cpu->a & val) == 0);
+	cpu->set_flag(FLAG_N, val & 0x80);
+	cpu->set_flag(FLAG_V, val & 0x40);
 	cpu->cycles += 3;
 	cpu->pc += 2;
 }
 
-void jmp_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void jmp_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->cycles += 3;
 	cpu->pc = arg;
 }
 
-void jsr_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void jsr_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short ret = cpu->pc + 2;
 	mem_write(mem, 0x100 + cpu->s, (ret >> 8) & 0xFF);
 	cpu->s--;
@@ -528,7 +528,7 @@ void jsr_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->pc = arg;
 }
 
-void rts(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void rts(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->s++;
 	unsigned short ret = mem_read(mem, 0x100 + cpu->s);
 	cpu->s++;
@@ -537,14 +537,14 @@ void rts(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->pc = ret + 1;
 }
 
-void bra(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void bra(CPU *cpu, memory_t *mem, unsigned short arg) {
 	signed char offset = arg & 0xFF;
 	cpu->cycles += 3;
 	cpu->pc += 2 + offset;
 }
 
-void bcc(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	if (!get_flag(cpu, FLAG_C))
+void bcc(CPU *cpu, memory_t *mem, unsigned short arg) {
+	if (!cpu->get_flag(FLAG_C))
 		bra(cpu, mem, arg);
 	else {
 		cpu->cycles += 2;
@@ -552,8 +552,8 @@ void bcc(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	}
 }
 
-void bcs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	if (get_flag(cpu, FLAG_C))
+void bcs(CPU *cpu, memory_t *mem, unsigned short arg) {
+	if (cpu->get_flag(FLAG_C))
 		bra(cpu, mem, arg);
 	else {
 		cpu->cycles += 2;
@@ -561,8 +561,8 @@ void bcs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	}
 }
 
-void beq(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	if (get_flag(cpu, FLAG_Z))
+void beq(CPU *cpu, memory_t *mem, unsigned short arg) {
+	if (cpu->get_flag(FLAG_Z))
 		bra(cpu, mem, arg);
 	else {
 		cpu->cycles += 2;
@@ -570,8 +570,8 @@ void beq(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	}
 }
 
-void bne(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	if (!get_flag(cpu, FLAG_Z))
+void bne(CPU *cpu, memory_t *mem, unsigned short arg) {
+	if (!cpu->get_flag(FLAG_Z))
 		bra(cpu, mem, arg);
 	else {
 		cpu->cycles += 2;
@@ -579,8 +579,8 @@ void bne(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	}
 }
 
-void bmi(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	if (get_flag(cpu, FLAG_N))
+void bmi(CPU *cpu, memory_t *mem, unsigned short arg) {
+	if (cpu->get_flag(FLAG_N))
 		bra(cpu, mem, arg);
 	else {
 		cpu->cycles += 2;
@@ -588,8 +588,8 @@ void bmi(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	}
 }
 
-void bpl(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	if (!get_flag(cpu, FLAG_N))
+void bpl(CPU *cpu, memory_t *mem, unsigned short arg) {
+	if (!cpu->get_flag(FLAG_N))
 		bra(cpu, mem, arg);
 	else {
 		cpu->cycles += 2;
@@ -597,8 +597,8 @@ void bpl(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	}
 }
 
-void bvs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	if (get_flag(cpu, FLAG_V))
+void bvs(CPU *cpu, memory_t *mem, unsigned short arg) {
+	if (cpu->get_flag(FLAG_V))
 		bra(cpu, mem, arg);
 	else {
 		cpu->cycles += 2;
@@ -606,8 +606,8 @@ void bvs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	}
 }
 
-void bvc(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	if (!get_flag(cpu, FLAG_V))
+void bvc(CPU *cpu, memory_t *mem, unsigned short arg) {
+	if (!cpu->get_flag(FLAG_V))
 		bra(cpu, mem, arg);
 	else {
 		cpu->cycles += 2;
@@ -615,132 +615,132 @@ void bvc(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	}
 }
 
-void clc(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	set_flag(cpu, FLAG_C, 0);
+void clc(CPU *cpu, memory_t *mem, unsigned short arg) {
+	cpu->set_flag(FLAG_C, 0);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
-void sec(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	set_flag(cpu, FLAG_C, 1);
+void sec(CPU *cpu, memory_t *mem, unsigned short arg) {
+	cpu->set_flag(FLAG_C, 1);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
-void cld(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	set_flag(cpu, FLAG_D, 0);
+void cld(CPU *cpu, memory_t *mem, unsigned short arg) {
+	cpu->set_flag(FLAG_D, 0);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
-void sed(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	set_flag(cpu, FLAG_D, 1);
+void sed(CPU *cpu, memory_t *mem, unsigned short arg) {
+	cpu->set_flag(FLAG_D, 1);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
-void cli(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	set_flag(cpu, FLAG_I, 0);
+void cli(CPU *cpu, memory_t *mem, unsigned short arg) {
+	cpu->set_flag(FLAG_I, 0);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
-void sei(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	set_flag(cpu, FLAG_I, 1);
+void sei(CPU *cpu, memory_t *mem, unsigned short arg) {
+	cpu->set_flag(FLAG_I, 1);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
-void clv(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	set_flag(cpu, FLAG_V, 0);
+void clv(CPU *cpu, memory_t *mem, unsigned short arg) {
+	cpu->set_flag(FLAG_V, 0);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
-void tax(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void tax(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->x = cpu->a;
-	update_nz(cpu, cpu->x);
+	cpu->update_nz(cpu->x);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
-void txa(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void txa(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a = cpu->x;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
-void tay(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void tay(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->y = cpu->a;
-	update_nz(cpu, cpu->y);
+	cpu->update_nz(cpu->y);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
-void tya(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void tya(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a = cpu->y;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
-void tsx(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void tsx(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->x = cpu->s;
-	update_nz(cpu, cpu->x);
+	cpu->update_nz(cpu->x);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
-void txs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void txs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->s = cpu->x;
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
-void pha(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void pha(CPU *cpu, memory_t *mem, unsigned short arg) {
 	mem_write(mem, 0x100 + cpu->s, cpu->a);
 	cpu->s--;
 	cpu->cycles += 3;
 	cpu->pc += 1;
 }
 
-void pla(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void pla(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->s++;
 	cpu->a = mem_read(mem, 0x100 + cpu->s);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 4;
 	cpu->pc += 1;
 }
 
-void php(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void php(CPU *cpu, memory_t *mem, unsigned short arg) {
 	mem_write(mem, 0x100 + cpu->s, cpu->p | FLAG_B | FLAG_U);
 	cpu->s--;
 	cpu->cycles += 3;
 	cpu->pc += 1;
 }
 
-void plp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void plp(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->s++;
 	cpu->p = mem_read(mem, 0x100 + cpu->s);
 	cpu->cycles += 4;
 	cpu->pc += 1;
 }
 
-void op_brk(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void op_brk(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->cycles += 7;
 	cpu->pc += 2;
 	mem_write(mem, 0x100 + cpu->s, (cpu->pc >> 8) & 0xFF);
 	cpu->s--;
 	mem_write(mem, 0x100 + cpu->s, cpu->pc & 0xFF);
 	cpu->s--;
-	set_flag(cpu, FLAG_B, 1);
+	cpu->set_flag(FLAG_B, 1);
 	mem_write(mem, 0x100 + cpu->s, cpu->p);
 	cpu->s--;
-	set_flag(cpu, FLAG_I, 1);
+	cpu->set_flag(FLAG_I, 1);
 }
 
-void op_rti(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void op_rti(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->s++;
 	cpu->p = mem_read(mem, 0x100 + cpu->s);
 	cpu->s++;
@@ -750,469 +750,469 @@ void op_rti(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->pc = ret;
 }
 
-void op_nop(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void op_nop(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
 /* ---- INC missing modes ---- */
-void inc_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void inc_zp(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = (mem_read(mem, arg & 0xFF) + 1) & 0xFF;
 	mem_write(mem, arg & 0xFF, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 5;
 	cpu->pc += 2;
 }
 
-void inc_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void inc_zp_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char addr = (arg + cpu->x) & 0xFF;
 	unsigned char val = (mem_read(mem, addr) + 1) & 0xFF;
 	mem_write(mem, addr, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 6;
 	cpu->pc += 2;
 }
 
-void inc_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void inc_abs_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = arg + cpu->x;
 	unsigned char val = (mem_read(mem, addr) + 1) & 0xFF;
 	mem_write(mem, addr, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 7;
 	cpu->pc += 3;
 }
 
 /* ---- DEC missing modes ---- */
-void dec_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void dec_zp(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = (mem_read(mem, arg & 0xFF) - 1) & 0xFF;
 	mem_write(mem, arg & 0xFF, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 5;
 	cpu->pc += 2;
 }
 
-void dec_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void dec_zp_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char addr = (arg + cpu->x) & 0xFF;
 	unsigned char val = (mem_read(mem, addr) - 1) & 0xFF;
 	mem_write(mem, addr, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 6;
 	cpu->pc += 2;
 }
 
-void dec_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void dec_abs_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = arg + cpu->x;
 	unsigned char val = (mem_read(mem, addr) - 1) & 0xFF;
 	mem_write(mem, addr, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 7;
 	cpu->pc += 3;
 }
 
 /* ---- AND missing modes ---- */
-void and_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void and_zp(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a &= mem_read(mem, arg & 0xFF);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 3;
 	cpu->pc += 2;
 }
 
-void and_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void and_zp_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a &= mem_read(mem, (arg + cpu->x) & 0xFF);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 4;
 	cpu->pc += 2;
 }
 
-void and_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void and_abs_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a &= mem_read(mem, arg + cpu->x);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
-void and_abs_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void and_abs_y(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a &= mem_read(mem, arg + cpu->y);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
-void and_ind_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void and_ind_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, (arg + cpu->x) & 0xFF) |
 		(mem_read(mem, (arg + cpu->x + 1) & 0xFF) << 8);
 	cpu->a &= mem_read(mem, addr);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 6;
 	cpu->pc += 2;
 }
 
-void and_ind_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void and_ind_y(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, arg) | (mem_read(mem, (arg + 1) & 0xFF) << 8);
 	cpu->a &= mem_read(mem, addr + cpu->y);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 5;
 	cpu->pc += 2;
 }
 
 /* ---- ORA missing modes ---- */
-void ora_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void ora_zp(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a |= mem_read(mem, arg & 0xFF);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 3;
 	cpu->pc += 2;
 }
 
-void ora_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void ora_zp_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a |= mem_read(mem, (arg + cpu->x) & 0xFF);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 4;
 	cpu->pc += 2;
 }
 
-void ora_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void ora_abs_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a |= mem_read(mem, arg + cpu->x);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
-void ora_abs_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void ora_abs_y(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a |= mem_read(mem, arg + cpu->y);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
-void ora_ind_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void ora_ind_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, (arg + cpu->x) & 0xFF) |
 		(mem_read(mem, (arg + cpu->x + 1) & 0xFF) << 8);
 	cpu->a |= mem_read(mem, addr);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 6;
 	cpu->pc += 2;
 }
 
-void ora_ind_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void ora_ind_y(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, arg) | (mem_read(mem, (arg + 1) & 0xFF) << 8);
 	cpu->a |= mem_read(mem, addr + cpu->y);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 5;
 	cpu->pc += 2;
 }
 
 /* ---- EOR missing modes ---- */
-void eor_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void eor_zp(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a ^= mem_read(mem, arg & 0xFF);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 3;
 	cpu->pc += 2;
 }
 
-void eor_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void eor_zp_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a ^= mem_read(mem, (arg + cpu->x) & 0xFF);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 4;
 	cpu->pc += 2;
 }
 
-void eor_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void eor_abs_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a ^= mem_read(mem, arg + cpu->x);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
-void eor_abs_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void eor_abs_y(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a ^= mem_read(mem, arg + cpu->y);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
-void eor_ind_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void eor_ind_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, (arg + cpu->x) & 0xFF) |
 		(mem_read(mem, (arg + cpu->x + 1) & 0xFF) << 8);
 	cpu->a ^= mem_read(mem, addr);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 6;
 	cpu->pc += 2;
 }
 
-void eor_ind_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void eor_ind_y(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, arg) | (mem_read(mem, (arg + 1) & 0xFF) << 8);
 	cpu->a ^= mem_read(mem, addr + cpu->y);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 5;
 	cpu->pc += 2;
 }
 
 /* ---- CMP missing modes ---- */
-void cmp_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void cmp_zp(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg & 0xFF);
-	set_flag(cpu, FLAG_C, cpu->a >= val);
-	update_nz(cpu, (cpu->a - val) & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->a >= val);
+	cpu->update_nz((cpu->a - val) & 0xFF);
 	cpu->cycles += 3;
 	cpu->pc += 2;
 }
 
-void cmp_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void cmp_zp_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, (arg + cpu->x) & 0xFF);
-	set_flag(cpu, FLAG_C, cpu->a >= val);
-	update_nz(cpu, (cpu->a - val) & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->a >= val);
+	cpu->update_nz((cpu->a - val) & 0xFF);
 	cpu->cycles += 4;
 	cpu->pc += 2;
 }
 
-void cmp_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void cmp_abs_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg + cpu->x);
-	set_flag(cpu, FLAG_C, cpu->a >= val);
-	update_nz(cpu, (cpu->a - val) & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->a >= val);
+	cpu->update_nz((cpu->a - val) & 0xFF);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
-void cmp_abs_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void cmp_abs_y(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg + cpu->y);
-	set_flag(cpu, FLAG_C, cpu->a >= val);
-	update_nz(cpu, (cpu->a - val) & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->a >= val);
+	cpu->update_nz((cpu->a - val) & 0xFF);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
-void cmp_ind_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void cmp_ind_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, (arg + cpu->x) & 0xFF) |
 		(mem_read(mem, (arg + cpu->x + 1) & 0xFF) << 8);
 	unsigned char val = mem_read(mem, addr);
-	set_flag(cpu, FLAG_C, cpu->a >= val);
-	update_nz(cpu, (cpu->a - val) & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->a >= val);
+	cpu->update_nz((cpu->a - val) & 0xFF);
 	cpu->cycles += 6;
 	cpu->pc += 2;
 }
 
-void cmp_ind_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void cmp_ind_y(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, arg) | (mem_read(mem, (arg + 1) & 0xFF) << 8);
 	unsigned char val = mem_read(mem, addr + cpu->y);
-	set_flag(cpu, FLAG_C, cpu->a >= val);
-	update_nz(cpu, (cpu->a - val) & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->a >= val);
+	cpu->update_nz((cpu->a - val) & 0xFF);
 	cpu->cycles += 5;
 	cpu->pc += 2;
 }
 
 /* ---- SBC missing modes ---- */
-void sbc_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	do_sbc(cpu, mem_read(mem, arg & 0xFF));
+void sbc_zp(CPU *cpu, memory_t *mem, unsigned short arg) {
+	cpu->do_sbc(mem_read(mem, arg & 0xFF));
 	cpu->cycles += 3;
 	cpu->pc += 2;
 }
 
-void sbc_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	do_sbc(cpu, mem_read(mem, (arg + cpu->x) & 0xFF));
+void sbc_zp_x(CPU *cpu, memory_t *mem, unsigned short arg) {
+	cpu->do_sbc(mem_read(mem, (arg + cpu->x) & 0xFF));
 	cpu->cycles += 4;
 	cpu->pc += 2;
 }
 
-void sbc_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	do_sbc(cpu, mem_read(mem, arg + cpu->x));
+void sbc_abs_x(CPU *cpu, memory_t *mem, unsigned short arg) {
+	cpu->do_sbc(mem_read(mem, arg + cpu->x));
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
-void sbc_abs_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	do_sbc(cpu, mem_read(mem, arg + cpu->y));
+void sbc_abs_y(CPU *cpu, memory_t *mem, unsigned short arg) {
+	cpu->do_sbc(mem_read(mem, arg + cpu->y));
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
-void sbc_ind_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void sbc_ind_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, (arg + cpu->x) & 0xFF) |
 		(mem_read(mem, (arg + cpu->x + 1) & 0xFF) << 8);
-	do_sbc(cpu, mem_read(mem, addr));
+	cpu->do_sbc(mem_read(mem, addr));
 	cpu->cycles += 6;
 	cpu->pc += 2;
 }
 
-void sbc_ind_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void sbc_ind_y(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, arg) | (mem_read(mem, (arg + 1) & 0xFF) << 8);
-	do_sbc(cpu, mem_read(mem, addr + cpu->y));
+	cpu->do_sbc(mem_read(mem, addr + cpu->y));
 	cpu->cycles += 5;
 	cpu->pc += 2;
 }
 
 /* ---- ASL missing modes ---- */
-void asl_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void asl_zp(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg & 0xFF);
-	set_flag(cpu, FLAG_C, val & 0x80);
+	cpu->set_flag(FLAG_C, val & 0x80);
 	val = (val << 1) & 0xFF;
 	mem_write(mem, arg & 0xFF, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 5;
 	cpu->pc += 2;
 }
 
-void asl_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void asl_zp_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char addr = (arg + cpu->x) & 0xFF;
 	unsigned char val = mem_read(mem, addr);
-	set_flag(cpu, FLAG_C, val & 0x80);
+	cpu->set_flag(FLAG_C, val & 0x80);
 	val = (val << 1) & 0xFF;
 	mem_write(mem, addr, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 6;
 	cpu->pc += 2;
 }
 
-void asl_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void asl_abs_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = arg + cpu->x;
 	unsigned char val = mem_read(mem, addr);
-	set_flag(cpu, FLAG_C, val & 0x80);
+	cpu->set_flag(FLAG_C, val & 0x80);
 	val = (val << 1) & 0xFF;
 	mem_write(mem, addr, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 7;
 	cpu->pc += 3;
 }
 
 /* ---- LSR missing modes ---- */
-void lsr_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void lsr_zp(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg & 0xFF);
-	set_flag(cpu, FLAG_C, val & 0x01);
+	cpu->set_flag(FLAG_C, val & 0x01);
 	val >>= 1;
 	mem_write(mem, arg & 0xFF, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 5;
 	cpu->pc += 2;
 }
 
-void lsr_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void lsr_zp_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char addr = (arg + cpu->x) & 0xFF;
 	unsigned char val = mem_read(mem, addr);
-	set_flag(cpu, FLAG_C, val & 0x01);
+	cpu->set_flag(FLAG_C, val & 0x01);
 	val >>= 1;
 	mem_write(mem, addr, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 6;
 	cpu->pc += 2;
 }
 
-void lsr_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void lsr_abs_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = arg + cpu->x;
 	unsigned char val = mem_read(mem, addr);
-	set_flag(cpu, FLAG_C, val & 0x01);
+	cpu->set_flag(FLAG_C, val & 0x01);
 	val >>= 1;
 	mem_write(mem, addr, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 7;
 	cpu->pc += 3;
 }
 
 /* ---- ROL missing modes ---- */
-void rol_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void rol_zp(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg & 0xFF);
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, val & 0x80);
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, val & 0x80);
 	val = ((val << 1) | c) & 0xFF;
 	mem_write(mem, arg & 0xFF, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 5;
 	cpu->pc += 2;
 }
 
-void rol_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void rol_zp_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char addr = (arg + cpu->x) & 0xFF;
 	unsigned char val = mem_read(mem, addr);
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, val & 0x80);
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, val & 0x80);
 	val = ((val << 1) | c) & 0xFF;
 	mem_write(mem, addr, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 6;
 	cpu->pc += 2;
 }
 
-void rol_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void rol_abs_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = arg + cpu->x;
 	unsigned char val = mem_read(mem, addr);
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, val & 0x80);
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, val & 0x80);
 	val = ((val << 1) | c) & 0xFF;
 	mem_write(mem, addr, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 7;
 	cpu->pc += 3;
 }
 
 /* ---- ROR missing modes ---- */
-void ror_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void ror_zp(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg & 0xFF);
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, val & 0x01);
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, val & 0x01);
 	val = ((val >> 1) | (c << 7)) & 0xFF;
 	mem_write(mem, arg & 0xFF, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 5;
 	cpu->pc += 2;
 }
 
-void ror_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void ror_zp_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char addr = (arg + cpu->x) & 0xFF;
 	unsigned char val = mem_read(mem, addr);
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, val & 0x01);
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, val & 0x01);
 	val = ((val >> 1) | (c << 7)) & 0xFF;
 	mem_write(mem, addr, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 6;
 	cpu->pc += 2;
 }
 
-void ror_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void ror_abs_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = arg + cpu->x;
 	unsigned char val = mem_read(mem, addr);
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, val & 0x01);
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, val & 0x01);
 	val = ((val >> 1) | (c << 7)) & 0xFF;
 	mem_write(mem, addr, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 7;
 	cpu->pc += 3;
 }
 
 /* ---- CPX missing modes ---- */
-void cpx_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void cpx_zp(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg & 0xFF);
-	set_flag(cpu, FLAG_C, cpu->x >= val);
-	update_nz(cpu, (cpu->x - val) & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->x >= val);
+	cpu->update_nz((cpu->x - val) & 0xFF);
 	cpu->cycles += 3;
 	cpu->pc += 2;
 }
 
-void cpx_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void cpx_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg);
-	set_flag(cpu, FLAG_C, cpu->x >= val);
-	update_nz(cpu, (cpu->x - val) & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->x >= val);
+	cpu->update_nz((cpu->x - val) & 0xFF);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
 /* ---- CPY missing modes ---- */
-void cpy_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void cpy_zp(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg & 0xFF);
-	set_flag(cpu, FLAG_C, cpu->y >= val);
-	update_nz(cpu, (cpu->y - val) & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->y >= val);
+	cpu->update_nz((cpu->y - val) & 0xFF);
 	cpu->cycles += 3;
 	cpu->pc += 2;
 }
 
-void cpy_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void cpy_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg);
-	set_flag(cpu, FLAG_C, cpu->y >= val);
-	update_nz(cpu, (cpu->y - val) & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->y >= val);
+	cpu->update_nz((cpu->y - val) & 0xFF);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
 /* ---- JMP indirect (with NMOS page-wrap bug) ---- */
-void jmp_ind(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+void jmp_ind(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short lo = mem_read(mem, arg);
 	unsigned short hi = mem_read(mem, (arg & 0xFF00) | ((arg + 1) & 0x00FF));
 	cpu->cycles += 5;

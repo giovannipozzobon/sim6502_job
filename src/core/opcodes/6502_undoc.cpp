@@ -1,380 +1,380 @@
 #include "opcodes.h"
 
-static void lax_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+static void lax_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg);
 	cpu->a = val;
 	cpu->x = val;
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->pc += 3;
 }
 
-static void lax_abs_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+static void lax_abs_y(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg + cpu->y);
 	cpu->a = val;
 	cpu->x = val;
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->pc += 3;
 }
 
-static void lax_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+static void lax_zp(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg & 0xFF);
 	cpu->a = val;
 	cpu->x = val;
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->pc += 2;
 }
 
-static void lax_zp_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+static void lax_zp_y(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, (arg + cpu->y) & 0xFF);
 	cpu->a = val;
 	cpu->x = val;
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->pc += 2;
 }
 
-static void lax_ind_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+static void lax_ind_y(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, arg) | (mem_read(mem, (arg + 1) & 0xFF) << 8);
 	unsigned char val = mem_read(mem, addr + cpu->y);
 	cpu->a = val;
 	cpu->x = val;
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->pc += 2;
 }
 
-static void sax_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+static void sax_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	mem_write(mem, arg, cpu->a & cpu->x);
 	cpu->pc += 3;
 }
 
-static void sax_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+static void sax_zp(CPU *cpu, memory_t *mem, unsigned short arg) {
 	mem_write(mem, arg & 0xFF, cpu->a & cpu->x);
 	cpu->pc += 2;
 }
 
-static void sax_zp_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+static void sax_zp_y(CPU *cpu, memory_t *mem, unsigned short arg) {
 	mem_write(mem, (arg + cpu->y) & 0xFF, cpu->a & cpu->x);
 	cpu->pc += 2;
 }
 
-static void sax_ind_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+static void sax_ind_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, (arg + cpu->x) & 0xFF) |
 		(mem_read(mem, (arg + cpu->x + 1) & 0xFF) << 8);
 	mem_write(mem, addr, cpu->a & cpu->x);
 	cpu->pc += 2;
 }
 
-static void dcm_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+static void dcm_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = (mem_read(mem, arg) - 1) & 0xFF;
 	mem_write(mem, arg, val);
 	int result = cpu->a - val;
-	set_flag(cpu, FLAG_C, cpu->a >= val);
-	update_nz(cpu, result & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->a >= val);
+	cpu->update_nz(result & 0xFF);
 	cpu->pc += 3;
 }
 
-static void dcm_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+static void dcm_zp(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = (mem_read(mem, arg & 0xFF) - 1) & 0xFF;
 	mem_write(mem, arg & 0xFF, val);
 	int result = cpu->a - val;
-	set_flag(cpu, FLAG_C, cpu->a >= val);
-	update_nz(cpu, result & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->a >= val);
+	cpu->update_nz(result & 0xFF);
 	cpu->pc += 2;
 }
 
-static void ins_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+static void ins_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = (mem_read(mem, arg) + 1) & 0xFF;
 	mem_write(mem, arg, val);
 	int result = cpu->a - val;
-	set_flag(cpu, FLAG_C, cpu->a >= val);
-	update_nz(cpu, result & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->a >= val);
+	cpu->update_nz(result & 0xFF);
 	cpu->pc += 3;
 }
 
-static void ins_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+static void ins_zp(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = (mem_read(mem, arg & 0xFF) + 1) & 0xFF;
 	mem_write(mem, arg & 0xFF, val);
 	int result = cpu->a - val;
-	set_flag(cpu, FLAG_C, cpu->a >= val);
-	update_nz(cpu, result & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->a >= val);
+	cpu->update_nz(result & 0xFF);
 	cpu->pc += 2;
 }
 
-static void asr_imm(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+static void asr_imm(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a &= arg & 0xFF;
-	set_flag(cpu, FLAG_C, cpu->a & 0x01);
+	cpu->set_flag(FLAG_C, cpu->a & 0x01);
 	cpu->a >>= 1;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->pc += 2;
 }
 
-static void arr_imm(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+static void arr_imm(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a &= arg & 0xFF;
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, cpu->a & 0x01);
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, cpu->a & 0x01);
 	cpu->a = ((cpu->a >> 1) | (c << 7)) & 0xFF;
-	set_flag(cpu, FLAG_V, ((cpu->a >> 6) ^ (cpu->a >> 5)) & 1);
-	update_nz(cpu, cpu->a);
+	cpu->set_flag(FLAG_V, ((cpu->a >> 6) ^ (cpu->a >> 5)) & 1);
+	cpu->update_nz(cpu->a);
 	cpu->pc += 2;
 }
 
-static void alr_imm(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+static void alr_imm(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a &= arg & 0xFF;
-	set_flag(cpu, FLAG_C, cpu->a & 0x01);
+	cpu->set_flag(FLAG_C, cpu->a & 0x01);
 	cpu->a >>= 1;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->pc += 2;
 }
 
-static void anc_imm(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+static void anc_imm(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a &= arg & 0xFF;
-	set_flag(cpu, FLAG_C, cpu->a & 0x80);
-	update_nz(cpu, cpu->a);
+	cpu->set_flag(FLAG_C, cpu->a & 0x80);
+	cpu->update_nz(cpu->a);
 	cpu->pc += 2;
 }
 
-static void slo_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+static void slo_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg);
-	set_flag(cpu, FLAG_C, val & 0x80);
+	cpu->set_flag(FLAG_C, val & 0x80);
 	val = (val << 1) & 0xFF;
 	mem_write(mem, arg, val);
 	cpu->a |= val;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->pc += 3;
 }
 
-static void slo_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+static void slo_abs_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg + cpu->x);
-	set_flag(cpu, FLAG_C, val & 0x80);
+	cpu->set_flag(FLAG_C, val & 0x80);
 	val = (val << 1) & 0xFF;
 	mem_write(mem, arg + cpu->x, val);
 	cpu->a |= val;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->pc += 3;
 }
 
-static void slo_abs_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+static void slo_abs_y(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg + cpu->y);
-	set_flag(cpu, FLAG_C, val & 0x80);
+	cpu->set_flag(FLAG_C, val & 0x80);
 	val = (val << 1) & 0xFF;
 	mem_write(mem, arg + cpu->y, val);
 	cpu->a |= val;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->pc += 3;
 }
 
-static void slo_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+static void slo_zp(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg & 0xFF);
-	set_flag(cpu, FLAG_C, val & 0x80);
+	cpu->set_flag(FLAG_C, val & 0x80);
 	val = (val << 1) & 0xFF;
 	mem_write(mem, arg & 0xFF, val);
 	cpu->a |= val;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->pc += 2;
 }
 
-static void slo_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+static void slo_zp_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, (arg + cpu->x) & 0xFF);
-	set_flag(cpu, FLAG_C, val & 0x80);
+	cpu->set_flag(FLAG_C, val & 0x80);
 	val = (val << 1) & 0xFF;
 	mem_write(mem, (arg + cpu->x) & 0xFF, val);
 	cpu->a |= val;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->pc += 2;
 }
 
-static void slo_ind_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+static void slo_ind_x(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, (arg + cpu->x) & 0xFF) |
 		(mem_read(mem, (arg + cpu->x + 1) & 0xFF) << 8);
 	unsigned char val = mem_read(mem, addr);
-	set_flag(cpu, FLAG_C, val & 0x80);
+	cpu->set_flag(FLAG_C, val & 0x80);
 	val = (val << 1) & 0xFF;
 	mem_write(mem, addr, val);
 	cpu->a |= val;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->pc += 2;
 }
 
-static void slo_ind_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+static void slo_ind_y(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, arg) | (mem_read(mem, (arg + 1) & 0xFF) << 8);
 	unsigned char val = mem_read(mem, addr + cpu->y);
-	set_flag(cpu, FLAG_C, val & 0x80);
+	cpu->set_flag(FLAG_C, val & 0x80);
 	val = (val << 1) & 0xFF;
 	mem_write(mem, addr + cpu->y, val);
 	cpu->a |= val;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->pc += 2;
 }
 
-static void sre_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+static void sre_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg);
-	set_flag(cpu, FLAG_C, val & 0x01);
+	cpu->set_flag(FLAG_C, val & 0x01);
 	val >>= 1;
 	mem_write(mem, arg, val);
 	cpu->a ^= val;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->pc += 3;
 }
 
-static void sre_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+static void sre_zp(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg & 0xFF);
-	set_flag(cpu, FLAG_C, val & 0x01);
+	cpu->set_flag(FLAG_C, val & 0x01);
 	val >>= 1;
 	mem_write(mem, arg & 0xFF, val);
 	cpu->a ^= val;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->pc += 2;
 }
 
-static void rla_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+static void rla_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg);
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, val & 0x80);
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, val & 0x80);
 	val = ((val << 1) | c) & 0xFF;
 	mem_write(mem, arg, val);
 	cpu->a &= val;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->pc += 3;
 }
 
-static void rla_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+static void rla_zp(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg & 0xFF);
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, val & 0x80);
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, val & 0x80);
 	val = ((val << 1) | c) & 0xFF;
 	mem_write(mem, arg & 0xFF, val);
 	cpu->a &= val;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->pc += 2;
 }
 
-static void rra_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+static void rra_abs(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg);
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, val & 0x01);
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, val & 0x01);
 	val = ((val >> 1) | (c << 7)) & 0xFF;
 	mem_write(mem, arg, val);
-	int result = cpu->a + val + get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, result > 0xFF);
-	set_flag(cpu, FLAG_V, ((cpu->a ^ result) & (val ^ result) & 0x80) != 0);
+	int result = cpu->a + val + cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, result > 0xFF);
+	cpu->set_flag(FLAG_V, ((cpu->a ^ result) & (val ^ result) & 0x80) != 0);
 	cpu->a = result & 0xFF;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->pc += 3;
 }
 
-static void rra_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
+static void rra_zp(CPU *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg & 0xFF);
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, val & 0x01);
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, val & 0x01);
 	val = ((val >> 1) | (c << 7)) & 0xFF;
 	mem_write(mem, arg & 0xFF, val);
-	int result = cpu->a + val + get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, result > 0xFF);
-	set_flag(cpu, FLAG_V, ((cpu->a ^ result) & (val ^ result) & 0x80) != 0);
+	int result = cpu->a + val + cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, result > 0xFF);
+	cpu->set_flag(FLAG_V, ((cpu->a ^ result) & (val ^ result) & 0x80) != 0);
 	cpu->a = result & 0xFF;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->pc += 2;
 }
 
-extern void lda_imm(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void lda_abs(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void lda_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void lda_abs_y(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void lda_zp(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void lda_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void lda_ind_x(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void lda_ind_y(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void ldx_imm(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void ldx_abs(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void ldx_abs_y(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void ldx_zp(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void ldx_zp_y(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void ldy_imm(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void ldy_abs(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void ldy_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void ldy_zp(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void ldy_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void sta_abs(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void sta_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void sta_abs_y(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void sta_zp(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void sta_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void sta_ind_x(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void sta_ind_y(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void stx_abs(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void stx_zp(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void stx_zp_y(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void sty_abs(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void sty_zp(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void sty_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void adc_imm(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void adc_abs(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void adc_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void adc_abs_y(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void adc_zp(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void adc_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void adc_ind_x(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void adc_ind_y(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void sbc_imm(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void sbc_abs(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void cmp_imm(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void cmp_abs(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void cpx_imm(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void cpy_imm(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void inc_abs(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void ina(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void inx(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void iny(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void dec_abs(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void dea(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void dex(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void dey(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void asl_abs(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void asla(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void lsr_abs(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void lsra(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void rol_abs(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void rola(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void ror_abs(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void rora(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void and_imm(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void and_abs(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void eor_imm(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void eor_abs(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void ora_imm(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void ora_abs(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void bit_abs(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void jmp_abs(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void jsr_abs(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void rts(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void bra(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void bcc(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void bcs(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void beq(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void bne(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void bmi(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void bpl(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void bvs(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void bvc(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void clc(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void sec(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void cld(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void sed(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void cli(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void sei(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void clv(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void tax(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void txa(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void tay(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void tya(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void tsx(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void txs(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void pha(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void pla(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void php(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void plp(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void op_brk(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void op_rti(cpu_t *cpu, memory_t *mem, unsigned short arg);
-extern void op_nop(cpu_t *cpu, memory_t *mem, unsigned short arg);
+extern void lda_imm(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void lda_abs(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void lda_abs_x(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void lda_abs_y(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void lda_zp(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void lda_zp_x(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void lda_ind_x(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void lda_ind_y(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void ldx_imm(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void ldx_abs(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void ldx_abs_y(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void ldx_zp(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void ldx_zp_y(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void ldy_imm(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void ldy_abs(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void ldy_abs_x(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void ldy_zp(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void ldy_zp_x(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void sta_abs(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void sta_abs_x(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void sta_abs_y(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void sta_zp(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void sta_zp_x(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void sta_ind_x(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void sta_ind_y(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void stx_abs(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void stx_zp(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void stx_zp_y(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void sty_abs(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void sty_zp(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void sty_zp_x(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void adc_imm(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void adc_abs(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void adc_abs_x(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void adc_abs_y(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void adc_zp(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void adc_zp_x(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void adc_ind_x(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void adc_ind_y(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void sbc_imm(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void sbc_abs(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void cmp_imm(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void cmp_abs(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void cpx_imm(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void cpy_imm(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void inc_abs(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void ina(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void inx(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void iny(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void dec_abs(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void dea(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void dex(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void dey(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void asl_abs(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void asla(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void lsr_abs(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void lsra(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void rol_abs(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void rola(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void ror_abs(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void rora(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void and_imm(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void and_abs(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void eor_imm(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void eor_abs(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void ora_imm(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void ora_abs(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void bit_abs(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void jmp_abs(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void jsr_abs(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void rts(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void bra(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void bcc(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void bcs(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void beq(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void bne(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void bmi(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void bpl(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void bvs(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void bvc(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void clc(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void sec(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void cld(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void sed(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void cli(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void sei(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void clv(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void tax(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void txa(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void tay(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void tya(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void tsx(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void txs(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void pha(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void pla(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void php(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void plp(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void op_brk(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void op_rti(CPU *cpu, memory_t *mem, unsigned short arg);
+extern void op_nop(CPU *cpu, memory_t *mem, unsigned short arg);
 
 opcode_handler_t opcodes_6502_undoc[] = {
 	{"LDA", MODE_IMMEDIATE, lda_imm, 2, 0, 0, 0, {0xA9}, 1},

@@ -1,6 +1,7 @@
 #include "cpu_6502.h"
 #include <stdlib.h>
 #include "cpu_engine.h"
+#include "opcodes/opcodes.h"
 #include "interrupts.h"
 #include <string.h>
 

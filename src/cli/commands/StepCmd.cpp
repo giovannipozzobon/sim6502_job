@@ -7,19 +7,18 @@
 
 /* Forward declarations for functions still in commands.cpp for now */
 extern int handle_trap_local(const symbol_table_t *st, cpu_t *cpu, memory_t *mem);
-extern void cli_hist_push(const cpu_t *pre, const memory_t *mem);
+extern void cli_hist_push(const CPUState *pre, const memory_t *mem);
 extern void json_exec_result(const char *cmd, const char *stop_reason, const cpu_t *cpu);
 extern int g_json_mode;
 extern int s_snap_active;
 extern void cli_snap_record(uint16_t addr, uint8_t before, uint8_t after, uint16_t writer_pc);
 
 bool StepCmd::execute(const std::vector<std::string>& args,
-                      CPU *cpu, memory_t *mem, 
-                      opcode_handler_t **p_handlers, int *p_num_handlers,
+                      CPU *cpu, memory_t *mem,
                       cpu_type_t *p_cpu_type, dispatch_table_t *dt,
                       breakpoint_list_t *breakpoints,
                       symbol_table_t *symbols) {
-    (void)p_handlers; (void)p_num_handlers; (void)breakpoints;
+    (void)breakpoints;
     int steps = 1;
     if (args.size() > 1) {
         steps = atoi(args[1].c_str());
@@ -39,7 +38,7 @@ bool StepCmd::execute(const std::vector<std::string>& args,
         const dispatch_entry_t *te = peek_dispatch(cpu, mem, dt, *p_cpu_type);
         if (te && te->mnemonic && strcmp(te->mnemonic, "STP") == 0) { stop_reason = "stp"; break; }
 
-        cpu_t pre = *cpu;
+        CPUState pre = *cpu;
         cpu->step();
         cli_hist_push(&pre, mem);
 

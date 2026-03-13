@@ -3,7 +3,7 @@
 void adc_zp_indirect(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, arg & 0xFF) | (mem_read(mem, (arg + 1) & 0xFF) << 8);
 	unsigned char val = mem_read(mem, addr);
-	do_adc(cpu, val);
+	cpu->do_adc(val);
 	cpu->cycles += 5;
 	cpu->pc += 2;
 }
@@ -11,7 +11,7 @@ void adc_zp_indirect(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 void adc_abs_indirect_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, arg) | (mem_read(mem, arg + 1) << 8);
 	unsigned char val = mem_read(mem, addr + cpu->y);
-	do_adc(cpu, val);
+	cpu->do_adc(val);
 	cpu->cycles += 6;
 	cpu->pc += 3;
 }
@@ -19,7 +19,7 @@ void adc_abs_indirect_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 void sbc_zp_indirect(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, arg & 0xFF) | (mem_read(mem, (arg + 1) & 0xFF) << 8);
 	unsigned char val = mem_read(mem, addr);
-	do_sbc(cpu, val);
+	cpu->do_sbc(val);
 	cpu->cycles += 5;
 	cpu->pc += 2;
 }
@@ -27,7 +27,7 @@ void sbc_zp_indirect(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 void sbc_abs_indirect_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, arg) | (mem_read(mem, arg + 1) << 8);
 	unsigned char val = mem_read(mem, addr + cpu->y);
-	do_sbc(cpu, val);
+	cpu->do_sbc(val);
 	cpu->cycles += 6;
 	cpu->pc += 3;
 }
@@ -36,8 +36,8 @@ void cmp_zp_indirect(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, arg & 0xFF) | (mem_read(mem, (arg + 1) & 0xFF) << 8);
 	unsigned char val = mem_read(mem, addr);
 	int result = cpu->a - val;
-	set_flag(cpu, FLAG_C, cpu->a >= val);
-	update_nz(cpu, result & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->a >= val);
+	cpu->update_nz(result & 0xFF);
 	cpu->cycles += 5;
 	cpu->pc += 2;
 }
@@ -45,7 +45,7 @@ void cmp_zp_indirect(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 void lda_zp_indirect(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, arg & 0xFF) | (mem_read(mem, (arg + 1) & 0xFF) << 8);
 	cpu->a = mem_read(mem, addr);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->pc += 2;
 }
 
@@ -80,7 +80,7 @@ void phx(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 void plx(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->s++;
 	cpu->x = mem_read(mem, 0x100 + cpu->s);
-	update_nz(cpu, cpu->x);
+	cpu->update_nz(cpu->x);
 	cpu->cycles += 4;
 	cpu->pc += 1;
 }
@@ -95,7 +95,7 @@ void phy(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 void ply(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->s++;
 	cpu->y = mem_read(mem, 0x100 + cpu->s);
-	update_nz(cpu, cpu->y);
+	cpu->update_nz(cpu->y);
 	cpu->cycles += 4;
 	cpu->pc += 1;
 }

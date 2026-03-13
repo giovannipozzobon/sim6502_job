@@ -15,6 +15,7 @@ public:
     virtual int step() override;
     virtual void trigger_interrupt(int vector_addr) override;
     virtual void* get_interrupt_controller() override { return ic; }
+    virtual dispatch_table_t* dispatch_table() override { return &dt; }
 };
 
 class CPU6502Undocumented : public CPU6502 {

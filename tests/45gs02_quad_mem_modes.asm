@@ -1,5 +1,5 @@
 * = $0200
- // EXPECT: A=FE X=00 Y=00 Z=01 B=00 S=FF PC=029A
+ // EXPECT: A=FE X=00 Y=00 Z=01 B=00 S=FF PC=029E
 
     .cpu _45gs02
 

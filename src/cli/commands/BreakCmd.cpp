@@ -9,12 +9,11 @@ extern int g_json_mode;
 extern void json_err(const char *cmd, const char *msg);
 
 bool BreakCmd::execute(const std::vector<std::string>& args,
-                       CPU *cpu, memory_t *mem, 
-                       opcode_handler_t **p_handlers, int *p_num_handlers,
+                       CPU *cpu, memory_t *mem,
                        cpu_type_t *p_cpu_type, dispatch_table_t *dt,
                        breakpoint_list_t *breakpoints,
                        symbol_table_t *symbols) {
-    (void)cpu; (void)mem; (void)p_handlers; (void)p_num_handlers; (void)p_cpu_type; (void)dt; (void)symbols;
+    (void)cpu; (void)mem; (void)p_cpu_type; (void)dt; (void)symbols;
     
     if (args.size() < 2) {
         if (g_json_mode) json_err("break", "Usage: break <addr> [condition]");

@@ -4,6 +4,7 @@
 #include "condition.h"
 #include "cpu.h"
 #include "memory.h"
+#include "dispatch.h"
 #include "disassembler.h"
 #include "breakpoints.h"
 #include "symbols.h"
@@ -20,9 +21,8 @@ void cli_set_json_mode(int v);
 
 /* --- Interactive Modes --- */
 
-void run_interactive_mode(cpu_t *cpu, memory_t *mem, 
-                          opcode_handler_t **p_handlers, int *p_num_handlers,
-                          cpu_type_t *p_cpu_type, dispatch_table_t *dt,
+void run_interactive_mode(cpu_t *cpu, memory_t *mem,
+                          cpu_type_t *p_cpu_type,
                           unsigned short start_addr, breakpoint_list_t *breakpoints,
                           symbol_table_t *symbols,
                           const std::vector<std::string>& initial_cmds);
@@ -32,6 +32,6 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
 void print_help(const char *progname);
 void list_processors(void);
 void list_opcodes(cpu_type_t type);
-void print_opcode_info(opcode_handler_t *handlers, int num_handlers, const char *mnemonic);
+void print_opcode_info(cpu_type_t cpu_type, const char *mnemonic);
 
 #endif

@@ -4,18 +4,18 @@
  * E=1 (emulation): 8-bit SP, stack on page 1 (0x0100-0x01FF), wraps at 0xFF.
  * E=0 (extended):  16-bit SP, stack can be anywhere in 64KB. */
 static inline unsigned short stack45_addr(cpu_t *cpu) {
-	return get_flag(cpu, FLAG_E) ? (0x0100 | (cpu->s & 0xFF)) : cpu->s;
+	return cpu->get_flag(FLAG_E) ? (0x0100 | (cpu->s & 0xFF)) : cpu->s;
 }
 
 static inline void stack45_push(cpu_t *cpu) {
-	if (get_flag(cpu, FLAG_E))
+	if (cpu->get_flag(FLAG_E))
 		cpu->s = (cpu->s & 0xFF00) | ((cpu->s - 1) & 0xFF);
 	else
 		cpu->s--;
 }
 
 static inline void stack45_pop(cpu_t *cpu) {
-	if (get_flag(cpu, FLAG_E))
+	if (cpu->get_flag(FLAG_E))
 		cpu->s = (cpu->s & 0xFF00) | ((cpu->s + 1) & 0xFF);
 	else
 		cpu->s++;
@@ -23,28 +23,28 @@ static inline void stack45_pop(cpu_t *cpu) {
 
 static void ldz_imm(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->z = arg & 0xFF;
-	update_nz(cpu, cpu->z);
+	cpu->update_nz(cpu->z);
 	cpu->cycles += 2;
 	cpu->pc += 2;
 }
 
 static void ldz_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->z = mem_read(mem, arg);
-	update_nz(cpu, cpu->z);
+	cpu->update_nz(cpu->z);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
 static void inz(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->z++;
-	update_nz(cpu, cpu->z);
+	cpu->update_nz(cpu->z);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
 static void dez(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->z--;
-	update_nz(cpu, cpu->z);
+	cpu->update_nz(cpu->z);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
@@ -52,8 +52,8 @@ static void dez(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void cpz_imm(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = arg & 0xFF;
 	int result = cpu->z - val;
-	set_flag(cpu, FLAG_C, cpu->z >= val);
-	update_nz(cpu, result & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->z >= val);
+	cpu->update_nz(result & 0xFF);
 	cpu->cycles += 2;
 	cpu->pc += 2;
 }
@@ -61,8 +61,8 @@ static void cpz_imm(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void cpz_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg);
 	int result = cpu->z - val;
-	set_flag(cpu, FLAG_C, cpu->z >= val);
-	update_nz(cpu, result & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->z >= val);
+	cpu->update_nz(result & 0xFF);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
@@ -70,15 +70,15 @@ static void cpz_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void cpz_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg & 0xFF);
 	int result = cpu->z - val;
-	set_flag(cpu, FLAG_C, cpu->z >= val);
-	update_nz(cpu, result & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->z >= val);
+	cpu->update_nz(result & 0xFF);
 	cpu->cycles += 3;
 	cpu->pc += 2;
 }
 
 static void tsy(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->y = (unsigned char)cpu->s;  /* low byte of 16-bit SP */
-	update_nz(cpu, cpu->y);
+	cpu->update_nz(cpu->y);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
@@ -91,41 +91,41 @@ static void tys(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 static void taz(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->z = cpu->a;
-	update_nz(cpu, cpu->z);
+	cpu->update_nz(cpu->z);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
 static void tza(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a = cpu->z;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
 static void cle(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	set_flag(cpu, FLAG_E, 0);
+	cpu->set_flag(FLAG_E, 0);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
 static void see(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	set_flag(cpu, FLAG_E, 1);
+	cpu->set_flag(FLAG_E, 1);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
 static void neg(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a = (unsigned char)((-cpu->a) & 0xFF);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
 static void asr_acc(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	set_flag(cpu, FLAG_C, cpu->a & 0x01);
+	cpu->set_flag(FLAG_C, cpu->a & 0x01);
 	cpu->a = (unsigned char)((cpu->a >> 1) | (cpu->a & 0x80));
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
@@ -153,57 +153,57 @@ static void map(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 static void asr_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg & 0xFF);
-	set_flag(cpu, FLAG_C, val & 0x01);
+	cpu->set_flag(FLAG_C, val & 0x01);
 	val = (unsigned char)((val >> 1) | (val & 0x80));
 	mem_write(mem, arg & 0xFF, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 5;
 	cpu->pc += 2;
 }
 
 static void asr_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, (arg + cpu->x) & 0xFF);
-	set_flag(cpu, FLAG_C, val & 0x01);
+	cpu->set_flag(FLAG_C, val & 0x01);
 	val = (unsigned char)((val >> 1) | (val & 0x80));
 	mem_write(mem, (arg + cpu->x) & 0xFF, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 6;
 	cpu->pc += 2;
 }
 
 static void tab(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->b = cpu->a;
-	update_nz(cpu, cpu->b);
+	cpu->update_nz(cpu->b);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
 static void tba(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a = cpu->b;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 2;
 	cpu->pc += 1;
 }
 
 static void asw(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short val = mem_read(mem, arg) | (mem_read(mem, arg + 1) << 8);
-	set_flag(cpu, FLAG_C, val & 0x8000);
+	cpu->set_flag(FLAG_C, val & 0x8000);
 	val = (val << 1) & 0xFFFF;
 	mem_write(mem, arg, val & 0xFF);
 	mem_write(mem, arg + 1, (val >> 8) & 0xFF);
-	update_nz(cpu, val & 0xFF); /* NZ updated based on low byte? Or 16-bit? Book says 8-bit usually */
+	cpu->update_nz(val & 0xFF); /* NZ updated based on low byte? Or 16-bit? Book says 8-bit usually */
 	cpu->cycles += 6;
 	cpu->pc += 3;
 }
 
 static void row(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short val = mem_read(mem, arg) | (mem_read(mem, arg + 1) << 8);
-	int old_c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, val & 0x01);
+	int old_c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, val & 0x01);
 	val = (val >> 1) | (old_c << 15);
 	mem_write(mem, arg, val & 0xFF);
 	mem_write(mem, arg + 1, (val >> 8) & 0xFF);
-	update_nz(cpu, val & 0xFF);
+	cpu->update_nz(val & 0xFF);
 	cpu->cycles += 6;
 	cpu->pc += 3;
 }
@@ -213,8 +213,8 @@ static void dew_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	val--;
 	mem_write(mem, arg & 0xFF, val & 0xFF);
 	mem_write(mem, (arg + 1) & 0xFF, (val >> 8) & 0xFF);
-	set_flag(cpu, FLAG_Z, val == 0);
-	set_flag(cpu, FLAG_N, val & 0x8000);
+	cpu->set_flag(FLAG_Z, val == 0);
+	cpu->set_flag(FLAG_N, val & 0x8000);
 	cpu->cycles += 6;
 	cpu->pc += 2;
 }
@@ -224,8 +224,8 @@ static void inw_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	val++;
 	mem_write(mem, arg & 0xFF, val & 0xFF);
 	mem_write(mem, (arg + 1) & 0xFF, (val >> 8) & 0xFF);
-	set_flag(cpu, FLAG_Z, val == 0);
-	set_flag(cpu, FLAG_N, val & 0x8000);
+	cpu->set_flag(FLAG_Z, val == 0);
+	cpu->set_flag(FLAG_N, val & 0x8000);
 	cpu->cycles += 6;
 	cpu->pc += 2;
 }
@@ -259,14 +259,14 @@ static void phz(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void plz(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	stack45_pop(cpu);
 	cpu->z = mem_read(mem, stack45_addr(cpu));
-	update_nz(cpu, cpu->z);
+	cpu->update_nz(cpu->z);
 	cpu->cycles += 4;
 	cpu->pc += 1;
 }
 
 static void ldz_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->z = mem_read(mem, arg + cpu->x);
-	update_nz(cpu, cpu->z);
+	cpu->update_nz(cpu->z);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
@@ -286,7 +286,7 @@ static void lda_zp_ind_z(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 		cpu->a = mem_read(mem, (unsigned short)(addr + cpu->z));
 		cpu->cycles += 5;
 	}
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->pc += 2;
 }
 
@@ -324,7 +324,7 @@ static void adc_zp_ind_z(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 		val = mem_read(mem, (unsigned short)(addr + cpu->z));
 		cpu->cycles += 5;
 	}
-	do_adc(cpu, val);
+	cpu->do_adc(val);
 	cpu->pc += 2;
 }
 
@@ -344,7 +344,7 @@ static void sbc_zp_ind_z(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 		val = mem_read(mem, (unsigned short)(addr + cpu->z));
 		cpu->cycles += 5;
 	}
-	do_sbc(cpu, val);
+	cpu->do_sbc(val);
 	cpu->pc += 2;
 }
 
@@ -365,8 +365,8 @@ static void cmp_zp_ind_z(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 		cpu->cycles += 5;
 	}
 	int result = cpu->a - val;
-	set_flag(cpu, FLAG_C, cpu->a >= val);
-	update_nz(cpu, result & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->a >= val);
+	cpu->update_nz(result & 0xFF);
 	cpu->pc += 2;
 }
 
@@ -387,7 +387,7 @@ static void ora_zp_ind_z(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 		cpu->cycles += 5;
 	}
 	cpu->a |= val;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->pc += 2;
 }
 
@@ -408,7 +408,7 @@ static void and_zp_ind_z(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 		cpu->cycles += 5;
 	}
 	cpu->a &= val;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->pc += 2;
 }
 
@@ -429,7 +429,7 @@ static void eor_zp_ind_z(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 		cpu->cycles += 5;
 	}
 	cpu->a ^= val;
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->pc += 2;
 }
 
@@ -437,7 +437,7 @@ static void lda_sp_ind_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short ptr_addr = (stack45_addr(cpu) + (arg & 0xFF)) & 0xFFFF;
 	unsigned short addr = mem_read(mem, ptr_addr) | (mem_read(mem, (ptr_addr + 1) & 0xFFFF) << 8);
 	cpu->a = mem_read(mem, addr + cpu->y);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 6;
 	cpu->pc += 2;
 }
@@ -479,7 +479,7 @@ static void rtn(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short hi = mem_read(mem, stack45_addr(cpu));
 	/* Discard stack-frame parameters, respecting stack mode */
 	unsigned char n = arg & 0xFF;
-	if (get_flag(cpu, FLAG_E))
+	if (cpu->get_flag(FLAG_E))
 		cpu->s = (cpu->s & 0xFF00) | ((cpu->s + n) & 0xFF);
 	else
 		cpu->s += n;
@@ -489,8 +489,8 @@ static void rtn(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 }
 
 static void bra_relfar(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	/* 16-bit relative branch */
-	cpu->pc += (short)arg + 3;
+	/* 16-bit relative branch; offset is relative to last operand byte (KickAssembler convention) */
+	cpu->pc += (short)arg + 2;
 	cpu->cycles += 4;
 }
 
@@ -501,14 +501,14 @@ static void bsr_relfar(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	stack45_push(cpu);
 	mem_write(mem, stack45_addr(cpu), ret & 0xFF);
 	stack45_push(cpu);
-	/* 16-bit relative branch */
-	cpu->pc += (short)arg + 3;
+	/* 16-bit relative branch; offset is relative to last operand byte */
+	cpu->pc += (short)arg + 2;
 	cpu->cycles += 4;
 }
 
 static void bcc_relfar(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	if (!get_flag(cpu, FLAG_C)) {
-		cpu->pc += (short)arg + 3;
+	if (!cpu->get_flag(FLAG_C)) {
+		cpu->pc += (short)arg + 2;
 		cpu->cycles += 4;
 	} else {
 		cpu->pc += 3;
@@ -517,8 +517,8 @@ static void bcc_relfar(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 }
 
 static void bcs_relfar(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	if (get_flag(cpu, FLAG_C)) {
-		cpu->pc += (short)arg + 3;
+	if (cpu->get_flag(FLAG_C)) {
+		cpu->pc += (short)arg + 2;
 		cpu->cycles += 4;
 	} else {
 		cpu->pc += 3;
@@ -527,8 +527,8 @@ static void bcs_relfar(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 }
 
 static void beq_relfar(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	if (get_flag(cpu, FLAG_Z)) {
-		cpu->pc += (short)arg + 3;
+	if (cpu->get_flag(FLAG_Z)) {
+		cpu->pc += (short)arg + 2;
 		cpu->cycles += 4;
 	} else {
 		cpu->pc += 3;
@@ -537,8 +537,8 @@ static void beq_relfar(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 }
 
 static void bne_relfar(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	if (!get_flag(cpu, FLAG_Z)) {
-		cpu->pc += (short)arg + 3;
+	if (!cpu->get_flag(FLAG_Z)) {
+		cpu->pc += (short)arg + 2;
 		cpu->cycles += 4;
 	} else {
 		cpu->pc += 3;
@@ -547,8 +547,8 @@ static void bne_relfar(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 }
 
 static void bmi_relfar(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	if (get_flag(cpu, FLAG_N)) {
-		cpu->pc += (short)arg + 3;
+	if (cpu->get_flag(FLAG_N)) {
+		cpu->pc += (short)arg + 2;
 		cpu->cycles += 4;
 	} else {
 		cpu->pc += 3;
@@ -557,8 +557,8 @@ static void bmi_relfar(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 }
 
 static void bpl_relfar(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	if (!get_flag(cpu, FLAG_N)) {
-		cpu->pc += (short)arg + 3;
+	if (!cpu->get_flag(FLAG_N)) {
+		cpu->pc += (short)arg + 2;
 		cpu->cycles += 4;
 	} else {
 		cpu->pc += 3;
@@ -567,8 +567,8 @@ static void bpl_relfar(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 }
 
 static void bvc_relfar(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	if (!get_flag(cpu, FLAG_V)) {
-		cpu->pc += (short)arg + 3;
+	if (!cpu->get_flag(FLAG_V)) {
+		cpu->pc += (short)arg + 2;
 		cpu->cycles += 4;
 	} else {
 		cpu->pc += 3;
@@ -577,8 +577,8 @@ static void bvc_relfar(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 }
 
 static void bvs_relfar(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	if (get_flag(cpu, FLAG_V)) {
-		cpu->pc += (short)arg + 3;
+	if (cpu->get_flag(FLAG_V)) {
+		cpu->pc += (short)arg + 2;
 		cpu->cycles += 4;
 	} else {
 		cpu->pc += 3;
@@ -588,84 +588,84 @@ static void bvs_relfar(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 static void asl_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg & 0xFF);
-	set_flag(cpu, FLAG_C, val & 0x80);
+	cpu->set_flag(FLAG_C, val & 0x80);
 	val = (val << 1) & 0xFF;
 	mem_write(mem, arg & 0xFF, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 5;
 	cpu->pc += 2;
 }
 
 static void asl_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, (arg + cpu->x) & 0xFF);
-	set_flag(cpu, FLAG_C, val & 0x80);
+	cpu->set_flag(FLAG_C, val & 0x80);
 	val = (val << 1) & 0xFF;
 	mem_write(mem, (arg + cpu->x) & 0xFF, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 6;
 	cpu->pc += 2;
 }
 
 static void lsr_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg & 0xFF);
-	set_flag(cpu, FLAG_C, val & 0x01);
+	cpu->set_flag(FLAG_C, val & 0x01);
 	val >>= 1;
 	mem_write(mem, arg & 0xFF, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 5;
 	cpu->pc += 2;
 }
 
 static void lsr_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, (arg + cpu->x) & 0xFF);
-	set_flag(cpu, FLAG_C, val & 0x01);
+	cpu->set_flag(FLAG_C, val & 0x01);
 	val >>= 1;
 	mem_write(mem, (arg + cpu->x) & 0xFF, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 6;
 	cpu->pc += 2;
 }
 
 static void rol_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg & 0xFF);
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, val & 0x80);
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, val & 0x80);
 	val = ((val << 1) | c) & 0xFF;
 	mem_write(mem, arg & 0xFF, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 5;
 	cpu->pc += 2;
 }
 
 static void rol_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, (arg + cpu->x) & 0xFF);
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, val & 0x80);
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, val & 0x80);
 	val = ((val << 1) | c) & 0xFF;
 	mem_write(mem, (arg + cpu->x) & 0xFF, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 6;
 	cpu->pc += 2;
 }
 
 static void ror_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg & 0xFF);
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, val & 0x01);
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, val & 0x01);
 	val = ((val >> 1) | (c << 7)) & 0xFF;
 	mem_write(mem, arg & 0xFF, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 5;
 	cpu->pc += 2;
 }
 
 static void ror_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, (arg + cpu->x) & 0xFF);
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, val & 0x01);
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, val & 0x01);
 	val = ((val >> 1) | (c << 7)) & 0xFF;
 	mem_write(mem, (arg + cpu->x) & 0xFF, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 6;
 	cpu->pc += 2;
 }
@@ -673,7 +673,7 @@ static void ror_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void inc_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = (mem_read(mem, arg & 0xFF) + 1) & 0xFF;
 	mem_write(mem, arg & 0xFF, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 5;
 	cpu->pc += 2;
 }
@@ -681,7 +681,7 @@ static void inc_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void inc_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = (mem_read(mem, (arg + cpu->x) & 0xFF) + 1) & 0xFF;
 	mem_write(mem, (arg + cpu->x) & 0xFF, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 6;
 	cpu->pc += 2;
 }
@@ -689,7 +689,7 @@ static void inc_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void dec_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = (mem_read(mem, arg & 0xFF) - 1) & 0xFF;
 	mem_write(mem, arg & 0xFF, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 5;
 	cpu->pc += 2;
 }
@@ -697,77 +697,77 @@ static void dec_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void dec_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = (mem_read(mem, (arg + cpu->x) & 0xFF) - 1) & 0xFF;
 	mem_write(mem, (arg + cpu->x) & 0xFF, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 6;
 	cpu->pc += 2;
 }
 
 static void adc_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg & 0xFF);
-	do_adc(cpu, val);
+	cpu->do_adc(val);
 	cpu->cycles += 3;
 	cpu->pc += 2;
 }
 
 static void adc_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, (arg + cpu->x) & 0xFF);
-	do_adc(cpu, val);
+	cpu->do_adc(val);
 	cpu->cycles += 4;
 	cpu->pc += 2;
 }
 
 static void sbc_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg & 0xFF);
-	do_sbc(cpu, val);
+	cpu->do_sbc(val);
 	cpu->cycles += 3;
 	cpu->pc += 2;
 }
 
 static void sbc_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, (arg + cpu->x) & 0xFF);
-	do_sbc(cpu, val);
+	cpu->do_sbc(val);
 	cpu->cycles += 4;
 	cpu->pc += 2;
 }
 
 static void and_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a &= mem_read(mem, arg & 0xFF);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 3;
 	cpu->pc += 2;
 }
 
 static void and_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a &= mem_read(mem, (arg + cpu->x) & 0xFF);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 4;
 	cpu->pc += 2;
 }
 
 static void eor_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a ^= mem_read(mem, arg & 0xFF);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 3;
 	cpu->pc += 2;
 }
 
 static void eor_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a ^= mem_read(mem, (arg + cpu->x) & 0xFF);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 4;
 	cpu->pc += 2;
 }
 
 static void ora_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a |= mem_read(mem, arg & 0xFF);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 3;
 	cpu->pc += 2;
 }
 
 static void ora_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a |= mem_read(mem, (arg + cpu->x) & 0xFF);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 4;
 	cpu->pc += 2;
 }
@@ -775,8 +775,8 @@ static void ora_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void cmp_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg & 0xFF);
 	int result = cpu->a - val;
-	set_flag(cpu, FLAG_C, cpu->a >= val);
-	update_nz(cpu, result & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->a >= val);
+	cpu->update_nz(result & 0xFF);
 	cpu->cycles += 3;
 	cpu->pc += 2;
 }
@@ -784,8 +784,8 @@ static void cmp_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void cmp_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, (arg + cpu->x) & 0xFF);
 	int result = cpu->a - val;
-	set_flag(cpu, FLAG_C, cpu->a >= val);
-	update_nz(cpu, result & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->a >= val);
+	cpu->update_nz(result & 0xFF);
 	cpu->cycles += 4;
 	cpu->pc += 2;
 }
@@ -793,8 +793,8 @@ static void cmp_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void cpx_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg & 0xFF);
 	int result = cpu->x - val;
-	set_flag(cpu, FLAG_C, cpu->x >= val);
-	update_nz(cpu, result & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->x >= val);
+	cpu->update_nz(result & 0xFF);
 	cpu->cycles += 3;
 	cpu->pc += 2;
 }
@@ -802,8 +802,8 @@ static void cpx_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void cpy_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg & 0xFF);
 	int result = cpu->y - val;
-	set_flag(cpu, FLAG_C, cpu->y >= val);
-	update_nz(cpu, result & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->y >= val);
+	cpu->update_nz(result & 0xFF);
 	cpu->cycles += 3;
 	cpu->pc += 2;
 }
@@ -864,8 +864,8 @@ static void set_q(cpu_t *cpu, unsigned int val) {
 }
 
 static void update_nz_q(cpu_t *cpu, unsigned int val) {
-	set_flag(cpu, FLAG_Z, val == 0);
-	set_flag(cpu, FLAG_N, (val >> 31) & 1);
+	cpu->set_flag(FLAG_Z, val == 0);
+	cpu->set_flag(FLAG_N, (val >> 31) & 1);
 }
 
 /* Read 4 consecutive bytes from ZP (wrapping within ZP) as little-endian 32-bit */
@@ -985,10 +985,10 @@ static void stq_zp_ind_z(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void adcq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned int q = get_q(cpu);
 	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
-	unsigned long long result = (unsigned long long)q + val + get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, result > 0xFFFFFFFFUL);
+	unsigned long long result = (unsigned long long)q + val + cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, result > 0xFFFFFFFFUL);
 	unsigned int r = (unsigned int)(result & 0xFFFFFFFF);
-	set_flag(cpu, FLAG_V, (~(q ^ val) & (q ^ r) & 0x80000000) != 0);
+	cpu->set_flag(FLAG_V, (~(q ^ val) & (q ^ r) & 0x80000000) != 0);
 	set_q(cpu, r);
 	update_nz_q(cpu, r);
 	cpu->cycles += 5;
@@ -998,10 +998,10 @@ static void adcq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void adcq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned int q = get_q(cpu);
 	unsigned int val = mem_read32_abs(mem, arg);
-	unsigned long long result = (unsigned long long)q + val + get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, result > 0xFFFFFFFFUL);
+	unsigned long long result = (unsigned long long)q + val + cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, result > 0xFFFFFFFFUL);
 	unsigned int r = (unsigned int)(result & 0xFFFFFFFF);
-	set_flag(cpu, FLAG_V, (~(q ^ val) & (q ^ r) & 0x80000000) != 0);
+	cpu->set_flag(FLAG_V, (~(q ^ val) & (q ^ r) & 0x80000000) != 0);
 	set_q(cpu, r);
 	update_nz_q(cpu, r);
 	cpu->cycles += 5;
@@ -1011,10 +1011,10 @@ static void adcq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void sbcq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned int q = get_q(cpu);
 	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
-	long long result = (long long)q - (long long)val - (1 - get_flag(cpu, FLAG_C));
-	set_flag(cpu, FLAG_C, result >= 0);
+	long long result = (long long)q - (long long)val - (1 - cpu->get_flag(FLAG_C));
+	cpu->set_flag(FLAG_C, result >= 0);
 	unsigned int r = (unsigned int)(result & 0xFFFFFFFF);
-	set_flag(cpu, FLAG_V, ((q ^ val) & (q ^ r) & 0x80000000) != 0);
+	cpu->set_flag(FLAG_V, ((q ^ val) & (q ^ r) & 0x80000000) != 0);
 	set_q(cpu, r);
 	update_nz_q(cpu, r);
 	cpu->cycles += 5;
@@ -1024,10 +1024,10 @@ static void sbcq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void sbcq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned int q = get_q(cpu);
 	unsigned int val = mem_read32_abs(mem, arg);
-	long long result = (long long)q - (long long)val - (1 - get_flag(cpu, FLAG_C));
-	set_flag(cpu, FLAG_C, result >= 0);
+	long long result = (long long)q - (long long)val - (1 - cpu->get_flag(FLAG_C));
+	cpu->set_flag(FLAG_C, result >= 0);
 	unsigned int r = (unsigned int)(result & 0xFFFFFFFF);
-	set_flag(cpu, FLAG_V, ((q ^ val) & (q ^ r) & 0x80000000) != 0);
+	cpu->set_flag(FLAG_V, ((q ^ val) & (q ^ r) & 0x80000000) != 0);
 	set_q(cpu, r);
 	update_nz_q(cpu, r);
 	cpu->cycles += 5;
@@ -1037,7 +1037,7 @@ static void sbcq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void cpq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned int q = get_q(cpu);
 	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
-	set_flag(cpu, FLAG_C, q >= val);
+	cpu->set_flag(FLAG_C, q >= val);
 	update_nz_q(cpu, q - val);
 	cpu->cycles += 5;
 	cpu->pc += 2;
@@ -1046,7 +1046,7 @@ static void cpq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void cpq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned int q = get_q(cpu);
 	unsigned int val = mem_read32_abs(mem, arg);
-	set_flag(cpu, FLAG_C, q >= val);
+	cpu->set_flag(FLAG_C, q >= val);
 	update_nz_q(cpu, q - val);
 	cpu->cycles += 5;
 	cpu->pc += 3;
@@ -1095,9 +1095,9 @@ static void andq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void bitq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned int q = get_q(cpu);
 	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
-	set_flag(cpu, FLAG_Z, (q & val) == 0);
-	set_flag(cpu, FLAG_N, (val >> 31) & 1);
-	set_flag(cpu, FLAG_V, (val >> 30) & 1);
+	cpu->set_flag(FLAG_Z, (q & val) == 0);
+	cpu->set_flag(FLAG_N, (val >> 31) & 1);
+	cpu->set_flag(FLAG_V, (val >> 30) & 1);
 	cpu->cycles += 5;
 	cpu->pc += 2;
 }
@@ -1105,9 +1105,9 @@ static void bitq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void bitq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned int q = get_q(cpu);
 	unsigned int val = mem_read32_abs(mem, arg);
-	set_flag(cpu, FLAG_Z, (q & val) == 0);
-	set_flag(cpu, FLAG_N, (val >> 31) & 1);
-	set_flag(cpu, FLAG_V, (val >> 30) & 1);
+	cpu->set_flag(FLAG_Z, (q & val) == 0);
+	cpu->set_flag(FLAG_N, (val >> 31) & 1);
+	cpu->set_flag(FLAG_V, (val >> 30) & 1);
 	cpu->cycles += 5;
 	cpu->pc += 3;
 }
@@ -1134,7 +1134,7 @@ static void orq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 static void aslq(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned int q = get_q(cpu);
-	set_flag(cpu, FLAG_C, (q >> 31) & 1);
+	cpu->set_flag(FLAG_C, (q >> 31) & 1);
 	q <<= 1;
 	set_q(cpu, q);
 	update_nz_q(cpu, q);
@@ -1144,7 +1144,7 @@ static void aslq(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 static void asrq(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned int q = get_q(cpu);
-	set_flag(cpu, FLAG_C, q & 1);
+	cpu->set_flag(FLAG_C, q & 1);
 	q = (q >> 1) | (q & 0x80000000); /* preserve sign bit */
 	set_q(cpu, q);
 	update_nz_q(cpu, q);
@@ -1154,7 +1154,7 @@ static void asrq(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 static void lsrq(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned int q = get_q(cpu);
-	set_flag(cpu, FLAG_C, q & 1);
+	cpu->set_flag(FLAG_C, q & 1);
 	q >>= 1;
 	set_q(cpu, q);
 	update_nz_q(cpu, q);
@@ -1164,8 +1164,8 @@ static void lsrq(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 static void rolq(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned int q = get_q(cpu);
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, (q >> 31) & 1);
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, (q >> 31) & 1);
 	q = (q << 1) | (unsigned int)c;
 	set_q(cpu, q);
 	update_nz_q(cpu, q);
@@ -1175,8 +1175,8 @@ static void rolq(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 static void rorq(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned int q = get_q(cpu);
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, q & 1);
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, q & 1);
 	q = (q >> 1) | ((unsigned int)c << 31);
 	set_q(cpu, q);
 	update_nz_q(cpu, q);
@@ -1206,7 +1206,7 @@ static void ora_ind_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, (arg + cpu->x) & 0xFF) |
 		(mem_read(mem, (arg + cpu->x + 1) & 0xFF) << 8);
 	cpu->a |= mem_read(mem, addr);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 6;
 	cpu->pc += 2;
 }
@@ -1214,21 +1214,21 @@ static void ora_ind_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void ora_ind_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, arg & 0xFF) | (mem_read(mem, (arg + 1) & 0xFF) << 8);
 	cpu->a |= mem_read(mem, addr + cpu->y);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 5;
 	cpu->pc += 2;
 }
 
 static void ora_abs_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a |= mem_read(mem, arg + cpu->y);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
 static void ora_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a |= mem_read(mem, arg + cpu->x);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
@@ -1237,7 +1237,7 @@ static void and_ind_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, (arg + cpu->x) & 0xFF) |
 		(mem_read(mem, (arg + cpu->x + 1) & 0xFF) << 8);
 	cpu->a &= mem_read(mem, addr);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 6;
 	cpu->pc += 2;
 }
@@ -1245,21 +1245,21 @@ static void and_ind_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void and_ind_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, arg & 0xFF) | (mem_read(mem, (arg + 1) & 0xFF) << 8);
 	cpu->a &= mem_read(mem, addr + cpu->y);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 5;
 	cpu->pc += 2;
 }
 
 static void and_abs_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a &= mem_read(mem, arg + cpu->y);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
 static void and_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a &= mem_read(mem, arg + cpu->x);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
@@ -1268,7 +1268,7 @@ static void eor_ind_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, (arg + cpu->x) & 0xFF) |
 		(mem_read(mem, (arg + cpu->x + 1) & 0xFF) << 8);
 	cpu->a ^= mem_read(mem, addr);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 6;
 	cpu->pc += 2;
 }
@@ -1276,21 +1276,21 @@ static void eor_ind_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void eor_ind_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, arg & 0xFF) | (mem_read(mem, (arg + 1) & 0xFF) << 8);
 	cpu->a ^= mem_read(mem, addr + cpu->y);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 5;
 	cpu->pc += 2;
 }
 
 static void eor_abs_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a ^= mem_read(mem, arg + cpu->y);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
 static void eor_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	cpu->a ^= mem_read(mem, arg + cpu->x);
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
@@ -1298,26 +1298,26 @@ static void eor_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void sbc_ind_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, (arg + cpu->x) & 0xFF) |
 		(mem_read(mem, (arg + cpu->x + 1) & 0xFF) << 8);
-	do_sbc(cpu, mem_read(mem, addr));
+	cpu->do_sbc(mem_read(mem, addr));
 	cpu->cycles += 6;
 	cpu->pc += 2;
 }
 
 static void sbc_ind_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, arg & 0xFF) | (mem_read(mem, (arg + 1) & 0xFF) << 8);
-	do_sbc(cpu, mem_read(mem, addr + cpu->y));
+	cpu->do_sbc(mem_read(mem, addr + cpu->y));
 	cpu->cycles += 5;
 	cpu->pc += 2;
 }
 
 static void sbc_abs_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	do_sbc(cpu, mem_read(mem, arg + cpu->y));
+	cpu->do_sbc(mem_read(mem, arg + cpu->y));
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
 static void sbc_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
-	do_sbc(cpu, mem_read(mem, arg + cpu->x));
+	cpu->do_sbc(mem_read(mem, arg + cpu->x));
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
@@ -1326,8 +1326,8 @@ static void cmp_ind_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, (arg + cpu->x) & 0xFF) |
 		(mem_read(mem, (arg + cpu->x + 1) & 0xFF) << 8);
 	unsigned char val = mem_read(mem, addr);
-	set_flag(cpu, FLAG_C, cpu->a >= val);
-	update_nz(cpu, (cpu->a - val) & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->a >= val);
+	cpu->update_nz((cpu->a - val) & 0xFF);
 	cpu->cycles += 6;
 	cpu->pc += 2;
 }
@@ -1335,66 +1335,66 @@ static void cmp_ind_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void cmp_ind_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short addr = mem_read(mem, arg & 0xFF) | (mem_read(mem, (arg + 1) & 0xFF) << 8);
 	unsigned char val = mem_read(mem, addr + cpu->y);
-	set_flag(cpu, FLAG_C, cpu->a >= val);
-	update_nz(cpu, (cpu->a - val) & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->a >= val);
+	cpu->update_nz((cpu->a - val) & 0xFF);
 	cpu->cycles += 5;
 	cpu->pc += 2;
 }
 
 static void cmp_abs_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg + cpu->y);
-	set_flag(cpu, FLAG_C, cpu->a >= val);
-	update_nz(cpu, (cpu->a - val) & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->a >= val);
+	cpu->update_nz((cpu->a - val) & 0xFF);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
 static void cmp_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg + cpu->x);
-	set_flag(cpu, FLAG_C, cpu->a >= val);
-	update_nz(cpu, (cpu->a - val) & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->a >= val);
+	cpu->update_nz((cpu->a - val) & 0xFF);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
 static void asl_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg + cpu->x);
-	set_flag(cpu, FLAG_C, val & 0x80);
+	cpu->set_flag(FLAG_C, val & 0x80);
 	val = (val << 1) & 0xFF;
 	mem_write(mem, arg + cpu->x, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 7;
 	cpu->pc += 3;
 }
 
 static void rol_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg + cpu->x);
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, val & 0x80);
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, val & 0x80);
 	val = ((val << 1) | c) & 0xFF;
 	mem_write(mem, arg + cpu->x, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 7;
 	cpu->pc += 3;
 }
 
 static void lsr_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg + cpu->x);
-	set_flag(cpu, FLAG_C, val & 0x01);
+	cpu->set_flag(FLAG_C, val & 0x01);
 	val >>= 1;
 	mem_write(mem, arg + cpu->x, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 7;
 	cpu->pc += 3;
 }
 
 static void ror_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg + cpu->x);
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, val & 0x01);
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, val & 0x01);
 	val = ((val >> 1) | (c << 7)) & 0xFF;
 	mem_write(mem, arg + cpu->x, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 7;
 	cpu->pc += 3;
 }
@@ -1413,16 +1413,16 @@ static void stx_abs_y(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 static void cpx_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg);
-	set_flag(cpu, FLAG_C, cpu->x >= val);
-	update_nz(cpu, (cpu->x - val) & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->x >= val);
+	cpu->update_nz((cpu->x - val) & 0xFF);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
 
 static void cpy_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = mem_read(mem, arg);
-	set_flag(cpu, FLAG_C, cpu->y >= val);
-	update_nz(cpu, (cpu->y - val) & 0xFF);
+	cpu->set_flag(FLAG_C, cpu->y >= val);
+	cpu->update_nz((cpu->y - val) & 0xFF);
 	cpu->cycles += 4;
 	cpu->pc += 3;
 }
@@ -1430,7 +1430,7 @@ static void cpy_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void dec_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = (mem_read(mem, arg + cpu->x) - 1) & 0xFF;
 	mem_write(mem, arg + cpu->x, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 7;
 	cpu->pc += 3;
 }
@@ -1438,7 +1438,7 @@ static void dec_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void inc_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char val = (mem_read(mem, arg + cpu->x) + 1) & 0xFF;
 	mem_write(mem, arg + cpu->x, val);
-	update_nz(cpu, val);
+	cpu->update_nz(val);
 	cpu->cycles += 7;
 	cpu->pc += 3;
 }
@@ -1447,7 +1447,7 @@ static void inc_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 static void aslq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
-	set_flag(cpu, FLAG_C, (val >> 31) & 1);
+	cpu->set_flag(FLAG_C, (val >> 31) & 1);
 	val <<= 1;
 	mem_write32_zp(mem, (unsigned char)(arg & 0xFF), val);
 	update_nz_q(cpu, val);
@@ -1458,7 +1458,7 @@ static void aslq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void aslq_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char addr = (unsigned char)((arg + cpu->x) & 0xFF);
 	unsigned int val = mem_read32_zp(mem, addr);
-	set_flag(cpu, FLAG_C, (val >> 31) & 1);
+	cpu->set_flag(FLAG_C, (val >> 31) & 1);
 	val <<= 1;
 	mem_write32_zp(mem, addr, val);
 	update_nz_q(cpu, val);
@@ -1468,7 +1468,7 @@ static void aslq_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 static void aslq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned int val = mem_read32_abs(mem, arg);
-	set_flag(cpu, FLAG_C, (val >> 31) & 1);
+	cpu->set_flag(FLAG_C, (val >> 31) & 1);
 	val <<= 1;
 	mem_write32_abs(mem, arg, val);
 	update_nz_q(cpu, val);
@@ -1479,7 +1479,7 @@ static void aslq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void aslq_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short ea = (unsigned short)(arg + cpu->x);
 	unsigned int val = mem_read32_abs(mem, ea);
-	set_flag(cpu, FLAG_C, (val >> 31) & 1);
+	cpu->set_flag(FLAG_C, (val >> 31) & 1);
 	val <<= 1;
 	mem_write32_abs(mem, ea, val);
 	update_nz_q(cpu, val);
@@ -1489,7 +1489,7 @@ static void aslq_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 static void asrq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
-	set_flag(cpu, FLAG_C, val & 1);
+	cpu->set_flag(FLAG_C, val & 1);
 	val = (val >> 1) | (val & 0x80000000);
 	mem_write32_zp(mem, (unsigned char)(arg & 0xFF), val);
 	update_nz_q(cpu, val);
@@ -1500,7 +1500,7 @@ static void asrq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void asrq_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char addr = (unsigned char)((arg + cpu->x) & 0xFF);
 	unsigned int val = mem_read32_zp(mem, addr);
-	set_flag(cpu, FLAG_C, val & 1);
+	cpu->set_flag(FLAG_C, val & 1);
 	val = (val >> 1) | (val & 0x80000000);
 	mem_write32_zp(mem, addr, val);
 	update_nz_q(cpu, val);
@@ -1510,7 +1510,7 @@ static void asrq_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 static void lsrq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
-	set_flag(cpu, FLAG_C, val & 1);
+	cpu->set_flag(FLAG_C, val & 1);
 	val >>= 1;
 	mem_write32_zp(mem, (unsigned char)(arg & 0xFF), val);
 	update_nz_q(cpu, val);
@@ -1521,7 +1521,7 @@ static void lsrq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void lsrq_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char addr = (unsigned char)((arg + cpu->x) & 0xFF);
 	unsigned int val = mem_read32_zp(mem, addr);
-	set_flag(cpu, FLAG_C, val & 1);
+	cpu->set_flag(FLAG_C, val & 1);
 	val >>= 1;
 	mem_write32_zp(mem, addr, val);
 	update_nz_q(cpu, val);
@@ -1531,7 +1531,7 @@ static void lsrq_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 static void lsrq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned int val = mem_read32_abs(mem, arg);
-	set_flag(cpu, FLAG_C, val & 1);
+	cpu->set_flag(FLAG_C, val & 1);
 	val >>= 1;
 	mem_write32_abs(mem, arg, val);
 	update_nz_q(cpu, val);
@@ -1542,7 +1542,7 @@ static void lsrq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void lsrq_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short ea = (unsigned short)(arg + cpu->x);
 	unsigned int val = mem_read32_abs(mem, ea);
-	set_flag(cpu, FLAG_C, val & 1);
+	cpu->set_flag(FLAG_C, val & 1);
 	val >>= 1;
 	mem_write32_abs(mem, ea, val);
 	update_nz_q(cpu, val);
@@ -1552,8 +1552,8 @@ static void lsrq_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 static void rolq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, (val >> 31) & 1);
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, (val >> 31) & 1);
 	val = (val << 1) | (unsigned int)c;
 	mem_write32_zp(mem, (unsigned char)(arg & 0xFF), val);
 	update_nz_q(cpu, val);
@@ -1564,8 +1564,8 @@ static void rolq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void rolq_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char addr = (unsigned char)((arg + cpu->x) & 0xFF);
 	unsigned int val = mem_read32_zp(mem, addr);
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, (val >> 31) & 1);
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, (val >> 31) & 1);
 	val = (val << 1) | (unsigned int)c;
 	mem_write32_zp(mem, addr, val);
 	update_nz_q(cpu, val);
@@ -1575,8 +1575,8 @@ static void rolq_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 static void rolq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned int val = mem_read32_abs(mem, arg);
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, (val >> 31) & 1);
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, (val >> 31) & 1);
 	val = (val << 1) | (unsigned int)c;
 	mem_write32_abs(mem, arg, val);
 	update_nz_q(cpu, val);
@@ -1587,8 +1587,8 @@ static void rolq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void rolq_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short ea = (unsigned short)(arg + cpu->x);
 	unsigned int val = mem_read32_abs(mem, ea);
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, (val >> 31) & 1);
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, (val >> 31) & 1);
 	val = (val << 1) | (unsigned int)c;
 	mem_write32_abs(mem, ea, val);
 	update_nz_q(cpu, val);
@@ -1598,8 +1598,8 @@ static void rolq_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 static void rorq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned int val = mem_read32_zp(mem, (unsigned char)(arg & 0xFF));
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, val & 1);
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, val & 1);
 	val = (val >> 1) | ((unsigned int)c << 31);
 	mem_write32_zp(mem, (unsigned char)(arg & 0xFF), val);
 	update_nz_q(cpu, val);
@@ -1610,8 +1610,8 @@ static void rorq_zp(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void rorq_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned char addr = (unsigned char)((arg + cpu->x) & 0xFF);
 	unsigned int val = mem_read32_zp(mem, addr);
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, val & 1);
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, val & 1);
 	val = (val >> 1) | ((unsigned int)c << 31);
 	mem_write32_zp(mem, addr, val);
 	update_nz_q(cpu, val);
@@ -1621,8 +1621,8 @@ static void rorq_zp_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 
 static void rorq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned int val = mem_read32_abs(mem, arg);
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, val & 1);
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, val & 1);
 	val = (val >> 1) | ((unsigned int)c << 31);
 	mem_write32_abs(mem, arg, val);
 	update_nz_q(cpu, val);
@@ -1633,8 +1633,8 @@ static void rorq_abs(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void rorq_abs_x(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	unsigned short ea = (unsigned short)(arg + cpu->x);
 	unsigned int val = mem_read32_abs(mem, ea);
-	int c = get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, val & 1);
+	int c = cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, val & 1);
 	val = (val >> 1) | ((unsigned int)c << 31);
 	mem_write32_abs(mem, ea, val);
 	update_nz_q(cpu, val);
@@ -1733,10 +1733,10 @@ static void adcq_zp_ind_z(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 		cpu->cycles += 9;
 	}
 	unsigned int q = get_q(cpu);
-	unsigned long long result = (unsigned long long)q + val + get_flag(cpu, FLAG_C);
-	set_flag(cpu, FLAG_C, result > 0xFFFFFFFFUL);
+	unsigned long long result = (unsigned long long)q + val + cpu->get_flag(FLAG_C);
+	cpu->set_flag(FLAG_C, result > 0xFFFFFFFFUL);
 	unsigned int r = (unsigned int)(result & 0xFFFFFFFF);
-	set_flag(cpu, FLAG_V, (~(q ^ val) & (q ^ r) & 0x80000000) != 0);
+	cpu->set_flag(FLAG_V, (~(q ^ val) & (q ^ r) & 0x80000000) != 0);
 	set_q(cpu, r);
 	update_nz_q(cpu, r);
 	cpu->pc += 2;
@@ -1763,10 +1763,10 @@ static void sbcq_zp_ind_z(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 		cpu->cycles += 9;
 	}
 	unsigned int q = get_q(cpu);
-	long long result = (long long)q - (long long)val - (1 - get_flag(cpu, FLAG_C));
-	set_flag(cpu, FLAG_C, result >= 0);
+	long long result = (long long)q - (long long)val - (1 - cpu->get_flag(FLAG_C));
+	cpu->set_flag(FLAG_C, result >= 0);
 	unsigned int r = (unsigned int)(result & 0xFFFFFFFF);
-	set_flag(cpu, FLAG_V, ((q ^ val) & (q ^ r) & 0x80000000) != 0);
+	cpu->set_flag(FLAG_V, ((q ^ val) & (q ^ r) & 0x80000000) != 0);
 	set_q(cpu, r);
 	update_nz_q(cpu, r);
 	cpu->pc += 2;
@@ -1793,7 +1793,7 @@ static void cmpq_zp_ind_z(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 		cpu->cycles += 9;
 	}
 	unsigned int q = get_q(cpu);
-	set_flag(cpu, FLAG_C, q >= val);
+	cpu->set_flag(FLAG_C, q >= val);
 	update_nz_q(cpu, q - val);
 	cpu->pc += 2;
 }
@@ -2031,7 +2031,7 @@ static void pha_45gs02(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void pla_45gs02(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	stack45_pop(cpu);
 	cpu->a = mem_read(mem, stack45_addr(cpu));
-	update_nz(cpu, cpu->a);
+	cpu->update_nz(cpu->a);
 	cpu->cycles += 4;
 	cpu->pc += 1;
 }
@@ -2053,7 +2053,7 @@ static void phx_45gs02(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void plx_45gs02(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	stack45_pop(cpu);
 	cpu->x = mem_read(mem, stack45_addr(cpu));
-	update_nz(cpu, cpu->x);
+	cpu->update_nz(cpu->x);
 	cpu->cycles += 4;
 	cpu->pc += 1;
 }
@@ -2068,7 +2068,7 @@ static void phy_45gs02(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 static void ply_45gs02(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	stack45_pop(cpu);
 	cpu->y = mem_read(mem, stack45_addr(cpu));
-	update_nz(cpu, cpu->y);
+	cpu->update_nz(cpu->y);
 	cpu->cycles += 4;
 	cpu->pc += 1;
 }
@@ -2080,10 +2080,10 @@ static void brk_45gs02(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	stack45_push(cpu);
 	mem_write(mem, stack45_addr(cpu), cpu->pc & 0xFF);
 	stack45_push(cpu);
-	set_flag(cpu, FLAG_B, 1);
+	cpu->set_flag(FLAG_B, 1);
 	mem_write(mem, stack45_addr(cpu), cpu->p);
 	stack45_push(cpu);
-	set_flag(cpu, FLAG_I, 1);
+	cpu->set_flag(FLAG_I, 1);
 }
 
 static void rti_45gs02(cpu_t *cpu, memory_t *mem, unsigned short arg) {

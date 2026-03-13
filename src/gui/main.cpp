@@ -107,7 +107,7 @@ static uint32_t g_main_dockspace_id  = 0;
  * -------------------------------------------------------------------------- */
 
 /* Register diff — snapshot CPU before each sim_step call */
-static cpu_t g_prev_cpu       = {};
+static CPUState g_prev_cpu     = {};
 static bool  g_prev_cpu_valid = false;
 
 /* Registers pane */
@@ -4037,7 +4037,7 @@ static void draw_pane_registers(void)
     }
 
     bool is_45gs02 = (sim_get_cpu_type(g_sim) == CPU_45GS02);
-    cpu_t *prev    = g_prev_cpu_valid ? &g_prev_cpu : NULL;
+    CPUState *prev    = g_prev_cpu_valid ? &g_prev_cpu : NULL;
 
     /* Expand/Compact toggle button — right-aligned */
     {

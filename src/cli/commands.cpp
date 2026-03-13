@@ -1,5 +1,6 @@
 #include "commands.h"
 #include "cpu_engine.h"
+#include "opcodes/opcodes.h"
 #include "condition.h"
 #include "device/vic2.h"
 #include "device/sid_io.h"
@@ -29,7 +30,7 @@ void json_inspect_result(const char *name, uint16_t pc, IOHandler *h, memory_t *
  * -------------------------------------------------------------------------- */
 #define CLI_HIST_CAP 1024
 typedef struct {
-    cpu_t pre_cpu;
+    CPUState pre_cpu;
     uint16_t pc;
     uint16_t delta_addr[16];
     uint8_t  delta_old[16];
@@ -41,7 +42,7 @@ static int s_cli_hist_write = 0;
 static int s_cli_hist_count = 0;
 static int s_cli_hist_pos   = 0;
 
-void cli_hist_push(const cpu_t *pre, const memory_t *mem) {
+void cli_hist_push(const CPUState *pre, const memory_t *mem) {
     if (s_cli_hist_pos > 0) {
         s_cli_hist_write = (s_cli_hist_write - s_cli_hist_pos + CLI_HIST_CAP) % CLI_HIST_CAP;
         s_cli_hist_count -= s_cli_hist_pos;
@@ -245,7 +246,7 @@ static int cli_diff_cmp(const void *a, const void *b) { return (int)((cli_diff_t
 /* --------------------------------------------------------------------------
  * Validate command
  * -------------------------------------------------------------------------- */
-static void cmd_validate(const char *line, cpu_t *cpu, memory_t *mem, const dispatch_table_t *dt, cpu_type_t *p_cpu_type, breakpoint_list_t *breakpoints, symbol_table_t *symbols) {
+static void cmd_validate(const char *line, cpu_t *cpu, memory_t *mem, cpu_type_t *p_cpu_type, breakpoint_list_t *breakpoints, symbol_table_t *symbols) {
     const char *p = line;
     while (*p && !isspace((unsigned char)*p)) p++; 
     while (*p && isspace((unsigned char)*p)) p++;
@@ -315,7 +316,7 @@ static void cmd_validate(const char *line, cpu_t *cpu, memory_t *mem, const disp
         if (tr > 0) continue;
         unsigned char opc = mem_read(mem, cpu->pc);
         if (opc == 0x00) { stop = "brk"; break; }
-        const dispatch_entry_t *te = peek_dispatch(cpu, mem, dt, *p_cpu_type);
+        const dispatch_entry_t *te = peek_dispatch(cpu, mem, static_cast<CPU*>(cpu)->dispatch_table(), *p_cpu_type);
         if (te && te->mnemonic && strcmp(te->mnemonic, "STP") == 0) { stop = "stp"; break; }
         if (breakpoint_hit(breakpoints, cpu)) { stop = "bp"; break; }
         static_cast<CPU*>(cpu)->step();
@@ -353,11 +354,10 @@ static std::vector<std::string> split_line(const std::string& line) {
     return args;
 }
 
-static bool process_single_command(const std::string& line, 
+static bool process_single_command(const std::string& line,
                                   CommandRegistry& registry,
                                   CPU *cpu, memory_t *mem,
-                                  opcode_handler_t **p_handlers, int *p_num_handlers,
-                                  cpu_type_t *p_cpu_type, dispatch_table_t *dt,
+                                  cpu_type_t *p_cpu_type,
                                   breakpoint_list_t *breakpoints,
                                   symbol_table_t *symbols) {
     std::vector<std::string> args = split_line(line);
@@ -378,7 +378,7 @@ static bool process_single_command(const std::string& line,
     const std::string& cmd = args[0];
     CLICommand* command = registry.getCommand(cmd);
     if (command) {
-        return command->execute(args, cpu, mem, p_handlers, p_num_handlers, p_cpu_type, dt, breakpoints, symbols);
+        return command->execute(args, cpu, mem, p_cpu_type, cpu->dispatch_table(), breakpoints, symbols);
     }
 
     if (cmd == "quit" || cmd == "exit") return false;
@@ -404,10 +404,10 @@ static bool process_single_command(const std::string& line,
             mem->mem_writes = 0;
             int tr = handle_trap_local(symbols, cpu, mem); if (tr < 0) { stop_reason = "trap"; break; } if (tr > 0) continue;
             unsigned char opc = mem_read(mem, cpu->pc); if (opc == 0x00) { stop_reason = "brk"; break; }
-            const dispatch_entry_t *te = peek_dispatch(cpu, mem, dt, *p_cpu_type);
+            const dispatch_entry_t *te = peek_dispatch(cpu, mem, cpu->dispatch_table(), *p_cpu_type);
             if (te->mnemonic && strcmp(te->mnemonic, "STP") == 0) { stop_reason = "stp"; break; }
             if (breakpoint_hit(breakpoints, cpu)) { stop_reason = "breakpoint"; break; }
-            cpu_t pre = *cpu;
+            CPUState pre = *cpu;
             cpu->step();
             if (mem->io_registry) mem->io_registry->tick_all(cpu->cycles);
             cli_hist_push(&pre, mem);
@@ -454,11 +454,16 @@ static bool process_single_command(const std::string& line,
         else list_processors();
     } else if (cmd == "processor") {
         char type[16]; if (sscanf(line.c_str(), "%*s %15s", type) == 1) {
-            if      (strcmp(type, "6502") == 0)   { *p_handlers = opcodes_6502;   *p_num_handlers = OPCODES_6502_COUNT;   *p_cpu_type = CPU_6502; }
-            else if (strcmp(type, "65c02") == 0)  { *p_handlers = opcodes_65c02;  *p_num_handlers = OPCODES_65C02_COUNT;  *p_cpu_type = CPU_65C02; }
-            else if (strcmp(type, "65ce02") == 0) { *p_handlers = opcodes_65ce02; *p_num_handlers = OPCODES_65CE02_COUNT; *p_cpu_type = CPU_65CE02; }
-            else if (strcmp(type, "45gs02") == 0) { *p_handlers = opcodes_45gs02; *p_num_handlers = OPCODES_45GS02_COUNT; *p_cpu_type = CPU_45GS02; }
-            dispatch_build(dt, *p_handlers, *p_num_handlers, *p_cpu_type);
+            if      (strcmp(type, "6502") == 0)   *p_cpu_type = CPU_6502;
+            else if (strcmp(type, "65c02") == 0)  *p_cpu_type = CPU_65C02;
+            else if (strcmp(type, "65ce02") == 0) *p_cpu_type = CPU_65CE02;
+            else if (strcmp(type, "45gs02") == 0) *p_cpu_type = CPU_45GS02;
+            dispatch_table_t *dt = cpu->dispatch_table();
+            memset(dt, 0, sizeof(dispatch_table_t));
+            dispatch_build(dt, opcodes_6502,   OPCODES_6502_COUNT,   *p_cpu_type);
+            if (*p_cpu_type >= CPU_65C02)  dispatch_build(dt, opcodes_65c02,   OPCODES_65C02_COUNT,   *p_cpu_type);
+            if (*p_cpu_type >= CPU_65CE02) dispatch_build(dt, opcodes_65ce02,  OPCODES_65CE02_COUNT,  *p_cpu_type);
+            if (*p_cpu_type >= CPU_45GS02) dispatch_build(dt, opcodes_45gs02,  OPCODES_45GS02_COUNT,  *p_cpu_type);
             if (g_json_mode) json_ok("processor"); else printf("Processor: %s\n", type);
         }
     } else if (cmd == "sid.info") {
@@ -550,12 +555,12 @@ static bool process_single_command(const std::string& line,
             }
         }
     } else if (cmd == "validate") {
-        cmd_validate(line.c_str(), cpu, mem, dt, p_cpu_type, breakpoints, symbols);
+        cmd_validate(line.c_str(), cpu, mem, p_cpu_type, breakpoints, symbols);
     } else if (cmd == "disasm") {
         const char *p = line.c_str(); SKIP_CMD(p); unsigned long tmp;
         unsigned short daddr = parse_mon_value(&p, &tmp) ? (unsigned short)tmp : cpu->pc;
         int dcount = parse_mon_value(&p, &tmp) ? (int)tmp : 15;
-        char dbuf[80]; for (int i = 0; i < dcount; i++) { int consumed = disasm_one(mem, dt, *p_cpu_type, daddr, dbuf, sizeof(dbuf)); printf("%s\n", dbuf); daddr = (unsigned short)(daddr + consumed); }
+        char dbuf[80]; for (int i = 0; i < dcount; i++) { int consumed = disasm_one(mem, cpu->dispatch_table(), *p_cpu_type, daddr, dbuf, sizeof(dbuf)); printf("%s\n", dbuf); daddr = (unsigned short)(daddr + consumed); }
     } else {
         if (!g_json_mode) printf("Unknown command: %s\n", cmd.c_str());
     }
@@ -564,8 +569,7 @@ static bool process_single_command(const std::string& line,
 }
 
 void run_interactive_mode(cpu_t *cpu, memory_t *mem,
-                                 opcode_handler_t **p_handlers, int *p_num_handlers,
-                                 cpu_type_t *p_cpu_type, dispatch_table_t *dt,
+                                 cpu_type_t *p_cpu_type,
                                  unsigned short start_addr, breakpoint_list_t *breakpoints,
                                  symbol_table_t *symbols,
                                  const std::vector<std::string>& initial_cmds) {
@@ -574,15 +578,16 @@ void run_interactive_mode(cpu_t *cpu, memory_t *mem,
     CommandRegistry registry;
     setvbuf(stdout, NULL, _IONBF, 0);
 
+    CPU *cpu_obj = static_cast<CPU*>(cpu);
     for (const auto& line : initial_cmds) {
-        if (!process_single_command(line, registry, static_cast<CPU*>(cpu), mem, p_handlers, p_num_handlers, p_cpu_type, dt, breakpoints, symbols))
+        if (!process_single_command(line, registry, cpu_obj, mem, p_cpu_type, breakpoints, symbols))
             return;
     }
 
     if (!g_json_mode) printf("6502 Simulator Interactive Mode\nType 'help' for commands.\n");
     while (1) {
         printf("> "); if (!fgets(line_buf, sizeof(line_buf), stdin)) break;
-        if (!process_single_command(line_buf, registry, static_cast<CPU*>(cpu), mem, p_handlers, p_num_handlers, p_cpu_type, dt, breakpoints, symbols))
+        if (!process_single_command(line_buf, registry, cpu_obj, mem, p_cpu_type, breakpoints, symbols))
             break;
     }
 }
@@ -603,22 +608,34 @@ void print_help(const char *progname) {
            "  -S, --speed <SCALE>  Execution speed (default 1.0 = C64 PAL, 0.0 = unlimited)\n"
            "  -a <ADDR> Start address (default $0200)\n"
            "  -m <RANGE> Show memory dump (e.g., -m $0200:$0210)\n"
-           "  --debug   Enable verbose instruction logging\n\n"
+           "  --debug   Enable verbose instruction logging\n"
+           "  -vv       Enable loader/init debug output\n"
+           "  -vvv      Enable per-instruction trace (implies --debug)\n\n"
            "Testing:\n"
            "  ./sim6502 -a $0200 tests/6502_basic.asm\n"
            "  ./sim6502 -m $0200:$0210 tests/pseudoops_text_align.asm\n");
 }
 
-void print_opcode_info(opcode_handler_t *handlers, int num_handlers, const char *mnemonic) {
+void print_opcode_info(cpu_type_t cpu_type, const char *mnemonic) {
     char mnem_upper[16]; int mi = 0;
     for (; mi < 15 && mnemonic[mi]; mi++) mnem_upper[mi] = (char)toupper((unsigned char)mnemonic[mi]);
     mnem_upper[mi] = '\0';
     if (!g_json_mode) printf("%-6s  %-20s  %-12s  %-10s  %s\n", "MNEM", "MODE", "SYNTAX", "CYCLES", "OPCODE");
-    for (int i = 0; i < num_handlers; i++) {
-        if (strcasecmp(handlers[i].mnemonic, mnemonic) != 0 || handlers[i].opcode_len == 0) continue;
-        char opbytes[16] = "";
-        for (int j = 0; j < handlers[i].opcode_len; j++) { char tmp[8]; snprintf(tmp, sizeof(tmp), j > 0 ? " %02X" : "%02X", handlers[i].opcode_bytes[j]); strncat(opbytes, tmp, sizeof(opbytes) - strlen(opbytes) - 1); }
-        if (g_json_mode) printf("{\"mnemonic\":\"%s\",\"opcode\":\"%s\"}\n", mnem_upper, opbytes);
-        else printf("%-6s  %-20s  %-12s  %d      %s\n", mnem_upper, "mode", "syntax", handlers[i].cycles_6502, opbytes);
+
+    struct { opcode_handler_t *h; int n; } tables[] = {
+        { opcodes_6502,   OPCODES_6502_COUNT },
+        { (cpu_type >= CPU_65C02)  ? opcodes_65c02   : nullptr, (cpu_type >= CPU_65C02)  ? OPCODES_65C02_COUNT  : 0 },
+        { (cpu_type >= CPU_65CE02) ? opcodes_65ce02  : nullptr, (cpu_type >= CPU_65CE02) ? OPCODES_65CE02_COUNT : 0 },
+        { (cpu_type >= CPU_45GS02) ? opcodes_45gs02  : nullptr, (cpu_type >= CPU_45GS02) ? OPCODES_45GS02_COUNT : 0 },
+    };
+    for (auto& t : tables) {
+        if (!t.h) continue;
+        for (int i = 0; i < t.n; i++) {
+            if (strcasecmp(t.h[i].mnemonic, mnemonic) != 0 || t.h[i].opcode_len == 0) continue;
+            char opbytes[16] = "";
+            for (int j = 0; j < t.h[i].opcode_len; j++) { char tmp[8]; snprintf(tmp, sizeof(tmp), j > 0 ? " %02X" : "%02X", t.h[i].opcode_bytes[j]); strncat(opbytes, tmp, sizeof(opbytes) - strlen(opbytes) - 1); }
+            if (g_json_mode) printf("{\"mnemonic\":\"%s\",\"opcode\":\"%s\"}\n", mnem_upper, opbytes);
+            else printf("%-6s  %-20s  %-12s  %d      %s\n", mnem_upper, mode_name(t.h[i].mode), mnem_upper, t.h[i].cycles_6502, opbytes);
+        }
     }
 }

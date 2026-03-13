@@ -6,12 +6,11 @@
 extern bool g_json_mode;
 
 bool EnvCmd::execute(const std::vector<std::string>& args,
-                    CPU *cpu, memory_t *mem, 
-                    opcode_handler_t **p_handlers, int *p_num_handlers,
+                    CPU *cpu, memory_t *mem,
                     cpu_type_t *p_cpu_type, dispatch_table_t *dt,
                     breakpoint_list_t *breakpoints,
                     symbol_table_t *symbols) {
-    (void)cpu; (void)mem; (void)symbols; (void)dt; (void)p_handlers; (void)p_num_handlers; (void)p_cpu_type; (void)breakpoints;
+    (void)cpu; (void)mem; (void)symbols; (void)dt; (void)p_cpu_type; (void)breakpoints;
 
     if (args.size() < 2 || args[1] == "help") {
         if (g_json_mode) {

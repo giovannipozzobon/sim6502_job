@@ -1,7 +1,7 @@
 #include "cpu_engine.h"
 #include <stdio.h>
 
-unsigned short decode_operand(cpu_t *cpu, memory_t *mem, unsigned char mode) {
+unsigned short decode_operand(CPUState *cpu, memory_t *mem, unsigned char mode) {
 	switch (mode) {
 	case MODE_IMPLIED: return 0;
 	case MODE_IMMEDIATE: case MODE_ZP: case MODE_ZP_X: case MODE_ZP_Y:
@@ -18,7 +18,7 @@ unsigned short decode_operand(cpu_t *cpu, memory_t *mem, unsigned char mode) {
 	}
 }
 
-void execute_from_mem(cpu_t *cpu, memory_t *mem, const dispatch_table_t *dt, cpu_type_t cpu_type) {
+void execute_from_mem(CPU *cpu, memory_t *mem, const dispatch_table_t *dt, cpu_type_t cpu_type) {
 	unsigned char byte0 = mem_read(mem, cpu->pc);
 	if (cpu_type == CPU_45GS02 && byte0 == 0x42) {
 		unsigned char byte1 = mem_read(mem, (unsigned short)(cpu->pc + 1));
@@ -42,9 +42,9 @@ void execute_from_mem(cpu_t *cpu, memory_t *mem, const dispatch_table_t *dt, cpu
 	}
 	cpu->eom_prefix = (cpu->eom_prefix == 1) ? 2 : 0;
 	const dispatch_entry_t *e = &dt->base[byte0];
-	if (!e->fn) { 
+	if (!e->fn) {
 		if (cpu->debug) fprintf(stderr, "[DEBUG] No handler for opcode $%02X at $%04X (CPU type %d)\n", byte0, cpu->pc, (int)cpu_type);
-		cpu->pc++; return; 
+		cpu->pc++; return;
 	}
 	if (cpu->debug) fprintf(stderr, "[DEBUG] Executing opcode $%02X at $%04X (%s)\n", byte0, cpu->pc, e->mnemonic);
 	unsigned short arg = decode_operand(cpu, mem, e->mode); e->fn(cpu, mem, arg);

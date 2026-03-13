@@ -9,6 +9,7 @@
 #include <stddef.h>
 #include "cpu.h"
 #include "memory.h"
+#include "machine.h"
 
 /* --------------------------------------------------------------------------
  * Execution state machine
@@ -57,7 +58,7 @@ void sim_reset(sim_session_t *s);
 int sim_disassemble_one(sim_session_t *s, uint16_t addr, char *buf, size_t len);
 
 /* State inspection */
-cpu_t *sim_get_cpu(sim_session_t *s);
+CPU *sim_get_cpu(sim_session_t *s);
 const memory_t *sim_get_memory(sim_session_t *s);
 uint8_t sim_mem_read_byte(sim_session_t *s, uint16_t addr);
 void    sim_mem_write_byte(sim_session_t *s, uint16_t addr, uint8_t val);
@@ -103,7 +104,7 @@ int sim_sym_load_file(sim_session_t *s, const char *path);
 typedef struct {
     uint16_t pc;
     char     disasm[64];
-    cpu_t    cpu;
+    CPUState cpu;
     int      cycles_delta;
 } sim_trace_entry_t;
 
@@ -123,7 +124,7 @@ int sim_get_last_writes(sim_session_t *s, uint16_t *addrs, int max_count);
 /* History */
 #define SIM_HIST_DEFAULT_DEPTH (1 << 17)
 typedef struct {
-    cpu_t    pre_cpu;
+    CPUState pre_cpu;
     uint16_t pc;
     uint8_t  delta_count;
     uint16_t delta_addr[16];

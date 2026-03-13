@@ -1,4 +1,5 @@
 #include "disassembler.h"
+#include "opcodes/opcodes.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -30,7 +31,7 @@ void dispatch_build(dispatch_table_t *dt,
 		           handlers[i].opcode_bytes[2] == 0xEA) {
 			slot = &dt->quad_eom[key];
 		}
-		if (slot && !slot->fn) {
+		if (slot) {
 			slot->fn       = handlers[i].fn;
 			slot->mode     = handlers[i].mode;
 			slot->mnemonic = handlers[i].mnemonic;
@@ -39,7 +40,7 @@ void dispatch_build(dispatch_table_t *dt,
 	}
 }
 
-const dispatch_entry_t *peek_dispatch(const cpu_t *cpu, const memory_t *mem,
+const dispatch_entry_t *peek_dispatch(const CPUState *cpu, const memory_t *mem,
 		const dispatch_table_t *dt, cpu_type_t cpu_type) {
 	unsigned char byte0 = mem_read((memory_t *)mem, cpu->pc);
 	if (cpu_type == CPU_45GS02 && byte0 == 0x42) {
