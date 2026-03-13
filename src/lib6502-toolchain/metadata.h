@@ -19,6 +19,12 @@ int load_prg(memory_t *mem, const char *filename, int *out_load_addr);
    If out_load_addr is non-NULL, receives the PRG load address. */
 bool load_toolchain_bundle(memory_t *mem, symbol_table_t *st, source_map_t *sm, const char *base_path, int *out_load_addr);
 
+/* Load companion annotation files (.list, .sym, .sym_add) for a base path.
+   Useful when a .prg/.bin was loaded directly and companion files should
+   still be applied.  base_path must have the extension already stripped.
+   .sym_add accepts both KickAssembler symbol format and SIM_INSPECT/SIM_TRAP lines. */
+void load_companion_files(symbol_table_t *st, source_map_t *sm, const char *base_path);
+
 #ifdef __cplusplus
 }
 #endif

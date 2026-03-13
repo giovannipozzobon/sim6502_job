@@ -252,6 +252,15 @@ int sim_load_prg(sim_session_t *s, const char *path, uint16_t override_addr)
     fclose(f);
     binary_load_common(s, load_addr, n);
     strncpy(s->filename, path, sizeof(s->filename) - 1);
+
+    /* Load companion annotation files (.list, .sym, .stdout) if present */
+    char base[512];
+    strncpy(base, path, sizeof(base) - 1);
+    base[sizeof(base) - 1] = 0;
+    char *dot = strrchr(base, '.');
+    if (dot) *dot = 0;
+    load_companion_files(&s->symbols, &s->source_map, base);
+
     return 0;
 }
 

@@ -124,19 +124,17 @@ The **Run** menu contains a **Throttle Speed** toggle and a scale slider:
 
 ## File Structure
 
-The project is organized into modular C++ components:
+The engine is split into focused static libraries linked into `libsim6502.a`:
 
-- **Core Engine** (`src/core/`):
-    - `cpu.h`: Abstract `CPU` base class and `CPUState` for register management.
-    - `cpu_6502.cpp`: Implementation of specific CPU variants (6502, 65C02, 45GS02).
-    - `memory.h`: Memory bus logic, including MEGA65 DMA and Math Coprocessor.
-    - `opcodes/`: Opcode implementations segregated by processor variant.
-- **CLI Frontend** (`src/cli/`):
-    - `main.cpp`: CLI entry point.
-    - `commands/`: Command Pattern implementation for interactive monitor commands.
-- **GUI Frontend** (`src/gui/`):
-    - `main.cpp`: Main application loop and GUI orchestration.
-    - `panes/`: (In Progress) Individual UI component implementations.
+- **`src/lib6502-core/`**: CPU engine and opcode handlers (dispatch loop, register model, all processor variants).
+- **`src/lib6502-mem/`**: Memory subsystem — 64KB flat memory, sparse 28-bit far memory, MAP translation, I/O device registry, IRQ/NMI.
+- **`src/lib6502-devices/`**: Hardware device emulation — VIC-II, SID, CIA, MEGA65 I/O, audio output.
+- **`src/lib6502-toolchain/`**: Source-level tools — KickAssembler auto-assembly and pseudo-op preprocessing, symbol table, list parser, disassembler, snippet library, project scaffolding.
+- **`src/lib6502-debug/`**: Debugging infrastructure — execution history, step-back/forward, breakpoints, conditional expression evaluator, trace ring buffer, snapshot/diff.
+- **`src/sim_api.cpp/h`**: Public C API consumed by both the CLI and GUI.
+- **`src/cli/`**: CLI entry point and Command Pattern commands.
+- **`src/gui/`**: Dear ImGui graphical debugger application.
+- **`src/mcp/`**: Node.js MCP server for LLM integration.
 
 ---
 

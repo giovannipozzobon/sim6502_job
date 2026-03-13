@@ -1,6 +1,6 @@
 # 6502 Simulator
 
-A two-pass assembler and executor for 6502 and compatible processors, with an interactive monitor, symbol table support, a Dear ImGui-based graphical debugger, and an MCP server for LLM integration.
+An assembler-based executor for 6502 and compatible processors, with an interactive monitor, symbol table support, a Dear ImGui-based graphical debugger, and an MCP server for LLM integration. Assembly is handled by the embedded [KickAssembler](https://theweb.dk/KickAssembler/) (65CE02/45GS02 fork), enabling full macro support and rich diagnostic output.
 
 For a full walkthrough of all features, see **[doc/tutorial.md](doc/tutorial.md)**.
 For detailed information on the graphical debugger, see **[README-gui.md](README-gui.md)**.
@@ -48,11 +48,17 @@ Help with this development by contributing and buy me coffee at: https://kodecof
 
 ### Assembler
 
-The simulator includes an integrated assembler that runs before execution:
+Assembly is performed by **KickAssembler** (`tools/KickAss65CE02.jar`) — a 65CE02/45GS02-extended fork of the standard KickAssembler v5.24. Java 8+ is required.
 
-- **Forward label references** resolved in the second pass.
-- **All literal formats**: `$FF` hex, `%10101010` binary, `'A'` character, `123` decimal.
-- **Detailed Pseudo-ops**: `.processor`, `.org`, `.byte`, `.word`, `.text`, `.align`, `.bin`.
+Key syntax conventions:
+- **Comments**: `//` single-line; `/* */` block.
+- **Origin**: `* = $0200`
+- **CPU selection**: `.cpu _45gs02`, `.cpu _65ce02`, `.cpu _65c02`, `.cpu _6502`
+- **Mnemonics**: lowercase (`lda`, `sta`, `jsr`, …)
+- **Pseudo-ops**: `.byte`, `.word`, `.text`, `.align`, `.fill`, `.import`; KickAssembler macros and functions are supported.
+- **Simulator pseudo-ops**: Embedded in `//` comments so files assemble cleanly without the simulator; see [Simulator Pseudo-ops](#simulator-pseudo-ops) below.
+
+When the simulator loads a `.asm` file with no corresponding `.prg`, it auto-assembles via KickAssembler and caches the result.
 
 ### Debugger / Monitor
 
@@ -154,8 +160,10 @@ make clean    # remove object files and binaries
 ### Requirements
 
 - **CLI**: G++ (C++17 or later), GNU Make.
-- **GUI**: G++ (C++17 or later), `libsdl2-dev`, `libgl-dev`, `pkg-config`. 
+- **Assembler**: Java 8+ (for `tools/KickAss65CE02.jar`).
+- **GUI**: G++ (C++17 or later), `libsdl2-dev`, `libgl-dev`, `pkg-config`.
   - *Note: Dear ImGui is automatically fetched from GitHub on first `make gui`.*
+- **MCP Server**: Node.js 16+ (`cd src/mcp && npm install` before first use).
 
 ---
 
@@ -229,61 +237,61 @@ Execution stops at a `BRK` instruction, `STP`, a breakpoint, or after 100 000 cy
 
 ## Assembler Syntax
 
+Source files use **KickAssembler** syntax (65CE02/45GS02 fork). Mnemonics must be **lowercase**.
+
+### CPU Selection and Origin
+
+```asm
+.cpu _45gs02        // select processor (at top of file)
+* = $0200           // set program counter origin
+```
+
+Accepted CPU identifiers: `_6502`, `_65c02`, `_65ce02`, `_45gs02`.
+
+### Comments
+
+```asm
+lda #$42        // single-line comment
+/* block
+   comment */
+```
+
 ### Equates
 
 ```asm
-SCREEN  = $0400     ; define a named constant
+SCREEN  = $0400     // named constant
 COLOUR  = $D800
 ```
 
-`NAME = VALUE` equates are resolved before instructions are assembled. The value can be any literal format.
-
-### Local Labels
-
-Labels starting with `.` are local and are intended for use within a single routine:
+### Labels
 
 ```asm
-mul_loop:
-    LSR FACTOR_B
-    BCC .skip
-    ADC FACTOR_A
-.skip:
-    DEX
-    BNE mul_loop
+loop:               // global label
+    dex
+    bne loop
 ```
-
-Local labels do not need to be unique across the file.
 
 ### Literal Formats
 
 ```asm
-LDA #$FF        ; hex
-LDA #%11111111  ; binary
-LDA #'A'        ; character (ASCII 65)
-LDA #255        ; decimal
+lda #$FF        // hex
+lda #%11111111  // binary
+lda #'A'        // character (ASCII 65)
+lda #255        // decimal
 ```
-
-All four formats work everywhere a value is expected: immediate operands, addresses, and pseudo-op arguments.
 
 ### Pseudo-ops
 
-#### `.processor <variant>`
-Select the processor before assembly begins. This may appear anywhere in the file and takes effect immediately.
+#### `* = <addr>`
+Set the program counter to an absolute address.
 ```asm
-.processor 45gs02
-```
-Accepted values: `6502`, `6502 undoc`, `65c02`, `65ce02`, `45gs02`.
-
-#### `.org <addr>`
-Set the program counter to an absolute address for following code or data.
-```asm
-.org $C000
+* = $C000
 ```
 
 #### `.byte <val>[, <val>…]`
 Emit one or more bytes. Accepts all literal formats and label names (emits the low byte of the label address).
 ```asm
-.byte $48, 'e', 108, %01101100, 'o'   ; "Hello"
+.byte $48, $65, $6C, $6C, $6F   // "Hello"
 ```
 
 #### `.word <val>[, <val>…]`
@@ -294,22 +302,58 @@ vectors:
 ```
 
 #### `.text "string"`
-Emit raw string bytes. No implicit null terminator is added. Supports escape sequences `\n \r \t \0 \\ \"`.
+Emit raw string bytes with no null terminator.
 ```asm
 message: .text "Hello, World!\n"
 ```
 
 #### `.align <n>`
-Advance the PC to the next multiple of `n`, padding with zero bytes. Useful for page alignment.
+Advance the PC to the next multiple of `n`, padding with zero bytes.
 ```asm
-.align 256      ; align to a page boundary
+.align $100     // page-align
 ```
 
-#### `.bin "filename"`
-Include a raw binary file at the current PC. The file is read in both passes to ensure labels following the binary are correctly resolved.
+### Simulator Pseudo-ops
+
+Simulator pseudo-ops are embedded as `//` comments so that the `.asm` file can be assembled directly by KickAssembler without errors. When the simulator loads the file it preprocesses these lines into KickAssembler `.print` statements that emit the resolved address to stdout, which the simulator captures to register the pseudo-op at the correct run-time address.
+
+#### `//.inspect "device"`
+When execution reaches this address, the simulator displays state for the named device.
 ```asm
-sprite_data: .bin "assets/sprite.bin"
+    sta $D401           // write note frequency hi byte
+    //.inspect "SID #1" // show SID state at the next instruction
+    lda #20
+    jsr wait_frames
 ```
+
+#### `//.trap "label"`
+When a `JSR` targets this address, the simulator logs the call and simulates an immediate `RTS` (useful for intercepting Kernal/ROM calls without loading ROM).
+```asm
+CHROUT = $FFD2
+    //.trap "CHROUT"
+```
+
+#### `.sym_add` companion files
+
+For programs loaded directly as `.prg` or `.bin` (built by any assembler), a `.sym_add` file with the same base name can carry supplemental annotations. The simulator loads it automatically alongside `.sym` and `.list`.
+
+A `.sym_add` file may contain **either or both** of the following formats on any line:
+
+```
+; KickAssembler symbol format
+.label sid_freq_hi=$0222
+
+; Simulator pseudo-op markers (same format emitted by KickAssembler stdout)
+SIM_INSPECT:0222:SID #1
+SIM_TRAP:FFD2:CHROUT
+```
+
+Produce a `.sym_add` from a KickAssembler build by redirecting stdout:
+```bash
+java -jar tools/KickAss65CE02.jar prog.asm -symbolfile -o prog.prg > prog.sym_add
+```
+
+This allows any external toolchain to annotate `.prg`/`.bin` files with `.inspect` and `.trap` metadata without requiring re-assembly through the simulator.
 
 ---
 
@@ -385,6 +429,18 @@ Example: `break $C000 (A & $40) != 0 && .Z == 1`
 
 Load with `--preset <name>`: `c64`, `c128`, `mega65`, `x16`.
 
+### Companion Files
+
+When any program is loaded the simulator looks for side-files sharing the same base name:
+
+| Extension | Contents | Purpose |
+|-----------|----------|---------|
+| `.sym` | KickAssembler symbol file | Labels and constants |
+| `.list` | ACME-format listing | Source-to-address map |
+| `.sym_add` | Supplemental annotations | Additional symbols **and/or** `SIM_INSPECT:`/`SIM_TRAP:` lines |
+
+`.sym_add` is useful for `.prg`/`.bin` files produced outside the simulator — place it next to the binary and the simulator picks it up automatically on load.
+
 ### TRAP Symbols
 
 TRAPs simulate Kernal/ROM routines without requiring the actual ROM to be loaded. When a `JSR` to a TRAP address is encountered:
@@ -396,7 +452,7 @@ TRAPs simulate Kernal/ROM routines without requiring the actual ROM to be loaded
 
 ## MCP Server
 
-`mcp-server/server.js` is a Node.js MCP server that exposes the simulator to LLMs, allowing AI assistants to write, debug, and execute 6502 assembly code directly.
+`src/mcp/index.js` is a Node.js MCP server that exposes the simulator to LLMs, allowing AI assistants to write, debug, and execute 6502 assembly code directly.
 
 ### MCP Tools
 
@@ -438,21 +494,41 @@ TRAPs simulate Kernal/ROM routines without requiring the actual ROM to be loaded
 
 ## File Structure
 
-- `src/core/`: The simulator engine.
-    - `cpu.h`: Base CPU and Memory state classes.
-    - `cpu_6502.cpp/h`: Specialized CPU classes and instruction dispatch.
-    - `memory.h`: Bus logic, Math coprocessor, and DMA controller.
-    - `opcodes/`: Instruction set implementations.
-    - `assembler.cpp`, `disassembler.cpp`, `patterns.cpp`.
+The engine is split into focused static libraries that are linked into a single `libsim6502.a`:
+
+- `src/lib6502-core/`: CPU engine and instruction sets.
+    - `cpu_engine.cpp/h`: Dispatch loop and CPU lifecycle.
+    - `cpu_6502.cpp/h`: Register model and addressing-mode helpers.
+    - `cpu_state.h`, `cpu_types.h`, `cpu_observer.h`, `machine.h`, `cycles.h`, `dispatch.h`.
+    - `opcodes/`: Per-variant opcode handlers (`6502.cpp`, `65c02.cpp`, `65ce02.cpp`, `45gs02.cpp`, `6502_undoc.cpp`).
+- `src/lib6502-mem/`: Memory subsystem.
+    - `memory.cpp/h`: 64KB + sparse 28-bit far memory, MAP translation, write logging.
+    - `io_handler.h`, `io_registry.h`: I/O device registration and dispatch.
+    - `interrupts.cpp/h`: IRQ/NMI handling.
+- `src/lib6502-devices/`: Hardware device emulation.
+    - `audio.cpp/h`: SID audio output.
+    - `device/`: VIC-II, SID I/O, CIA, MEGA65 I/O device implementations.
+- `src/lib6502-toolchain/`: Source-level tools.
+    - `metadata.cpp/h`: `.prg`/`.bin`/`.asm` loading, KickAssembler auto-assembly, simulator pseudo-op preprocessing, `.sym_add` companion file loading.
+    - `symbols.cpp/h`: Symbol table (labels, constants, `SYM_INSPECT`, `SYM_TRAP`).
+    - `list_parser.cpp/h`: Source-map and ACME-list parsing.
+    - `disassembler.cpp/h`: Disassembly for all processor variants.
+    - `patterns.cpp/h`: Built-in assembly snippet library.
+    - `project_manager.cpp/h`: Template-based project scaffolding.
+- `src/lib6502-debug/`: Debugging infrastructure.
+    - `debug_context.cpp/h`: Execution history, step-back/forward, snapshot/diff.
+    - `breakpoints.h`, `condition.cpp/h`: Breakpoint management and expression evaluator.
+    - `trace.h`, `debug_types.h`: Trace ring buffer and shared type definitions.
+- `src/sim_api.cpp` / `src/sim_api.h`: Public C API consumed by the CLI and GUI.
 - `src/cli/`: Command-line interface and interactive monitor.
     - `main.cpp`: CLI entry point.
     - `commands/`: Individual command classes (Command Pattern).
 - `src/gui/`: Dear ImGui-based graphical debugger.
-- `mcp-server/`: MCP server for LLM integration.
-- `tests/`: Regression test suite (`make test`).
-- `tools/`: Test scripts.
-- `examples/`: Sample assembly programs.
-- `symbols/`: Pre-built symbol tables.
+- `src/mcp/`: MCP server for LLM integration (`index.js`).
+- `tests/`: Regression test suite (KickAssembler `.asm` files; run with `make test`).
+- `tools/`: `run_tests.py`, `test_patterns.py`, `KickAss65CE02.jar`, and helpers.
+- `examples/`: Sample assembly programs (KickAssembler syntax, all assemble directly).
+- `symbols/`: Pre-built symbol tables (C64, C128, MEGA65, X16).
 
 ---
 
@@ -468,4 +544,4 @@ TRAPs simulate Kernal/ROM routines without requiring the actual ROM to be loaded
 
 Proprietary — see `LICENSE`. Will move to open source at a future date.
 
-**Last Updated**: 2026-03-10
+**Last Updated**: 2026-03-13

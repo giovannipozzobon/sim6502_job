@@ -1,6 +1,7 @@
-.processor 45gs02
-LDA #$42
-STA $80
-INC $80
-DEC $80
-BRK
+.cpu _45gs02
+* = $0200
+lda #$42
+sta $80
+inc $80
+dec $80
+brk
