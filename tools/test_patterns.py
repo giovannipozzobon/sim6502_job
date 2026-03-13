@@ -25,6 +25,9 @@ import re
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+MAX_WORKERS = 4
 
 SIM = os.path.join(os.path.dirname(__file__), '..', 'sim6502')
 
@@ -338,8 +341,9 @@ def build_asm(pattern_body, routine_name, setup, result_to_regs, proc="6502"):
 
 
 def run_test(name, desc, setup, result_to_regs, expect_str, extra_flags, body):
+    """Returns (passed: bool, output: str)."""
     label = f"{name}: {desc}"
-    print(f"  {label}...", end=' ', flush=True)
+    out = [f"  {label}..."]
 
     proc = "6502"
     if "-p" in extra_flags:
@@ -361,36 +365,36 @@ def run_test(name, desc, setup, result_to_regs, expect_str, extra_flags, body):
         asm_r = subprocess.run(['java', '-jar', 'tools/KickAss65CE02.jar', tmpname, '-o', prg_name],
                                capture_output=True, text=True, timeout=10)
         if asm_r.returncode != 0:
-            print("FAIL (assembly)")
-            print(f"    stdout: {asm_r.stdout.strip()}")
-            print(f"    stderr: {asm_r.stderr.strip()}")
-            return False
+            out.append("FAIL (assembly)")
+            out.append(f"    stdout: {asm_r.stdout.strip()}")
+            out.append(f"    stderr: {asm_r.stderr.strip()}")
+            return False, '\n'.join(out)
 
         # Run
         r = subprocess.run([SIM] + extra_flags + [prg_name],
                            capture_output=True, text=True, timeout=5)
     except subprocess.TimeoutExpired:
-        print("FAIL (timeout)")
-        return False
+        out.append("FAIL (timeout)")
+        return False, '\n'.join(out)
     finally:
         for f in [tmpname, prg_name]:
             if os.path.exists(f):
                 os.unlink(f)
 
     if r.returncode != 0:
-        print(f"FAIL (exit {r.returncode})")
+        out.append(f"FAIL (exit {r.returncode})")
         if r.stderr:
-            print(f"    stderr: {r.stderr.strip()}")
-        return False
+            out.append(f"    stderr: {r.stderr.strip()}")
+        return False, '\n'.join(out)
 
     # Parse register line from simulator output
     m = re.search(r'Registers: (.*)', r.stdout)
     if not m:
         m = re.search(r'REGS (.*)', r.stdout)
     if not m:
-        print("FAIL (no register output)")
-        print(f"    stdout: {r.stdout[:200]}")
-        return False
+        out.append("FAIL (no register output)")
+        out.append(f"    stdout: {r.stdout[:200]}")
+        return False, '\n'.join(out)
 
     actual_str = m.group(1).strip()
 
@@ -404,14 +408,14 @@ def run_test(name, desc, setup, result_to_regs, expect_str, extra_flags, body):
                   for k in expected if actual.get(k) != expected[k]]
 
     if not mismatches:
-        print("PASS")
-        return True
+        out.append("PASS")
+        return True, '\n'.join(out)
 
-    print("FAIL")
+    out.append("FAIL")
     for reg, exp, got in mismatches:
-        print(f"    {reg}: expected {exp}, got {got}")
-    print(f"    actual: {actual_str}")
-    return False
+        out.append(f"    {reg}: expected {exp}, got {got}")
+    out.append(f"    actual: {actual_str}")
+    return False, '\n'.join(out)
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
@@ -433,11 +437,18 @@ def main():
 
     print("Running pattern tests:")
     passed = failed = 0
-    for name, desc, setup, result_to_regs, expect, flags in TESTS:
-        if run_test(name, desc, setup, result_to_regs, expect, flags, bodies[name]):
-            passed += 1
-        else:
-            failed += 1
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = {
+            executor.submit(run_test, name, desc, setup, result_to_regs, expect, flags, bodies[name]): name
+            for name, desc, setup, result_to_regs, expect, flags in TESTS
+        }
+        for future in as_completed(futures):
+            ok, output = future.result()
+            print(output)
+            if ok:
+                passed += 1
+            else:
+                failed += 1
 
     total = passed + failed
     print(f"\nPattern tests: {passed}/{total} passed.", end='')

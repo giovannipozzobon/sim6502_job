@@ -4,9 +4,13 @@ import subprocess
 import re
 import sys
 import shlex
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+MAX_WORKERS = 4
 
 def run_test(asm_file):
-    print(f"Running test: {asm_file}...", end=" ", flush=True)
+    """Returns (passed: bool, output: str)."""
+    out = [f"Running test: {asm_file}..."]
 
     # Read expectations, FLAGS, and CPU directive from file
     expectations = None
@@ -42,16 +46,16 @@ def run_test(asm_file):
     
     try:
         # We use -symbolfile to generate symbols for the simulator
-        asm_result = subprocess.run(['java', '-jar', 'tools/KickAss65CE02.jar', asm_file, '-symbolfile', '-o', prg_file], 
+        asm_result = subprocess.run(['java', '-jar', 'tools/KickAss65CE02.jar', asm_file, '-symbolfile', '-o', prg_file],
                                    capture_output=True, text=True, timeout=10)
         if asm_result.returncode != 0:
-            print(f"FAIL (assembly error)")
-            print(asm_result.stdout)
-            print(asm_result.stderr)
-            return False
+            out.append("FAIL (assembly error)")
+            out.append(asm_result.stdout)
+            out.append(asm_result.stderr)
+            return False, '\n'.join(out)
     except Exception as e:
-        print(f"FAIL (assembler launch error: {e})")
-        return False
+        out.append(f"FAIL (assembler launch error: {e})")
+        return False, '\n'.join(out)
 
     # Run simulator
     try:
@@ -59,39 +63,39 @@ def run_test(asm_file):
         # Use the assembled PRG
         result = subprocess.run(['./sim6502'] + flags + [prg_file], capture_output=True, text=True, timeout=5)
     except subprocess.TimeoutExpired:
-        print("FAIL (timeout)")
-        return False
-    
+        out.append("FAIL (timeout)")
+        return False, '\n'.join(out)
+
     if result.returncode != 0:
-        print(f"FAIL (return code {result.returncode})")
-        print(result.stderr)
-        return False
+        out.append(f"FAIL (return code {result.returncode})")
+        out.append(result.stderr)
+        return False, '\n'.join(out)
 
     if expectations is None:
-        print("PASS (assembly)")
-        return True
-    
+        out.append("PASS (assembly)")
+        return True, '\n'.join(out)
+
     # Parse actual results
     # First try "Registers: ..." (standard output)
     actual_match = re.search(r'Registers: (.*)', result.stdout)
     if not actual_match:
         # Then try "REGS ..." (45GS02 specific output)
         actual_match = re.search(r'REGS (.*)', result.stdout)
-        
+
     if not actual_match:
-        print("FAIL (could not parse results)")
-        print(result.stdout)
-        return False
-    
+        out.append("FAIL (could not parse results)")
+        out.append(result.stdout)
+        return False, '\n'.join(out)
+
     actual = actual_match.group(1).strip()
-    
+
     # Compare expectations
     def parse_regs(s):
         return dict(re.findall(r'(\w+)=([\dA-F]+)', s))
-    
+
     expected_regs = parse_regs(expectations)
     actual_regs = parse_regs(actual)
-    
+
     passed = True
     mismatch_details = []
     for reg, val in expected_regs.items():
@@ -99,17 +103,17 @@ def run_test(asm_file):
         if actual_val != val:
             passed = False
             mismatch_details.append(f"{reg}: expected {val}, got {actual_val}")
-            
+
     if passed:
-        print("PASS")
-        return True
+        out.append("PASS")
+        return True, '\n'.join(out)
     else:
-        print(f"FAIL")
-        print(f"  Expected: {expectations}")
-        print(f"  Actual:   {actual}")
+        out.append("FAIL")
+        out.append(f"  Expected: {expectations}")
+        out.append(f"  Actual:   {actual}")
         for detail in mismatch_details:
-            print(f"  - {detail}")
-        return False
+            out.append(f"  - {detail}")
+        return False, '\n'.join(out)
 
 def main():
     test_dir = 'tests'
@@ -126,12 +130,16 @@ def main():
     if not tests:
         print("No tests found.")
         return 0
-    
+
     failed = 0
-    for test in tests:
-        if not run_test(test):
-            failed += 1
-            
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = {executor.submit(run_test, t): t for t in tests}
+        for future in as_completed(futures):
+            passed, output = future.result()
+            print(output)
+            if not passed:
+                failed += 1
+
     print(f"\nSummary: {len(tests) - failed} passed, {failed} failed.")
     return 1 if failed > 0 else 0
 
