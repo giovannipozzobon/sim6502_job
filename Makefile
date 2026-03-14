@@ -11,7 +11,8 @@ LIB_IFLAGS = \
 	-I src/lib6502-devices \
 	-I src/lib6502-devices/device \
 	-I src/lib6502-debug \
-	-I src/lib6502-toolchain
+	-I src/lib6502-toolchain \
+	-I src/cli/commands
 
 # Frontends also see src/ (for sim_api.h)
 FRONT_IFLAGS = $(LIB_IFLAGS) -I src
@@ -157,11 +158,12 @@ $(IMGUI_DIR)/imgui.h:
 	git clone --depth 1 --branch docking https://github.com/ocornut/imgui.git $(IMGUI_DIR)
 
 # --- Unit Testing ---
-UNIT_TEST_SRCS = tests/unit/test_main.cpp tests/unit/test_cpu_arithmetic.cpp tests/unit/test_cpu_opcodes.cpp tests/unit/test_cpu_45gs02.cpp tests/unit/test_cpu_decode.cpp tests/unit/test_memory.cpp tests/unit/test_toolchain.cpp tests/unit/test_debug.cpp tests/unit/test_sim_api.cpp tests/unit/test_devices.cpp
+UNIT_TEST_SRCS = tests/unit/test_main.cpp tests/unit/test_cpu_arithmetic.cpp tests/unit/test_cpu_opcodes.cpp tests/unit/test_cpu_45gs02.cpp tests/unit/test_cpu_decode.cpp tests/unit/test_memory.cpp tests/unit/test_toolchain.cpp tests/unit/test_debug.cpp tests/unit/test_sim_api.cpp tests/unit/test_devices.cpp tests/unit/test_integration.cpp tests/unit/test_fuzz.cpp tests/unit/test_cli.cpp
 UNIT_TEST_OBJS = $(UNIT_TEST_SRCS:.cpp=.o)
+UNIT_TEST_CLI_OBJS = $(CLI_COMMANDS_SRCS:.cpp=.o)
 UNIT_TEST_TARGET = unit-tests
 
-$(UNIT_TEST_TARGET): $(UNIT_TEST_OBJS) $(LIB_TARGET)
+$(UNIT_TEST_TARGET): $(UNIT_TEST_OBJS) $(UNIT_TEST_CLI_OBJS) $(LIB_TARGET)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(SDL2_LIBS) $(GL_LIBS)
 
 tests/unit/%.o: tests/unit/%.cpp tests/unit/catch.hpp
