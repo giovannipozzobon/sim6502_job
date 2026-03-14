@@ -19,4 +19,5 @@ AGENTS.md
 .bug
 src/mcp/node_modules/
 sim6502
+unit-tests
 sim6502-gui
