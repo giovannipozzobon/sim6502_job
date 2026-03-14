@@ -734,8 +734,8 @@ void op_brk(CPU *cpu, memory_t *mem, unsigned short arg) {
 	cpu->s--;
 	mem_write(mem, 0x100 + cpu->s, cpu->pc & 0xFF);
 	cpu->s--;
-	cpu->set_flag(FLAG_B, 1);
-	mem_write(mem, 0x100 + cpu->s, cpu->p);
+	/* B flag set only in the pushed copy; cpu->p is not modified */
+	mem_write(mem, 0x100 + cpu->s, cpu->p | FLAG_B | FLAG_U);
 	cpu->s--;
 	cpu->set_flag(FLAG_I, 1);
 	cpu->pc = (unsigned short)(mem_read(mem, 0xFFFE) | (mem_read(mem, 0xFFFF) << 8));

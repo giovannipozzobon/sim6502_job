@@ -2080,8 +2080,8 @@ static void brk_45gs02(cpu_t *cpu, memory_t *mem, unsigned short arg) {
 	stack45_push(cpu);
 	mem_write(mem, stack45_addr(cpu), cpu->pc & 0xFF);
 	stack45_push(cpu);
-	cpu->set_flag(FLAG_B, 1);
-	mem_write(mem, stack45_addr(cpu), cpu->p);
+	/* B flag set only in the pushed copy; cpu->p is not modified */
+	mem_write(mem, stack45_addr(cpu), cpu->p | FLAG_B);
 	stack45_push(cpu);
 	cpu->set_flag(FLAG_I, 1);
 	cpu->pc = (unsigned short)(mem_read(mem, 0xFFFE) | (mem_read(mem, 0xFFFF) << 8));

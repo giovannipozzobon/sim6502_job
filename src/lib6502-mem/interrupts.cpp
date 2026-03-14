@@ -77,16 +77,15 @@ void interrupt_handle(interrupt_controller_t *handler, cpu_t *cpu, memory_t *mem
 	mem_write(mem, 0x0100 + cpu->s, cpu->pc & 0xFF);
 	cpu->s--;
 	
-	/* Push processor status */
+	/* Push processor status — B flag only appears in the pushed value, never in cpu->p */
 	unsigned char status = cpu->p;
-	
-	/* For BRK, set B flag; for hardware interrupts don't set B */
+	status |= 0x20;   /* bit 5 always 1 on 6502/65c02 */
 	if (handler->current.type == INT_BRK) {
-		status |= 0x10;  /* Set B flag */
-	} else if (handler->current.type == INT_NMI || handler->current.type == INT_IRQ) {
-		status &= ~0x10; /* Clear B flag for hardware interrupts */
+		status |= 0x10;  /* B=1 for BRK/PHP */
+	} else {
+		status &= ~0x10; /* B=0 for IRQ/NMI */
 	}
-	
+
 	mem_write(mem, 0x0100 + cpu->s, status);
 	cpu->s--;
 	

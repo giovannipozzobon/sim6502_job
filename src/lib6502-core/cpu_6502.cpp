@@ -35,7 +35,7 @@ void CPU6502::trigger_interrupt(int vector_addr) {
     s--;
     mem_write(mem, 0x100 + s, pc & 0xFF);
     s--;
-    mem_write(mem, 0x100 + s, p | FLAG_U);
+    mem_write(mem, 0x100 + s, (p & ~FLAG_B) | FLAG_U);  /* B=0 for hardware IRQ/NMI */
     s--;
     set_flag(FLAG_I, 1);
     pc = mem_read(mem, vector_addr) | (mem_read(mem, vector_addr + 1) << 8);
