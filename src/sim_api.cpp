@@ -1,4 +1,5 @@
 #include "sim_api.h"
+#include "version.h"
 #include "debug_context.h"
 #include "cpu.h"
 #include "memory.h"
@@ -537,6 +538,10 @@ cpu_t          *sim_get_cpu(sim_session_t *s)    { return s ? s->cpu : NULL; }
 const memory_t *sim_get_memory(sim_session_t *s) { return s ? &s->mem : NULL; }
 uint8_t sim_mem_read_byte(sim_session_t *s, uint16_t addr) { return s ? mem_read(&s->mem, addr) : 0; }
 void sim_mem_write_byte(sim_session_t *s, uint16_t addr, uint8_t val) { if (s) mem_write(&s->mem, addr, val); }
+const char *sim_get_version(void) {
+    return SIM_VERSION;
+}
+
 sim_state_t sim_get_state(sim_session_t *s) { return s ? s->state : SIM_IDLE; }
 void sim_set_state(sim_session_t *s, sim_state_t state) { if (s) s->state = state; }
 const char *sim_get_filename(sim_session_t *s) { return (s && s->filename[0]) ? s->filename : "(none)"; }

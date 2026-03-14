@@ -67,6 +67,7 @@ uint8_t sim_mem_read_byte(sim_session_t *s, uint16_t addr);
 void    sim_mem_write_byte(sim_session_t *s, uint16_t addr, uint8_t val);
 
 /* Session metadata */
+const char  *sim_get_version(void);
 sim_state_t  sim_get_state(sim_session_t *s);
 void         sim_set_state(sim_session_t *s, sim_state_t state);
 const char  *sim_get_filename(sim_session_t *s);

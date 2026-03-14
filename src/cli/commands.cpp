@@ -1,4 +1,5 @@
 #include "commands.h"
+#include "version.h"
 #include "cpu_engine.h"
 #include "opcodes/opcodes.h"
 #include "condition.h"
@@ -654,7 +655,7 @@ void list_processors(void) { printf("Available Processors: 6502, 6502-undoc, 65c
 void list_opcodes(cpu_type_t type) { (void)type; printf("Opcode listing not implemented in CLI helpers yet.\n"); }
 
 void print_help(const char *progname) {
-    printf("6502 Simulator v0.99\nUsage: %s [options] <file.asm>\n\n", progname);
+    printf("6502 Simulator v%s\nUsage: %s [options] <file.asm>\n\n", SIM_VERSION, progname);
     printf("Options:\n"
            "  -M, --machine <TYPE> Select machine: raw6502, c64, c128, mega65, x16\n"
            "  -p, --processor <CPU> Select processor: 6502, 6502-undoc, 65c02, 65ce02, 45gs02\n"

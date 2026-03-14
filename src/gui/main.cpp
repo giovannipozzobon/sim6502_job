@@ -36,6 +36,7 @@
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_opengl3.h"
 #include "imgui_filedlg.h"
+#include "version.h"
 
 #include "cpu.h"
 #include "sim_api.h"
@@ -5347,7 +5348,7 @@ int main(int /*argc*/, char ** /*argv*/)
     filedlg_init(&g_filedlg);
 
     /* Console welcome message */
-    con_add(CON_COL_OK,     "sim6502-gui Phase 4 ready.  Type 'help' for commands.");
+    con_add(CON_COL_OK,     "sim6502-gui v%s ready.  Type 'help' for commands.", SIM_VERSION);
     con_add(CON_COL_NORMAL, "Processor: %s", sim_processor_name(g_sim));
 
     bool running        = true;

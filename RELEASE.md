@@ -400,6 +400,15 @@ Replace all ImGui `BeginPopupModal()` and `imgui_filedlg.h` usage with native wx
 
 ## Finished
 
+## Milestone 1.1: Unit Testing
+**Goal:** Implement unit tests for a wide swatch of the application.
+**Theme:** Testing & Reliability.
+
+- [X] **Core Tests:** Implemented unit tests for CPU opcodes, arithmetic, and addressing modes.
+- [X] **Device Tests:** Added verification for CIA timers and VIC-II register behaviors.
+- [X] **Debug Tests:** Validated breakpoint and trace logic.
+- [X] **Integration:** Established a test suite for end-to-end simulation flows.
+
 ## Milestone 1.0: Stability & Core Fidelity
 **Goal:** Establish a rock-solid core for the simulator with a focus on CPU fidelity, toolchain reliability, and a polished user experience.
 
