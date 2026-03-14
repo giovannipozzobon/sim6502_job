@@ -275,6 +275,10 @@ int sim_load_asm(sim_session_t *s, const char *path) {
         return 0;
     }
     
+    if (s->last_error[0] == '\0') {
+        snprintf(s->last_error, sizeof(s->last_error), "Failed to load bundle for %s. (Is KickAssembler missing?)", base);
+    }
+    
     return -1;
 }
 

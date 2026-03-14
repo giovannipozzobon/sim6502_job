@@ -158,7 +158,7 @@ $(IMGUI_DIR)/imgui.h:
 	git clone --depth 1 --branch docking https://github.com/ocornut/imgui.git $(IMGUI_DIR)
 
 # --- Unit Testing ---
-UNIT_TEST_SRCS = tests/unit/test_main.cpp tests/unit/test_cpu_arithmetic.cpp tests/unit/test_cpu_opcodes.cpp tests/unit/test_cpu_45gs02.cpp tests/unit/test_cpu_decode.cpp tests/unit/test_memory.cpp tests/unit/test_toolchain.cpp tests/unit/test_debug.cpp tests/unit/test_sim_api.cpp tests/unit/test_devices.cpp tests/unit/test_integration.cpp tests/unit/test_fuzz.cpp tests/unit/test_cli.cpp
+UNIT_TEST_SRCS = tests/unit/test_main.cpp tests/unit/test_cpu_arithmetic.cpp tests/unit/test_cpu_opcodes.cpp tests/unit/test_cpu_45gs02.cpp tests/unit/test_cpu_decode.cpp tests/unit/test_memory.cpp tests/unit/test_toolchain.cpp tests/unit/test_debug.cpp tests/unit/test_sim_api.cpp tests/unit/test_devices.cpp tests/unit/test_integration.cpp tests/unit/test_fuzz.cpp tests/unit/test_cli.cpp tests/unit/test_regression.cpp
 UNIT_TEST_OBJS = $(UNIT_TEST_SRCS:.cpp=.o)
 UNIT_TEST_CLI_OBJS = $(CLI_COMMANDS_SRCS:.cpp=.o)
 UNIT_TEST_TARGET = unit-tests

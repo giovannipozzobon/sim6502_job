@@ -21,16 +21,19 @@ public:
 class CPU6502Undocumented : public CPU6502 {
 public:
     CPU6502Undocumented();
+    virtual int step() override;
 };
 
 class CPU65C02 : public CPU6502 {
 public:
     CPU65C02();
+    virtual int step() override;
 };
 
 class CPU65CE02 : public CPU65C02 {
 public:
     CPU65CE02();
+    virtual int step() override;
 };
 
 class CPU45GS02 : public CPU65CE02 {

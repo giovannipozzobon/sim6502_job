@@ -131,3 +131,38 @@ TEST_CASE("CPU Opcode - Stack Operations", "[cpu][stack]") {
         delete cpu;
     }
 }
+
+TEST_CASE("CPU Opcode - Undocumented", "[cpu][undoc]") {
+    memory_t mem;
+    CPU* cpu = CPUFactory::create(CPU_6502_UNDOCUMENTED);
+    setup_cpu(cpu, &mem);
+
+    SECTION("LAX Absolute") {
+        // $AF = LAX abs
+        mem.mem[0x1000] = 0xAF;
+        mem.mem[0x1001] = 0x34;
+        mem.mem[0x1002] = 0x12;
+        mem.mem[0x1234] = 0x55;
+        cpu->pc = 0x1000;
+        
+        cpu->step();
+        CHECK(cpu->a == 0x55);
+        CHECK(cpu->x == 0x55);
+        CHECK(cpu->get_flag(FLAG_Z) == 0);
+        CHECK(cpu->get_flag(FLAG_N) == 0);
+    }
+
+    SECTION("SAX ZP") {
+        // $87 = SAX ZP
+        mem.mem[0x1000] = 0x87;
+        mem.mem[0x1001] = 0x10;
+        cpu->pc = 0x1000;
+        cpu->a = 0xFF;
+        cpu->x = 0x0F;
+        
+        cpu->step();
+        CHECK(mem.mem[0x0010] == 0x0F);
+    }
+
+    delete cpu;
+}

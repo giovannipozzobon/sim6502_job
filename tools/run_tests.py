@@ -91,7 +91,8 @@ def run_test(asm_file):
 
     # Compare expectations
     def parse_regs(s):
-        return dict(re.findall(r'(\w+)=([\dA-F]+)', s))
+        # Match Key=Value or Key $Value or Key Value
+        return dict(re.findall(r'(\w+)[:=$ ]+([\dA-F]+)', s))
 
     expected_regs = parse_regs(expectations)
     actual_regs = parse_regs(actual)
