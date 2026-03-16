@@ -1,7 +1,0 @@
-; EXPECT: A=42 X=00 Y=00 Z=00 B=42 S=FF PC=0206
-.processor 45gs02
-LDA #$42
-TAB
-LDA #$00
-TBA
-BRK

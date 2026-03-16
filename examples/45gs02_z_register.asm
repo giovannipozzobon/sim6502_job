@@ -1,5 +1,6 @@
-.processor 45gs02
-LDZ #$42
-STZ $1000
-LDZ #$FF
-CPZ #$FF
+.cpu _45gs02
+* = $0200
+ldz #$42
+stz $1000
+ldz #$FF
+cpz #$FF

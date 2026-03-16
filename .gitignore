@@ -1,3 +1,7 @@
+tests/*.prg
+tests/*.sym
+*.prg
+*.sym
 *.swp
 *.*~
 tags
@@ -8,6 +12,15 @@ TAGS
 *.ini
 *.o
 src/gui/imgui
+.plan/
+ref/
+.idea
+AGENTS.md
+.bug
+src/mcp/node_modules/
+sim6502
+unit-tests
+sim6502-gui
 gui/main.o
 src/opcodes_45gs02.o
 src/opcodes_65c02.o

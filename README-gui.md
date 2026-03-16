@@ -66,7 +66,14 @@ The GUI is designed with a flexible docking system, allowing you to rearrange, s
 - **CLI equivalent**: `validate <addr> [REG=val…] : [REG=val…]` in the interactive monitor.
 - **MCP equivalent**: `validate_routine` tool.
 
-### 12. VIC-II Viewer (View menu → VIC-II Screen / Sprites / Registers)
+### 12. Project Wizard (File menu → New Project...)
+
+Quickly bootstrap a new development environment using pre-defined templates.
+- **Template Selection**: Choose from minimal, standard C64, or advanced MEGA65 setups.
+- **Live Configuration**: Set project name, target directory, and template-specific variables (like `START_ADDR`) directly in the wizard.
+- **Auto-Load**: Upon creation, the wizard automatically generates the directory structure, Makefile, and boilerplate code, then loads the main assembly file into the Source Viewer.
+
+### 13. VIC-II Viewer (View menu → VIC-II Screen / Sprites / Registers)
 
 Three panes expose the Commodore 64 VIC-II video chip state for C64 / C128 / MEGA65 development:
 
@@ -81,11 +88,19 @@ Three panes expose the Commodore 64 VIC-II video chip state for C64 / C128 / MEG
 - **MCP equivalent**: `vic2_savescreen` and `vic2_savebitmap` tools.
 
 #### VIC-II Sprites
-- **Sprite thumbnail grid**: All 8 sprites displayed at configurable zoom (2×/3×/4×) with transparent backgrounds.
-- **Per-sprite info**: Enable status, X/Y position, colour, MCM/XE/YE/BG flags, and data address.
-- **Freeze**: Lock sprite thumbnails independently.
-- **Shared colours**: D025 (MC0) and D026 (MC1) shown in the footer.
-- **CLI equivalent**: `vic2.sprites` prints all 8 sprite states; sprites also appear in `vic2.savescreen` and `vic2.savebitmap` output.
+- **Unified Sprite Editor**: A comprehensive pane for inspecting and modifying all 8 hardware sprites.
+- **Selection Bar**: Click any of the 8 thumbnails at the top to focus the editor on that specific sprite.
+- **Interactive Bitmap Editor**: A large pixel grid for direct drawing.
+    - **1bpp mode**: Toggle pixels between transparent and the sprite colour.
+    - **2bpp (Multicolour) mode**: Cycle through the four available colour indices.
+    - **Expansion Support**: The grid dynamically reflects **Expand X** and **Expand Y** settings, doubling pixel size in the editor to match hardware output.
+    - **Aspect Ratio**: Corrected pixel proportions to emulate the taller-than-wide PAL display.
+- **Hardware Attributes**: Real-time toggles for Enable, Multicolour, Expand X/Y, and Priority ($D01B).
+- **Colour Palettes**: Interactive palettes for the sprite's main colour ($D027+N) and shared multicolours ($D025/$D026).
+- **Freeze Update**: Locks the visual state of all sprites.
+    - **Safe Editing**: Essential for manual drawing; freezing prevents a running program from overwriting your changes in memory while you work.
+    - **Capture**: Useful for inspecting high-speed animations or "flicker" effects.
+- **CLI equivalent**: `vic2.sprites` prints all 8 sprite states.
 - **MCP equivalent**: `vic2_sprites` tool.
 
 #### VIC-II Registers
@@ -104,6 +119,22 @@ The **Run** menu contains a **Throttle Speed** toggle and a scale slider:
 - The throttle state and scale are **persisted** in the ImGui INI file and restored on next launch.
 - **CLI equivalent**: `speed [scale]` — query or set the throttle from the interactive monitor or embedded console. `speed` alone prints the current setting.
 - **MCP equivalent**: `speed` tool (pass `scale` parameter to set, omit to query).
+
+---
+
+## File Structure
+
+The engine is split into focused static libraries linked into `libsim6502.a`:
+
+- **`src/lib6502-core/`**: CPU engine and opcode handlers (dispatch loop, register model, all processor variants).
+- **`src/lib6502-mem/`**: Memory subsystem — 64KB flat memory, sparse 28-bit far memory, MAP translation, I/O device registry, IRQ/NMI.
+- **`src/lib6502-devices/`**: Hardware device emulation — VIC-II, SID, CIA, MEGA65 I/O, audio output.
+- **`src/lib6502-toolchain/`**: Source-level tools — KickAssembler auto-assembly and pseudo-op preprocessing, symbol table, list parser, disassembler, snippet library, project scaffolding.
+- **`src/lib6502-debug/`**: Debugging infrastructure — execution history, step-back/forward, breakpoints, conditional expression evaluator, trace ring buffer, snapshot/diff.
+- **`src/sim_api.cpp/h`**: Public C API consumed by both the CLI and GUI.
+- **`src/cli/`**: CLI entry point and Command Pattern commands.
+- **`src/gui/`**: Dear ImGui graphical debugger application.
+- **`src/mcp/`**: Node.js MCP server for LLM integration.
 
 ---
 
@@ -146,7 +177,7 @@ The GUI and CLI both support complex conditional breakpoints using standard asse
 ## Requirements & Building
 
 ### System Requirements
-To build and run the GUI, you need a C++11 compiler and the following development libraries:
+To build and run the GUI, you need a C++17 compiler and the following development libraries:
 
 - **SDL2**: Cross-platform windowing and input handling.
 - **OpenGL**: Hardware-accelerated rendering.

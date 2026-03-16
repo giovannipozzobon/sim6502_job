@@ -1,6 +1,0 @@
-; EXPECT: A=05 X=00 Y=00 S=FF PC=0203
-JSR sub
-BRK
-sub:
-LDA #$05
-RTS

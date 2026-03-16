@@ -1,3 +1,4 @@
-; Undocumented LAX instruction
-LAX $0200
-STA $0201
+* = $0200
+// Undocumented LAX instruction
+lax $0200
+sta $0201

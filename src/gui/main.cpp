@@ -36,13 +36,15 @@
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_opengl3.h"
 #include "imgui_filedlg.h"
+#include "version.h"
 
-extern "C" {
 #include "cpu.h"
 #include "sim_api.h"
-#include "vic2.h"
+#include "device/vic2.h"
+#include "device/sid_io.h"
+#include "audio.h"
 #include "patterns.h"
-}
+#include "project_manager.h"
 
 /* --------------------------------------------------------------------------
  * Core globals
@@ -73,7 +75,28 @@ static bool g_focus_filename    = false;
 
 static const char *g_proc_labels[] = { "6502", "6502-undoc", "65C02", "65CE02", "45GS02" };
 static const char *g_proc_ids[]    = { "6502", "6502-undoc", "65c02", "65ce02", "45gs02" };
-static int  g_proc_idx             = 0;
+static int         g_proc_idx      = 0;
+
+static const char *g_mach_labels[] = { "raw6502", "c64", "c128", "mega65", "x16" };
+static machine_type_t g_mach_ids[] = { MACHINE_RAW6502, MACHINE_C64, MACHINE_C128, MACHINE_MEGA65, MACHINE_X16 };
+static int         g_mach_idx      = 1; // default c64
+
+/* Sync the processor/machine dropdown indices from the live session state.
+ * Call after any load operation that may have changed cpu_type or machine_type. */
+static void sync_session_ui_state(void) {
+    cpu_type_t     ct = sim_get_cpu_type(g_sim);
+    machine_type_t mt = sim_get_machine_type(g_sim);
+    switch (ct) {
+    case CPU_6502_UNDOCUMENTED: g_proc_idx = 1; break;
+    case CPU_65C02:             g_proc_idx = 2; break;
+    case CPU_65CE02:            g_proc_idx = 3; break;
+    case CPU_45GS02:            g_proc_idx = 4; break;
+    default:                    g_proc_idx = 0; break;
+    }
+    for (int i = 0; i < (int)(sizeof(g_mach_ids)/sizeof(g_mach_ids[0])); i++) {
+        if (g_mach_ids[i] == mt) { g_mach_idx = i; break; }
+    }
+}
 
 /* Pane visibility */
 static bool show_registers   = true;
@@ -94,13 +117,15 @@ static MemViewState g_mem_views[MAX_MEM_VIEWS];  /* zero-init; [0].open set at s
 static bool g_layout_save_open       = false;
 static char g_layout_save_name[64]   = "";
 static bool g_reset_layout           = false;
+static bool g_layout_refresh_needed  = false;
+static uint32_t g_main_dockspace_id  = 0;
 
 /* --------------------------------------------------------------------------
  * Phase 2 state
  * -------------------------------------------------------------------------- */
 
 /* Register diff — snapshot CPU before each sim_step call */
-static cpu_t g_prev_cpu       = {};
+static CPUState g_prev_cpu     = {};
 static bool  g_prev_cpu_valid = false;
 
 /* Registers pane */
@@ -139,12 +164,26 @@ static bool show_symbols  = false;
 static bool show_source   = false;
 static bool show_profiler    = false;
 static bool show_snap_diff   = false;
+static bool show_test_runner = false;
+static bool show_devices = false;
 static bool show_patterns    = false;
 
 /* ---- Phase 6 pane visibility ---- */
 static bool show_vic_screen   = false;
 static bool show_vic_sprites  = false;
 static bool show_vic_regs     = false;
+
+/* ---- Phase 5/Audio panes ---- */
+static bool show_sid_debugger = false;
+static bool show_audio_mixer  = false;
+
+/* ---- Project Wizard state ---- */
+static bool show_new_project_wizard = false;
+static char g_wizard_name[64]       = "Untitled";
+static char g_wizard_path[512]      = "";
+static int  g_wizard_tmpl_idx       = 0;
+static std::map<std::string, std::string> g_wizard_vars;
+static int  g_vic_sprite_edit_idx  = 0;
 
 /* ---- Phase 5: keyboard shortcut state ---- */
 static bool     g_focus_console     = false;  /* `: focus console input              */
@@ -170,6 +209,12 @@ static bool     g_binsave_open      = false;
 static char     g_binsave_path[512] = "";
 static char     g_binsave_start[8]  = "0200";
 static char     g_binsave_count[8]  = "0100";
+
+/* ---- Hardware Expansion ---- */
+static bool     g_add_device_open      = false;
+static int      g_add_device_type_idx  = 0;
+static char     g_add_device_addr[8]   = "D420";
+static const char *g_device_types[]    = { "sid", "vic2", "mega65_math", "mega65_dma" };
 
 /* ---- Instruction Reference ---- */
 static char g_iref_filter[32] = "";
@@ -482,8 +527,32 @@ static void apply_theme(void)
  *   │          │  Console             │
  *   └──────────┴──────────────────────┘
  * -------------------------------------------------------------------------- */
+static void reset_visibility_to_default(void)
+{
+    show_registers = true;
+    show_disassembly = true;
+    show_console = true;
+    g_mem_views[0].open = true;
+    for (int i = 1; i < MAX_MEM_VIEWS; i++) g_mem_views[i].open = false;
+    show_breakpoints = false;
+    show_trace = false;
+    show_stack = false;
+    show_watches = false;
+    show_iref = false;
+    show_symbols = false;
+    show_source = false;
+    show_profiler = false;
+    show_snap_diff = false;
+    show_test_runner = false;
+    show_patterns = false;
+    show_vic_screen = false;
+    show_vic_sprites = false;
+    show_vic_regs = false;
+}
+
 static void setup_default_layout(ImGuiID dockspace_id, ImVec2 size)
 {
+    reset_visibility_to_default();
     ImGui::DockBuilderRemoveNode(dockspace_id);
     ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
     ImGui::DockBuilderSetNodeSize(dockspace_id, size);
@@ -542,16 +611,21 @@ static void open_binload_dialog(const char *path)
     }
     g_binload_open = true;
 }
+static bool g_asm_error_open = false;
+
 static void do_load(void)
 {
     if (g_filename_buf[0] == '\0') return;
     g_running = false;
     if (sim_load_asm(g_sim, g_filename_buf) != 0) {
         fprintf(stderr, "sim6502-gui: failed to load '%s'\n", g_filename_buf);
+        g_asm_error_open = true;
     } else {
         fprintf(stdout, "sim6502-gui: loaded '%s'\n", g_filename_buf);
         g_prev_cpu_valid   = false;
         g_last_write_count = 0;
+        /* Sync processor/machine dropdowns from the session (may have changed via .cpu) */
+        sync_session_ui_state();
         /* Re-seed watch values from the newly loaded program */
         for (int i = 0; i < g_watch_count; i++) g_watches[i].valid = false;
         update_watches();
@@ -984,6 +1058,7 @@ static void con_exec(const char *cmd)
         if (ok == 0) {
             g_prev_cpu_valid   = false;
             g_last_write_count = 0;
+            sync_session_ui_state();
             for (int i = 0; i < g_watch_count; i++) g_watches[i].valid = false;
             update_watches();
             uint16_t laddr = 0, lsize = 0;
@@ -1246,7 +1321,7 @@ static void update_spr_textures(void)
 
     for (int sn = 0; sn < 8; sn++) {
         uint8_t  ptr   = sim_mem_read_byte(g_sim, (uint16_t)((screen_base + 0x3F8 + sn) & 0xFFFF));
-        uint32_t saddr = vic_bank + (uint32_t)ptr * 64u;
+        uint32_t saddr = (vic_bank + (uint32_t)ptr * 64u) & 0xFFFF;
         uint8_t  color = sim_mem_read_byte(g_sim, (uint16_t)(0xD027 + sn)) & 0xF;
         bool     is_mcm = ((d01c >> sn) & 1) != 0;
 
@@ -1302,8 +1377,12 @@ static void update_spr_textures(void)
 static void draw_pane_vic_sprites(void)
 {
     if (!show_vic_sprites) return;
-    ImGui::Begin("VIC-II Sprites", &show_vic_sprites,
-                 ImGuiWindowFlags_HorizontalScrollbar);
+
+    ImGui::SetNextWindowSize(ImVec2(650, 600), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("VIC-II Sprites", &show_vic_sprites)) {
+        ImGui::End();
+        return;
+    }
 
     sim_state_t state = sim_get_state(g_sim);
     if (state == SIM_IDLE) {
@@ -1315,92 +1394,189 @@ static void draw_pane_vic_sprites(void)
     if (g_spr_dirty)
         update_spr_textures();
 
-    /* Scale controls */
-    static float spr_scale = 3.0f;
-    ImGui::Text("Scale:");
-    ImGui::SameLine();
-    if (ImGui::RadioButton("2x##spr", spr_scale == 2.0f)) spr_scale = 2.0f;
-    ImGui::SameLine();
-    if (ImGui::RadioButton("3x##spr", spr_scale == 3.0f)) spr_scale = 3.0f;
-    ImGui::SameLine();
-    if (ImGui::RadioButton("4x##spr", spr_scale == 4.0f)) spr_scale = 4.0f;
-    ImGui::SameLine();
-    ImGui::Checkbox("Freeze##spr", &g_spr_freeze);
+    /* --- Sprite Selection Bar --- */
+    ImGui::Text("Select Sprite:");
+    for (int i = 0; i < 8; i++) {
+        if (i > 0) ImGui::SameLine();
+        ImGui::PushID(i);
+        
+        bool is_selected = (g_vic_sprite_edit_idx == i);
+        ImVec4 tint = is_selected ? ImVec4(1,1,1,1) : ImVec4(0.5f, 0.5f, 0.5f, 0.8f);
+        ImVec4 bg   = is_selected ? ImVec4(0.3f, 0.3f, 0.3f, 1.0f) : ImVec4(0,0,0,0);
+
+        char btn_id[32];
+        snprintf(btn_id, sizeof(btn_id), "spr_sel_%d", i);
+        if (ImGui::ImageButton(btn_id, (ImTextureID)(uintptr_t)g_spr_tex[i], ImVec2(24*1.5f, 21*1.5f), ImVec2(0,0), ImVec2(1,1), bg, tint)) {
+            g_vic_sprite_edit_idx = i;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sprite %d", i);
+        ImGui::PopID();
+    }
 
     ImGui::Separator();
 
-    /* Read sprite state registers */
-    uint8_t d015  = sim_mem_read_byte(g_sim, 0xD015);
-    uint8_t d01c  = sim_mem_read_byte(g_sim, 0xD01C);
-    uint8_t d01d  = sim_mem_read_byte(g_sim, 0xD01D);  /* X-expand   */
-    uint8_t d017  = sim_mem_read_byte(g_sim, 0xD017);  /* Y-expand   */
-    uint8_t d01b  = sim_mem_read_byte(g_sim, 0xD01B);  /* behind BG  */
-    uint8_t d010  = sim_mem_read_byte(g_sim, 0xD010);  /* X MSBs     */
+    int sn = g_vic_sprite_edit_idx;
+
+    /* Read current state */
+    uint8_t d015 = sim_mem_read_byte(g_sim, 0xD015);
+    uint8_t d01c = sim_mem_read_byte(g_sim, 0xD01C);
+    uint8_t d01d = sim_mem_read_byte(g_sim, 0xD01D);
+    uint8_t d017 = sim_mem_read_byte(g_sim, 0xD017);
+    uint8_t d01b = sim_mem_read_byte(g_sim, 0xD01B);
+    uint8_t d010 = sim_mem_read_byte(g_sim, 0xD010);
+    uint8_t color = sim_mem_read_byte(g_sim, (uint16_t)(0xD027 + sn)) & 0xF;
+    uint8_t d025 = sim_mem_read_byte(g_sim, 0xD025) & 0xF;
+    uint8_t d026 = sim_mem_read_byte(g_sim, 0xD026) & 0xF;
+
     uint8_t d018  = sim_mem_read_byte(g_sim, 0xD018);
     uint8_t cia2a = sim_mem_read_byte(g_sim, 0xDD00);
     uint32_t vic_bank    = (uint32_t)((~cia2a) & 3) * 0x4000u;
     uint32_t screen_base = vic_bank + (uint32_t)((d018 >> 4) & 0xF) * 1024u;
+    uint8_t  ptr   = sim_mem_read_byte(g_sim, (uint16_t)((screen_base + 0x3F8 + sn) & 0xFFFF));
+    uint32_t saddr = (vic_bank + (uint32_t)ptr * 64u) & 0xFFFF;
 
-    ImVec2 img_sz(24.0f * spr_scale, 21.0f * spr_scale);
-    float  cell_w = img_sz.x + 14.0f;
-    float  cell_h = img_sz.y + 78.0f;
+    uint16_t sx = (uint16_t)(sim_mem_read_byte(g_sim, (uint16_t)(0xD000 + sn*2)) | (((d010 >> sn) & 1) << 8));
+    uint8_t  sy = sim_mem_read_byte(g_sim, (uint16_t)(0xD001 + sn*2));
 
-    for (int sn = 0; sn < 8; sn++) {
-        if (sn % 4 != 0) ImGui::SameLine(0.0f, 6.0f);
+    bool enabled = (d015 >> sn) & 1;
+    bool is_mcm  = (d01c >> sn) & 1;
+    bool x_exp   = (d01d >> sn) & 1;
+    bool y_exp   = (d017 >> sn) & 1;
+    bool behind  = (d01b >> sn) & 1;
 
-        bool     enabled = ((d015 >> sn) & 1) != 0;
-        uint16_t sx      = (uint16_t)(sim_mem_read_byte(g_sim, (uint16_t)(0xD000 + sn*2))
-                            | (((d010 >> sn) & 1) << 8));
-        uint8_t  sy      = sim_mem_read_byte(g_sim, (uint16_t)(0xD001 + sn*2));
-        uint8_t  color   = sim_mem_read_byte(g_sim, (uint16_t)(0xD027 + sn)) & 0xF;
-        bool     is_mcm  = ((d01c >> sn) & 1) != 0;
-        bool     x_exp   = ((d01d >> sn) & 1) != 0;
-        bool     y_exp   = ((d017 >> sn) & 1) != 0;
-        bool     behind  = ((d01b >> sn) & 1) != 0;
-        uint8_t  ptr     = sim_mem_read_byte(g_sim,
-                               (uint16_t)((screen_base + 0x3F8 + sn) & 0xFFFF));
-        uint32_t saddr   = (vic_bank + (uint32_t)ptr * 64u) & 0xFFFF;
+    /* Left side: Controls */
+    ImGui::BeginChild("##controls", ImVec2(200, 0), true);
+    ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Sprite %d", sn);
+    ImGui::Text("Pos: X=%d Y=%d", sx, sy);
+    ImGui::Text("Addr: $%04X [%02X]", (unsigned)saddr, ptr);
+    ImGui::Separator();
 
-        ImGui::PushID(sn);
-
-        ImVec4 border_col = enabled
-            ? ImVec4(0.25f, 0.75f, 0.25f, 1.0f)
-            : ImVec4(0.28f, 0.28f, 0.28f, 1.0f);
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.10f, 0.10f, 1.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
-        ImGui::PushStyleColor(ImGuiCol_Border, border_col);
-
-        if (ImGui::BeginChild("##sc", ImVec2(cell_w, cell_h), true)) {
-            /* Header */
-            if (enabled)
-                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Spr %d", sn);
-            else
-                ImGui::TextDisabled("Spr %d (off)", sn);
-
-            /* Sprite bitmap with transparent background */
-            ImGui::Image((ImTextureID)(uintptr_t)g_spr_tex[sn], img_sz);
-
-            /* Info lines */
-            ImGui::Text("X=%-3d Y=%d", sx, sy);
-            char flags[16] = "";
-            if (is_mcm) strcat(flags, "MC ");
-            if (x_exp)  strcat(flags, "XE ");
-            if (y_exp)  strcat(flags, "YE ");
-            if (behind) strcat(flags, "BG");
-            ImGui::Text("Col:%X  %s", color, flags);
-            ImGui::TextDisabled("$%04X[%02X]", (unsigned)saddr, ptr);
-        }
-        ImGui::EndChild();
-        ImGui::PopStyleColor(2);
-        ImGui::PopStyleVar();
-        ImGui::PopID();
+    ImGui::Text("Attributes");
+    if (ImGui::Checkbox("Enabled", &enabled)) {
+        sim_mem_write_byte(g_sim, 0xD015, enabled ? (d015 | (1<<sn)) : (d015 & ~(1<<sn)));
+    }
+    if (ImGui::Checkbox("Multicolour", &is_mcm)) {
+        sim_mem_write_byte(g_sim, 0xD01C, is_mcm ? (d01c | (1<<sn)) : (d01c & ~(1<<sn)));
+        g_spr_dirty = true;
+    }
+    if (ImGui::Checkbox("Expand X", &x_exp)) {
+        sim_mem_write_byte(g_sim, 0xD01D, x_exp ? (d01d | (1<<sn)) : (d01d & ~(1<<sn)));
+    }
+    if (ImGui::Checkbox("Expand Y", &y_exp)) {
+        sim_mem_write_byte(g_sim, 0xD017, y_exp ? (d017 | (1<<sn)) : (d017 & ~(1<<sn)));
+    }
+    if (ImGui::Checkbox("Behind BG", &behind)) {
+        sim_mem_write_byte(g_sim, 0xD01B, behind ? (d01b | (1<<sn)) : (d01b & ~(1<<sn)));
     }
 
-    /* Footer: shared MC colours and enable mask */
     ImGui::Separator();
-    uint8_t d025 = sim_mem_read_byte(g_sim, 0xD025) & 0xF;
-    uint8_t d026 = sim_mem_read_byte(g_sim, 0xD026) & 0xF;
-    ImGui::Text("D025 MC0:%X  D026 MC1:%X  D015 En:%02X", d025, d026, d015);
+    ImGui::Text("Colours");
+
+    auto color_selector = [&](const char* label, uint16_t reg, uint8_t current) {
+        ImGui::Text("%s:", label);
+        for (int i = 0; i < 16; i++) {
+            if (i > 0 && i % 8 == 0) ImGui::NewLine();
+            ImGui::PushID(i);
+            ImVec4 col(vic2_palette[i][0]/255.0f, vic2_palette[i][1]/255.0f, vic2_palette[i][2]/255.0f, 1.0f);
+            if (ImGui::ColorButton("##col", col, (current == i ? ImGuiColorEditFlags_None : ImGuiColorEditFlags_NoBorder), ImVec2(18,18))) {
+                sim_mem_write_byte(g_sim, reg, (uint8_t)i);
+                g_spr_dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%d: %s", i, vic2_color_names[i]);
+            ImGui::SameLine();
+            ImGui::PopID();
+        }
+        ImGui::NewLine();
+    };
+
+    color_selector("Main", 0xD027 + sn, color);
+    if (is_mcm) {
+        color_selector("MC0 ($D025)", 0xD025, d025);
+        color_selector("MC1 ($D026)", 0xD026, d026);
+    }
+
+    ImGui::Separator();
+    ImGui::Checkbox("Freeze Update", &g_spr_freeze);
+
+    ImGui::EndChild();
+
+    ImGui::SameLine();
+
+    /* Right side: Pixel Grid */
+    ImGui::BeginChild("##grid", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
+    ImGui::Text("Bitmap Editor (%s%s%s)", is_mcm ? "2bpp" : "1bpp", x_exp ? ", Exp X" : "", y_exp ? ", Exp Y" : "");
+
+    /* Base cell size: taller than wide to match C64/PAL approximate aspect ratio */
+    float base_w = 12.0f;
+    float base_h = 14.0f;
+    float cell_w = x_exp ? (base_w * 2.0f) : base_w;
+    float cell_h = y_exp ? (base_h * 2.0f) : base_h;
+
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+
+    for (int row = 0; row < 21; row++) {
+        for (int col = 0; col < 24; col++) {
+            int effective_col = is_mcm ? (col & ~1) : col;
+            int byte_off = row * 3 + (effective_col / 8);
+            uint8_t b = sim_mem_read_byte(g_sim, (uint16_t)((saddr + byte_off) & 0xFFFF));
+            
+            int color_idx = 0;
+            if (!is_mcm) {
+                if ((b >> (7 - (effective_col % 8))) & 1) color_idx = color;
+                else color_idx = -1; /* transparent */
+            } else {
+                int pair = (effective_col % 8) / 2;
+                int sel = (b >> (6 - pair * 2)) & 0x3;
+                if      (sel == 0) color_idx = -1;
+                else if (sel == 1) color_idx = d025;
+                else if (sel == 2) color_idx = color;
+                else if (sel == 3) color_idx = d026;
+            }
+
+            ImVec2 p0(pos.x + col * cell_w, pos.y + row * cell_h);
+            ImVec2 p1(p0.x + cell_w, p0.y + cell_h);
+
+            ImU32 cell_col = (color_idx == -1) ? IM_COL32(40, 40, 40, 255) :
+                IM_COL32(vic2_palette[color_idx][0], vic2_palette[color_idx][1], vic2_palette[color_idx][2], 255);
+            
+            draw_list->AddRectFilled(p0, p1, cell_col);
+            /* Only draw border if cell is large enough to not look cluttered */
+            if (cell_w >= 4.0f && cell_h >= 4.0f)
+                draw_list->AddRect(p0, p1, IM_COL32(100, 100, 100, 50));
+
+            if (ImGui::IsMouseHoveringRect(p0, p1) && ImGui::IsMouseDown(0)) {
+                if (!is_mcm) {
+                    /* Toggle bit */
+                    int bit = 7 - (col % 8);
+                    uint8_t mask = 1 << bit;
+                    /* Use a static to prevent "rapid fire" toggling while holding mouse */
+                    static int last_click_row = -1, last_click_col = -1, last_click_sn = -1;
+                    if (ImGui::IsMouseClicked(0) || last_click_row != row || last_click_col != col || last_click_sn != sn) {
+                        sim_mem_write_byte(g_sim, (uint16_t)((saddr + byte_off) & 0xFFFF), b ^ mask);
+                        g_spr_dirty = true;
+                        last_click_row = row; last_click_col = col; last_click_sn = sn;
+                    }
+                } else {
+                    /* Cycle color sel */
+                    static int last_click_row = -1, last_click_col = -1, last_click_sn = -1;
+                    if (ImGui::IsMouseClicked(0) || last_click_row != row || last_click_col != col || last_click_sn != sn) {
+                        int pair = (effective_col % 8) / 2;
+                        int sel = (b >> (6 - pair * 2)) & 0x3;
+                        sel = (sel + 1) & 0x3;
+                        uint8_t mask = 0x3 << (6 - pair * 2);
+                        uint8_t new_b = (b & ~mask) | (sel << (6 - pair * 2));
+                        sim_mem_write_byte(g_sim, (uint16_t)((saddr + byte_off) & 0xFFFF), new_b);
+                        g_spr_dirty = true;
+                        last_click_row = row; last_click_col = col; last_click_sn = sn;
+                    }
+                }
+            }
+        }
+    }
+    ImGui::Dummy(ImVec2(24 * cell_w, 21 * cell_h));
+
+    ImGui::EndChild();
 
     ImGui::End();
 }
@@ -2742,7 +2918,6 @@ struct TestRow {
     int   act_a, act_x, act_y, act_z, act_p;
 };
 
-static bool     show_test_runner = false;
 static char     g_tr_routine[8]  = "0300";
 static char     g_tr_scratch[8]  = "FFF8";
 static TestRow  g_tr_rows[TEST_RUNNER_MAX_ROWS];
@@ -2750,7 +2925,7 @@ static int      g_tr_row_count   = 0;
 static char     g_tr_summary[64] = "";
 
 /* C++ wrapper for parse_mon_value since it takes const char ** */
-extern "C" int parse_mon_value(const char **, unsigned long *);
+int parse_mon_value(const char **, unsigned long *);
 static int parse_mon_value_cpp(const char *s, unsigned long *out) {
     const char *p = s;
     return parse_mon_value(&p, out);
@@ -2882,7 +3057,9 @@ static void draw_pane_test_runner(void)
             auto inp_field = [&](int col, char *buf, size_t bufsz) {
                 ImGui::TableSetColumnIndex(col);
                 ImGui::SetNextItemWidth(-1);
+                ImGui::PushID(col);
                 ImGui::InputText("##f", buf, bufsz, ImGuiInputTextFlags_CharsHexadecimal);
+                ImGui::PopID();
             };
             inp_field(2, row.in_a, sizeof(row.in_a));
             inp_field(3, row.in_x, sizeof(row.in_x));
@@ -2920,6 +3097,141 @@ static void draw_pane_test_runner(void)
         }
         ImGui::EndTable();
     }
+    ImGui::End();
+}
+
+static void draw_pane_devices(void)
+{
+    if (!show_devices) return;
+    ImGui::Begin("I/O Devices", &show_devices);
+
+    const memory_t *mem = sim_get_memory(g_sim);
+    if (!mem || !mem->io_registry) {
+        ImGui::Text("I/O Registry not available.");
+        ImGui::End();
+        return;
+    }
+
+    if (ImGui::BeginTable("##devices_table", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+        ImGui::TableSetupColumn("Device Name");
+        ImGui::TableSetupColumn("Range");
+        ImGui::TableSetupColumn("Priority", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+        ImGui::TableSetupColumn("Enabled", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+        ImGui::TableHeadersRow();
+
+        const auto& regs = mem->io_registry->get_registrations();
+        for (size_t i = 0; i < regs.size(); i++) {
+            const auto& reg = regs[i];
+            ImGui::TableNextRow();
+            ImGui::PushID((int)i);
+
+            ImGui::TableSetColumnIndex(0);
+            ImGui::Text("%s", reg.handler->get_handler_name());
+
+            ImGui::TableSetColumnIndex(1);
+            ImGui::Text("$%04X-$%04X", reg.start, reg.end);
+
+            ImGui::TableSetColumnIndex(2);
+            ImGui::Text("%d", reg.priority);
+
+            ImGui::TableSetColumnIndex(3);
+            bool enabled = reg.enabled;
+            if (ImGui::Checkbox("##enabled", &enabled)) {
+                mem->io_registry->set_enabled(reg.handler, enabled);
+                mem->io_registry->rebuild_map(const_cast<memory_t*>(mem));
+            }
+
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+
+    ImGui::End();
+}
+
+/* --------------------------------------------------------------------------
+ * Pane: SID Debugger
+ * -------------------------------------------------------------------------- */
+static void draw_pane_sid_debugger(void)
+{
+    if (!show_sid_debugger) return;
+    ImGui::Begin("SID Debugger", &show_sid_debugger);
+
+    size_t count = sid_get_count();
+    if (count == 0) {
+        ImGui::TextDisabled("No SID chips registered in the current machine.");
+        ImGui::End();
+        return;
+    }
+
+    if (ImGui::BeginTabBar("##sid_tabs")) {
+        for (size_t i = 0; i < count; i++) {
+            SIDHandler* h = sid_get_instance(i);
+            if (!h) continue;
+            
+            char title[32];
+            snprintf(title, sizeof(title), "SID #%d", (int)(i + 1));
+            
+            if (ImGui::BeginTabItem(title)) {
+                ImGui::Text("Base Address: $%04X", 0xD400 + (int)(i * 0x20));
+                ImGui::Text("Total Clocks: %lu", h->get_clocks());
+                ImGui::Separator();
+                
+                if (ImGui::BeginTable("##sid_regs", 8, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+                    for (int r = 0; r < 8; r++) ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 30.0f);
+                    for (int r = 0; r < 32; r++) {
+                        if (r % 8 == 0) ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(r % 8);
+                        uint8_t val = 0;
+                        h->io_read(nullptr, r, &val);
+                        ImGui::Text("%02X", val);
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reg %02X", r);
+                    }
+                    ImGui::EndTable();
+                }
+                ImGui::EndTabItem();
+            }
+        }
+        ImGui::EndTabBar();
+    }
+    ImGui::End();
+}
+
+/* --------------------------------------------------------------------------
+ * Pane: Audio Mixer
+ * -------------------------------------------------------------------------- */
+static void draw_pane_audio_mixer(void)
+{
+    if (!show_audio_mixer) return;
+    ImGui::Begin("Audio Mixer", &show_audio_mixer);
+
+    size_t count = sid_get_count();
+    if (count == 0) {
+        ImGui::TextDisabled("No audio devices registered.");
+        ImGui::End();
+        return;
+    }
+
+    ImGui::Text("System Audio Mix");
+    ImGui::Separator();
+
+    for (size_t i = 0; i < count; i++) {
+        SIDHandler* h = sid_get_instance(i);
+        if (!h) continue;
+
+        ImGui::PushID((int)i);
+        ImGui::Text("%s", h->get_handler_name());
+        
+        float pan = h->get_pan();
+        ImGui::SetNextItemWidth(150.0f);
+        if (ImGui::SliderFloat("Pan (L-R)", &pan, -1.0f, 1.0f, "%.2f")) {
+            h->set_pan(pan);
+        }
+        
+        ImGui::PopID();
+        ImGui::Separator();
+    }
+
     ImGui::End();
 }
 
@@ -3633,6 +3945,36 @@ static void draw_toolbar(void)
     ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
     ImGui::SameLine();
 
+    /* Machine dropdown */
+    ImGui::SetNextItemWidth(combo_w);
+    if (ImGui::BeginCombo("##mach", g_mach_labels[g_mach_idx])) {
+        for (int i = 0; i < (int)(sizeof(g_mach_labels) / sizeof(g_mach_labels[0])); i++) {
+            bool selected = (i == g_mach_idx);
+            if (ImGui::Selectable(g_mach_labels[i], selected)) {
+                g_mach_idx = i;
+                sim_set_machine_type(g_sim, g_mach_ids[i]);
+                cpu_type_t ct = sim_get_cpu_type(g_sim);
+                if (ct == CPU_6502) g_proc_idx = 0;
+                else if (ct == CPU_6502_UNDOCUMENTED) g_proc_idx = 1;
+                else if (ct == CPU_65C02) g_proc_idx = 2;
+                else if (ct == CPU_65CE02) g_proc_idx = 3;
+                else if (ct == CPU_45GS02) g_proc_idx = 4;
+                /* Optional: auto-load symbols */
+                const char* sym_file = NULL;
+                if (g_mach_ids[i] == MACHINE_C64) sym_file = "symbols/c64.sym";
+                else if (g_mach_ids[i] == MACHINE_C128) sym_file = "symbols/c128.sym";
+                else if (g_mach_ids[i] == MACHINE_MEGA65) sym_file = "symbols/mega65.sym";
+                else if (g_mach_ids[i] == MACHINE_X16) sym_file = "symbols/x16.sym";
+                if (sym_file) sim_sym_load_file(g_sim, sym_file);
+            }
+            if (selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Active machine");
+
+    ImGui::SameLine();
+    
     /* Processor dropdown */
     ImGui::SetNextItemWidth(combo_w);
     if (ImGui::BeginCombo("##proc", g_proc_labels[g_proc_idx])) {
@@ -3719,7 +4061,7 @@ static void draw_pane_registers(void)
     }
 
     bool is_45gs02 = (sim_get_cpu_type(g_sim) == CPU_45GS02);
-    cpu_t *prev    = g_prev_cpu_valid ? &g_prev_cpu : NULL;
+    CPUState *prev    = g_prev_cpu_valid ? &g_prev_cpu : NULL;
 
     /* Expand/Compact toggle button — right-aligned */
     {
@@ -4077,14 +4419,48 @@ static void draw_pane_memory(int idx)
 
     /* Navigation bar — use per-instance unique widget IDs via ##idx suffix */
     char addr_id[16]; snprintf(addr_id, sizeof(addr_id), "##ma%d", idx);
-    ImGui::SetNextItemWidth(60);
+    ImGui::SetNextItemWidth(64);
     if (ImGui::InputText(addr_id, mv.addr_buf, sizeof(mv.addr_buf),
             ImGuiInputTextFlags_CharsHexadecimal |
             ImGuiInputTextFlags_EnterReturnsTrue)) {
         mv.base = (uint16_t)strtol(mv.addr_buf, NULL, 16);
     }
-    char pc_id[16]; snprintf(pc_id, sizeof(pc_id), "PC##pc%d", idx);
+
+    /* Range step buttons (256 and 4096 byte increments) */
+    auto step_base = [&](int delta, const char* label, const char* tip) {
+        ImGui::SameLine();
+        char btn_id[16]; snprintf(btn_id, sizeof(btn_id), "%s##%s%d", label, label, idx);
+        if (ImGui::SmallButton(btn_id)) {
+            mv.base = (uint16_t)(mv.base + delta);
+            snprintf(mv.addr_buf, sizeof(mv.addr_buf), "%04X", (unsigned)mv.base);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s (%+d bytes)", tip, delta);
+    };
+    step_base(-4096, "<<", "Back 4KB");
+    step_base(-256,  "<",  "Back 256B");
+    step_base(256,   ">",  "Forward 256B");
+    step_base(4096,  ">>", "Forward 4KB");
+
+    /* Preset range buttons */
     ImGui::SameLine();
+    ImGui::TextDisabled(" | ");
+    ImGui::SameLine();
+
+    auto set_addr = [&](uint16_t addr, const char* label, const char* tip) {
+        char btn_id[32]; snprintf(btn_id, sizeof(btn_id), "%s##%s%d", label, label, idx);
+        if (ImGui::SmallButton(btn_id)) {
+            mv.base = addr;
+            snprintf(mv.addr_buf, sizeof(mv.addr_buf), "%04X", (unsigned)mv.base);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s ($%04X)", tip, addr);
+        ImGui::SameLine();
+    };
+
+    set_addr(0x0000, "Zp", "Zero Page");
+    set_addr(0x0100, "Sp", "Stack Page ($0100)");
+    
+    /* PC Button: Dynamic to current state */
+    char pc_id[16]; snprintf(pc_id, sizeof(pc_id), "PC##pc%d", idx);
     if (ImGui::SmallButton(pc_id)) {
         cpu_t *cpu = sim_get_cpu(g_sim);
         if (cpu) {
@@ -4092,15 +4468,18 @@ static void draw_pane_memory(int idx)
             snprintf(mv.addr_buf, sizeof(mv.addr_buf), "%04X", (unsigned)mv.base);
         }
     }
-    char sp_id[16]; snprintf(sp_id, sizeof(sp_id), "SP##sp%d", idx);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Follow Current PC");
     ImGui::SameLine();
-    if (ImGui::SmallButton(sp_id)) {
-        cpu_t *cpu = sim_get_cpu(g_sim);
-        if (cpu) {
-            mv.base = (uint16_t)(0x0100 | (cpu->s & 0xFF));
-            snprintf(mv.addr_buf, sizeof(mv.addr_buf), "%04X", (unsigned)mv.base);
-        }
-    }
+
+    /* Program Start Button: Based on last load info */
+    uint16_t laddr = 0, lsize = 0;
+    sim_get_load_info(g_sim, &laddr, &lsize);
+    set_addr(laddr, "Prog", "Program Start Address");
+
+    set_addr(0x0400, "Scrn", "Screen RAM ($0400)");
+    set_addr(0xD000, "Vic",  "VIC Registers ($D000)");
+    
+    ImGui::NewLine();
     ImGui::Separator();
 
     /* Is this address in the last-write log? */
@@ -4197,6 +4576,42 @@ static void draw_pane_console(void)
 }
 
 /* --------------------------------------------------------------------------
+ * Assembly error popup
+ * -------------------------------------------------------------------------- */
+static void draw_asm_error_popup(void)
+{
+    if (g_asm_error_open) {
+        ImGui::OpenPopup("Assembly Error");
+        g_asm_error_open = false;
+    }
+
+    if (ImGui::BeginPopupModal("Assembly Error", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Failed to assemble source file.");
+        ImGui::Text("File: %s", g_filename_buf);
+        ImGui::Separator();
+
+        const char *err = sim_get_last_error(g_sim);
+        if (err) {
+            ImGui::Text("Error output:");
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.1f, 0.1f, 0.1f, 1.0f));
+            if (ImGui::BeginChild("err_scroll", ImVec2(600, 300), true)) {
+                ImGui::TextUnformatted(err);
+            }
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+        } else {
+            ImGui::Text("Unknown error during assembly (check console/stderr).");
+        }
+
+        ImGui::Separator();
+        if (ImGui::Button("Close", ImVec2(120, 0))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
+/* --------------------------------------------------------------------------
  * Binary load popup (.bin / .prg)
  * -------------------------------------------------------------------------- */
 static void draw_binload_popup(void)
@@ -4247,6 +4662,7 @@ static void draw_binload_popup(void)
             if (ok == 0) {
                 g_prev_cpu_valid   = false;
                 g_last_write_count = 0;
+                sync_session_ui_state();
                 for (int i = 0; i < g_watch_count; i++) g_watches[i].valid = false;
                 update_watches();
                 uint16_t laddr = 0, lsize = 0;
@@ -4258,6 +4674,41 @@ static void draw_binload_popup(void)
             } else {
                 con_add(CON_COL_ERR, "bload: failed to open '%s'", g_binload_path);
             }
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
+static void draw_add_device_popup(void)
+{
+    if (g_add_device_open) {
+        ImGui::OpenPopup("Add Optional Device");
+        g_add_device_open = false;
+    }
+
+    if (ImGui::BeginPopupModal("Add Optional Device", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Select device type and base address:");
+        ImGui::Separator();
+
+        ImGui::Combo("Type", &g_add_device_type_idx, g_device_types, (int)(sizeof(g_device_types)/sizeof(g_device_types[0])));
+        ImGui::InputText("Address (Hex)", g_add_device_addr, sizeof(g_add_device_addr), ImGuiInputTextFlags_CharsHexadecimal | ImGuiInputTextFlags_CharsUppercase);
+
+        ImGui::Separator();
+        if (ImGui::Button("Add", ImVec2(120, 0))) {
+            unsigned int addr = 0;
+            if (sscanf(g_add_device_addr, "%x", &addr) == 1) {
+                int res = sim_device_add(g_sim, g_device_types[g_add_device_type_idx], (uint16_t)addr);
+                if (res == 0) {
+                    con_add(CON_COL_OK, "Added device: %s at $%04X", g_device_types[g_add_device_type_idx], addr);
+                    ImGui::CloseCurrentPopup();
+                } else {
+                    con_add(CON_COL_ERR, "Failed to add device: %s (maybe not implemented yet)", g_device_types[g_add_device_type_idx]);
+                }
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -4382,6 +4833,105 @@ static void draw_symload_popup(void)
     }
 }
 
+static void draw_new_project_wizard(void)
+{
+    if (show_new_project_wizard) {
+        ImGui::OpenPopup("New Project Wizard");
+        show_new_project_wizard = false;
+    }
+
+    ImGui::SetNextWindowSize(ImVec2(550, 450), ImGuiCond_FirstUseEver);
+    if (ImGui::BeginPopupModal("New Project Wizard", nullptr)) {
+        std::vector<ProjectTemplate> templates = ProjectManager::list_templates();
+        
+        ImGui::Columns(2, "wizard_cols", true);
+        ImGui::SetColumnWidth(0, 180);
+
+        /* Left side: Template List */
+        ImGui::Text("1. Select Template");
+        ImGui::Separator();
+        if (ImGui::BeginChild("##tmpl_list", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()))) {
+            for (int i = 0; i < (int)templates.size(); i++) {
+                if (ImGui::Selectable(templates[i].name.c_str(), g_wizard_tmpl_idx == i)) {
+                    g_wizard_tmpl_idx = i;
+                    g_wizard_vars.clear();
+                }
+            }
+            ImGui::EndChild();
+        }
+
+        ImGui::NextColumn();
+
+        /* Right side: Configuration */
+        if (!templates.empty() && g_wizard_tmpl_idx < (int)templates.size()) {
+            ProjectTemplate& tmpl = templates[g_wizard_tmpl_idx];
+            ImGui::Text("2. Configure Project");
+            ImGui::Separator();
+            
+            ImGui::TextDisabled("%s", tmpl.description.c_str());
+            ImGui::Spacing();
+
+            ImGui::Text("Project Name:");
+            if (ImGui::InputText("##pname", g_wizard_name, sizeof(g_wizard_name))) {
+                /* Update default path if it was tracking the name */
+                char cwd[256];
+                if (getcwd(cwd, sizeof(cwd))) {
+                    snprintf(g_wizard_path, sizeof(g_wizard_path), "%s/%s", cwd, g_wizard_name);
+                }
+            }
+
+            ImGui::Text("Target Directory:");
+            ImGui::InputText("##pdir", g_wizard_path, sizeof(g_wizard_path));
+
+            ImGui::Spacing();
+            ImGui::Text("Template Variables:");
+            ImGui::BeginChild("##vars", ImVec2(0, 150), true);
+            for (auto const& [key, val] : tmpl.variables) {
+                if (key == "PROJECT_NAME") continue;
+                std::string current = g_wizard_vars.count(key) ? g_wizard_vars[key] : val;
+                char buf[128];
+                strncpy(buf, current.c_str(), sizeof(buf));
+                if (ImGui::InputText(key.c_str(), buf, sizeof(buf))) {
+                    g_wizard_vars[key] = buf;
+                }
+            }
+            ImGui::EndChild();
+        } else {
+            ImGui::Text("No templates found in templates/");
+        }
+
+        ImGui::Columns(1);
+        ImGui::Separator();
+
+        if (ImGui::Button("Cancel", ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (!templates.empty() && ImGui::Button("Create Project", ImVec2(120, 0))) {
+            std::string err;
+            g_wizard_vars["PROJECT_NAME"] = g_wizard_name;
+            if (ProjectManager::create_project(templates[g_wizard_tmpl_idx].id, 
+                                             g_wizard_path, g_wizard_vars, err)) {
+                con_add(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Created project '%s' in %s", g_wizard_name, g_wizard_path);
+                
+                /* Auto-load the main.asm if it exists */
+                char main_asm[1024];
+                snprintf(main_asm, sizeof(main_asm), "%s/src/main.asm", g_wizard_path);
+                struct stat st;
+                if (stat(main_asm, &st) == 0) {
+                    strncpy(g_filename_buf, main_asm, sizeof(g_filename_buf));
+                    do_load();
+                }
+                ImGui::CloseCurrentPopup();
+            } else {
+                con_add(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Failed to create project: %s", err.c_str());
+            }
+        }
+
+        ImGui::EndPopup();
+    }
+}
+
 /* --------------------------------------------------------------------------
  * File-dialog popup dispatcher
  * -------------------------------------------------------------------------- */
@@ -4453,7 +5003,91 @@ static void layout_save_preset(const char *name)
     char path[576];
     snprintf(path, sizeof(path), "%s/%s.ini", layout_preset_dir(), name);
     ImGui::SaveIniSettingsToDisk(path);
+
+    /* Append our custom visibility state to the end of the file */
+    FILE *f = fopen(path, "a");
+    if (f) {
+        fprintf(f, "\n[sim6502][Visibility]\n");
+        fprintf(f, "Registers=%d\n", show_registers ? 1 : 0);
+        fprintf(f, "Disassembly=%d\n", show_disassembly ? 1 : 0);
+        fprintf(f, "Console=%d\n", show_console ? 1 : 0);
+        fprintf(f, "Memory0=%d\n", g_mem_views[0].open ? 1 : 0);
+        fprintf(f, "Memory1=%d\n", g_mem_views[1].open ? 1 : 0);
+        fprintf(f, "Memory2=%d\n", g_mem_views[2].open ? 1 : 0);
+        fprintf(f, "Memory3=%d\n", g_mem_views[3].open ? 1 : 0);
+        fprintf(f, "Breakpoints=%d\n", show_breakpoints ? 1 : 0);
+        fprintf(f, "Trace=%d\n", show_trace ? 1 : 0);
+        fprintf(f, "Stack=%d\n", show_stack ? 1 : 0);
+        fprintf(f, "Watches=%d\n", show_watches ? 1 : 0);
+        fprintf(f, "InstrRef=%d\n", show_iref ? 1 : 0);
+        fprintf(f, "Symbols=%d\n", show_symbols ? 1 : 0);
+        fprintf(f, "Source=%d\n", show_source ? 1 : 0);
+        fprintf(f, "Profiler=%d\n", show_profiler ? 1 : 0);
+        fprintf(f, "SnapDiff=%d\n", show_snap_diff ? 1 : 0);
+        fprintf(f, "TestRunner=%d\n", show_test_runner ? 1 : 0);
+        fprintf(f, "Patterns=%d\n", show_patterns ? 1 : 0);
+        fprintf(f, "VicScreen=%d\n", show_vic_screen ? 1 : 0);
+        fprintf(f, "VicSprites=%d\n", show_vic_sprites ? 1 : 0);
+        fprintf(f, "VicRegs=%d\n", show_vic_regs ? 1 : 0);
+        fclose(f);
+    }
+
     con_add(ImVec4(0.4f,1.0f,0.4f,1.0f), "Layout saved as '%s'", name);
+}
+
+/* Synchronize visibility booleans by parsing the .ini file for the [sim6502][Visibility] section. */
+static void sync_visibility_from_ini(const char *path)
+{
+    FILE *f = fopen(path, "r");
+    if (!f) return;
+
+    /* Reset all to false first */
+    show_registers = false; show_disassembly = false; show_console = false;
+    show_breakpoints = false; show_trace = false; show_stack = false;
+    show_watches = false; show_iref = false; show_symbols = false;
+    show_source = false; show_profiler = false; show_snap_diff = false;
+    show_test_runner = false; show_patterns = false;
+    show_vic_screen = false; show_vic_sprites = false; show_vic_regs = false;
+    for (int i = 0; i < MAX_MEM_VIEWS; i++) g_mem_views[i].open = false;
+
+    bool in_visibility_section = false;
+    char line[1024];
+    while (fgets(line, sizeof(line), f)) {
+        if (strncmp(line, "[sim6502][Visibility]", 21) == 0) {
+            in_visibility_section = true;
+            continue;
+        }
+        if (in_visibility_section) {
+            if (line[0] == '[') break; /* End of section */
+            char *eq = strchr(line, '=');
+            if (eq) {
+                *eq = '\0';
+                int val = atoi(eq + 1);
+                if      (strcmp(line, "Registers") == 0)   show_registers = val;
+                else if (strcmp(line, "Disassembly") == 0) show_disassembly = val;
+                else if (strcmp(line, "Console") == 0)     show_console = val;
+                else if (strcmp(line, "Memory0") == 0)     g_mem_views[0].open = val;
+                else if (strcmp(line, "Memory1") == 0)     g_mem_views[1].open = val;
+                else if (strcmp(line, "Memory2") == 0)     g_mem_views[2].open = val;
+                else if (strcmp(line, "Memory3") == 0)     g_mem_views[3].open = val;
+                else if (strcmp(line, "Breakpoints") == 0) show_breakpoints = val;
+                else if (strcmp(line, "Trace") == 0)       show_trace = val;
+                else if (strcmp(line, "Stack") == 0)       show_stack = val;
+                else if (strcmp(line, "Watches") == 0)     show_watches = val;
+                else if (strcmp(line, "InstrRef") == 0)    show_iref = val;
+                else if (strcmp(line, "Symbols") == 0)     show_symbols = val;
+                else if (strcmp(line, "Source") == 0)      show_source = val;
+                else if (strcmp(line, "Profiler") == 0)    show_profiler = val;
+                else if (strcmp(line, "SnapDiff") == 0)    show_snap_diff = val;
+                else if (strcmp(line, "TestRunner") == 0)  show_test_runner = val;
+                else if (strcmp(line, "Patterns") == 0)    show_patterns = val;
+                else if (strcmp(line, "VicScreen") == 0)   show_vic_screen = val;
+                else if (strcmp(line, "VicSprites") == 0)  show_vic_sprites = val;
+                else if (strcmp(line, "VicRegs") == 0)     show_vic_regs = val;
+            }
+        }
+    }
+    fclose(f);
 }
 
 /* Load a preset by name from presets/<name>.ini */
@@ -4461,7 +5095,15 @@ static void layout_load_preset(const char *name)
 {
     char path[576];
     snprintf(path, sizeof(path), "%s/%s.ini", layout_preset_dir(), name);
+    
+    /* Synchronize our visibility flags before loading the layout */
+    sync_visibility_from_ini(path);
+
+    /* Clear current dockspace before loading new settings using the stable global ID */
+    ImGui::DockBuilderRemoveNode(g_main_dockspace_id);
+    
     ImGui::LoadIniSettingsFromDisk(path);
+    g_layout_refresh_needed = true;
     con_add(ImVec4(0.4f,1.0f,0.4f,1.0f), "Layout loaded: '%s'", name);
 }
 
@@ -4699,11 +5341,14 @@ int main(int /*argc*/, char ** /*argv*/)
     /* Initialise multi-instance memory view: instance 0 starts open */
     g_mem_views[0].open = true;
 
+    /* Initialise audio */
+    audio_init(44100);
+
     /* Initialise file dialog (sets cwd to current working directory) */
     filedlg_init(&g_filedlg);
 
     /* Console welcome message */
-    con_add(CON_COL_OK,     "sim6502-gui Phase 4 ready.  Type 'help' for commands.");
+    con_add(CON_COL_OK,     "sim6502-gui v%s ready.  Type 'help' for commands.", SIM_VERSION);
     con_add(CON_COL_NORMAL, "Processor: %s", sim_processor_name(g_sim));
 
     bool running        = true;
@@ -4922,9 +5567,22 @@ int main(int /*argc*/, char ** /*argv*/)
             ImGui::Begin("##dockspace_host", nullptr, host_flags);
             ImGui::PopStyleVar(3);
 
+            /* Cache stable ID for the dockspace */
+            g_main_dockspace_id = ImGui::GetID("MainDockspace");
+
             /* Menu bar */
             if (ImGui::BeginMenuBar()) {
                 if (ImGui::BeginMenu("File")) {
+                    if (ImGui::MenuItem("New Project...")) {
+                        show_new_project_wizard = true;
+                        g_wizard_vars.clear();
+                        /* Default path to CWD/ProjectName */
+                        char cwd[256];
+                        if (getcwd(cwd, sizeof(cwd))) {
+                            snprintf(g_wizard_path, sizeof(g_wizard_path), "%s/%s", cwd, g_wizard_name);
+                        }
+                    }
+                    ImGui::Separator();
                     if (ImGui::MenuItem("Load...", "Ctrl+L")) g_focus_filename = true;
                     if (ImGui::MenuItem("Browse to Load...", nullptr)) {
                         static const FileDlgFilter load_filters[] = {
@@ -4992,6 +5650,15 @@ int main(int /*argc*/, char ** /*argv*/)
                     }
                     ImGui::EndMenu();
                 }
+                if (ImGui::BeginMenu("Hardware")) {
+                    if (ImGui::MenuItem("Add Optional Device...")) {
+                        g_add_device_open = true;
+                    }
+                    ImGui::Separator();
+                    ImGui::MenuItem("SID Debugger", nullptr, &show_sid_debugger);
+                    ImGui::MenuItem("Audio Mixer",  nullptr, &show_audio_mixer);
+                    ImGui::EndMenu();
+                }
                 if (ImGui::BeginMenu("View")) {
                     ImGui::MenuItem("Registers",   nullptr, &show_registers);
                     ImGui::MenuItem("Disassembly", nullptr, &show_disassembly);
@@ -5040,6 +5707,7 @@ int main(int /*argc*/, char ** /*argv*/)
                     ImGui::MenuItem("Profiler",    nullptr, &show_profiler);
                     ImGui::MenuItem("Snap Diff",      nullptr, &show_snap_diff);
                     ImGui::MenuItem("Test Runner",    nullptr, &show_test_runner);
+                    ImGui::MenuItem("I/O Devices",    nullptr, &show_devices);
                     ImGui::MenuItem("Pattern Library",nullptr, &show_patterns);
                     ImGui::Separator();
                     ImGui::MenuItem("VIC-II Screen",    nullptr, &show_vic_screen);
@@ -5123,15 +5791,19 @@ int main(int /*argc*/, char ** /*argv*/)
             if (ds_h < 0.0f) ds_h = 0.0f;
 
             /* Apply default layout on first run or when explicitly reset */
-            const ImGuiID dockspace_id = ImGui::GetID("MainDockspace");
             if ((first_run && !layout_applied) || g_reset_layout) {
                 layout_applied  = true;
                 g_reset_layout  = false;
-                setup_default_layout(dockspace_id,
+                g_layout_refresh_needed = false;
+                setup_default_layout(g_main_dockspace_id,
                     ImVec2(ImGui::GetContentRegionAvail().x, ds_h));
+            } else if (g_layout_refresh_needed) {
+                g_layout_refresh_needed = false;
+                /* Note: We do NOT DockBuilderAddNode here because LoadIniSettings
+                   already populated the internal dock tree for g_main_dockspace_id. */
             }
 
-            ImGui::DockSpace(dockspace_id, ImVec2(0.0f, ds_h), ImGuiDockNodeFlags_None);
+            ImGui::DockSpace(g_main_dockspace_id, ImVec2(0.0f, ds_h), ImGuiDockNodeFlags_None);
 
             /* Status bar */
             draw_statusbar();
@@ -5158,6 +5830,9 @@ int main(int /*argc*/, char ** /*argv*/)
         draw_pane_profiler();
         draw_pane_snap_diff();
         draw_pane_test_runner();
+        draw_pane_devices();
+        draw_pane_sid_debugger();
+        draw_pane_audio_mixer();
         draw_pane_patterns();
 
         /* Phase 6 panes */
@@ -5166,10 +5841,13 @@ int main(int /*argc*/, char ** /*argv*/)
         draw_pane_vic_regs();
 
         /* Popups */
+        draw_asm_error_popup();
         draw_binload_popup();
         draw_binsave_popup();
+        draw_add_device_popup();
         draw_symload_popup();
         draw_layout_save_popup();
+        draw_new_project_wizard();
         draw_goto_popup();
         draw_file_dialog_popup();
 
@@ -5187,6 +5865,7 @@ int main(int /*argc*/, char ** /*argv*/)
     if (g_heatmap_tex) { glDeleteTextures(1, &g_heatmap_tex); g_heatmap_tex = 0; }
     if (g_vic_tex)     { glDeleteTextures(1, &g_vic_tex);     g_vic_tex     = 0; }
     if (g_spr_tex[0])  { glDeleteTextures(8, g_spr_tex); for (int i=0;i<8;i++) g_spr_tex[i]=0; }
+    audio_close();
     sim_destroy(g_sim);
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplSDL2_Shutdown();

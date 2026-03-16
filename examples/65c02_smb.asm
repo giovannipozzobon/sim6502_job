@@ -1,4 +1,5 @@
-.processor 65c02
-LDA #$00
-STA $0050
-SMB3 $0050
+.cpu _65c02
+* = $0200
+lda #$00
+sta $0050
+smb3 $0050

@@ -1,3 +1,4 @@
-.processor 65c02
-LDA #$55
-BIT #$AA
+.cpu _65c02
+* = $0200
+lda #$55
+bit #$AA

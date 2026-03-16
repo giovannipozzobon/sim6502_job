@@ -1,4 +1,5 @@
-.processor 6502
-LDA #$42
-ADC #$10
-STA $1000
+* = $0200
+
+lda #$42
+adc #$10
+sta $1000

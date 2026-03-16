@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "6502-simulator": {
+      "command": "node",
+      "args": ["src/mcp/index.js"],
+      "cwd": "REPLACE_WITH_ABSOLUTE_PATH_TO_PROJECT"
+    }
+  }
+}
