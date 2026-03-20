@@ -288,7 +288,7 @@ copy plugin\* %USERPROFILE%\.claude\plugins\6502-simulator\
 
 ## Version Information
 
-- **Plugin Version:** 1.1
+- **Plugin Version:** 1.6
 - **Compatible with:** Claude (current version)
 - **Node.js:** 14.0+
 - **6502 Simulator:** v3.0+
