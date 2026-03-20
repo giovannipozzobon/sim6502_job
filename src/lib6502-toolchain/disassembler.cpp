@@ -3,9 +3,13 @@
 #include <stdio.h>
 #include <string.h>
 
+extern int g_verbose;
+
 void dispatch_build(dispatch_table_t *dt,
 		const opcode_handler_t *handlers, int n, cpu_type_t cpu_type) {
-	fprintf(stderr, "[DEBUG] Building dispatch table for CPU type %d with %d handlers\n", (int)cpu_type, n);
+	if (g_verbose >= 3) {
+		fprintf(stderr, "[DEBUG] Building dispatch table for CPU type %d with %d handlers\n", (int)cpu_type, n);
+	}
 	for (int i = 0; i < n; i++) {
 		unsigned char olen = handlers[i].opcode_len;
 		if (olen == 0) continue;
@@ -22,7 +26,7 @@ void dispatch_build(dispatch_table_t *dt,
 		if (olen == 1) {
 			slot = &dt->base[key];
 		} else if (olen == 2 && handlers[i].opcode_bytes[0] == 0xEA) {
-			continue;
+			slot = &dt->eom[key];
 		} else if (olen == 3 && handlers[i].opcode_bytes[0] == 0x42 &&
 		           handlers[i].opcode_bytes[1] == 0x42) {
 			slot = &dt->quad[key];
@@ -43,16 +47,21 @@ void dispatch_build(dispatch_table_t *dt,
 const dispatch_entry_t *peek_dispatch(const CPUState *cpu, const memory_t *mem,
 		const dispatch_table_t *dt, cpu_type_t cpu_type) {
 	unsigned char byte0 = mem_read((memory_t *)mem, cpu->pc);
-	if (cpu_type == CPU_45GS02 && byte0 == 0x42) {
-		unsigned char byte1 = mem_read((memory_t *)mem, (unsigned short)(cpu->pc + 1));
-		if (byte1 == 0x42) {
-			unsigned char byte2 = mem_read((memory_t *)mem, (unsigned short)(cpu->pc + 2));
-			if (byte2 == 0xEA) {
-				unsigned char byte3 = mem_read((memory_t *)mem, (unsigned short)(cpu->pc + 3));
-				if (dt->quad_eom[byte3].fn) return &dt->quad_eom[byte3];
-			} else {
-				if (dt->quad[byte2].fn) return &dt->quad[byte2];
+	if (cpu_type == CPU_45GS02) {
+		if (byte0 == 0x42) {
+			unsigned char byte1 = mem_read((memory_t *)mem, (unsigned short)(cpu->pc + 1));
+			if (byte1 == 0x42) {
+				unsigned char byte2 = mem_read((memory_t *)mem, (unsigned short)(cpu->pc + 2));
+				if (byte2 == 0xEA) {
+					unsigned char byte3 = mem_read((memory_t *)mem, (unsigned short)(cpu->pc + 3));
+					if (dt->quad_eom[byte3].fn) return &dt->quad_eom[byte3];
+				} else {
+					if (dt->quad[byte2].fn) return &dt->quad[byte2];
+				}
 			}
+		} else if (byte0 == 0xEA) {
+			unsigned char byte1 = mem_read((memory_t *)mem, (unsigned short)(cpu->pc + 1));
+			if (dt->eom[byte1].fn) return &dt->eom[byte1];
 		}
 	}
 	return &dt->base[byte0];
@@ -64,18 +73,25 @@ int disasm_one(const memory_t *mem, const dispatch_table_t *dt,
     unsigned char b0 = mem->mem[addr];
     const dispatch_entry_t *e = NULL;
     int prefix_len = 0;
-    if (cpu_type == CPU_45GS02 && b0 == 0x42) {
-        unsigned char b1 = mem->mem[(unsigned short)(addr + 1)];
-        if (b1 == 0x42) {
-            unsigned char b2 = mem->mem[(unsigned short)(addr + 2)];
-            if (b2 == 0xEA) {
-                unsigned char b3 = mem->mem[(unsigned short)(addr + 3)];
-                if (dt->quad_eom[b3].fn) { e = &dt->quad_eom[b3]; prefix_len = 3; }
-            } else {
-                if (dt->quad[b2].fn) { e = &dt->quad[b2]; prefix_len = 2; }
+
+    if (cpu_type == CPU_45GS02) {
+        if (b0 == 0x42) {
+            unsigned char b1 = mem->mem[(unsigned short)(addr + 1)];
+            if (b1 == 0x42) {
+                unsigned char b2 = mem->mem[(unsigned short)(addr + 2)];
+                if (b2 == 0xEA) {
+                    unsigned char b3 = mem->mem[(unsigned short)(addr + 3)];
+                    if (dt->quad_eom[b3].fn) { e = &dt->quad_eom[b3]; prefix_len = 3; }
+                } else {
+                    if (dt->quad[b2].fn) { e = &dt->quad[b2]; prefix_len = 2; }
+                }
             }
+        } else if (b0 == 0xEA) {
+            unsigned char b1 = mem->mem[(unsigned short)(addr + 1)];
+            if (dt->eom[b1].fn) { e = &dt->eom[b1]; prefix_len = 1; }
         }
     }
+
     if (!e) {
         const dispatch_entry_t *be = &dt->base[b0];
         if (be->fn) e = be;
@@ -139,18 +155,25 @@ int disasm_one_entry(const memory_t *mem, const dispatch_table_t *dt,
     unsigned char b0 = mem->mem[addr];
     const dispatch_entry_t *e = NULL;
     int prefix_len = 0;
-    if (cpu_type == CPU_45GS02 && b0 == 0x42) {
-        unsigned char b1 = mem->mem[(unsigned short)(addr + 1)];
-        if (b1 == 0x42) {
-            unsigned char b2 = mem->mem[(unsigned short)(addr + 2)];
-            if (b2 == 0xEA) {
-                unsigned char b3 = mem->mem[(unsigned short)(addr + 3)];
-                if (dt->quad_eom[b3].fn) { e = &dt->quad_eom[b3]; prefix_len = 3; }
-            } else {
-                if (dt->quad[b2].fn) { e = &dt->quad[b2]; prefix_len = 2; }
+
+    if (cpu_type == CPU_45GS02) {
+        if (b0 == 0x42) {
+            unsigned char b1 = mem->mem[(unsigned short)(addr + 1)];
+            if (b1 == 0x42) {
+                unsigned char b2 = mem->mem[(unsigned short)(addr + 2)];
+                if (b2 == 0xEA) {
+                    unsigned char b3 = mem->mem[(unsigned short)(addr + 3)];
+                    if (dt->quad_eom[b3].fn) { e = &dt->quad_eom[b3]; prefix_len = 3; }
+                } else {
+                    if (dt->quad[b2].fn) { e = &dt->quad[b2]; prefix_len = 2; }
+                }
             }
+        } else if (b0 == 0xEA) {
+            unsigned char b1 = mem->mem[(unsigned short)(addr + 1)];
+            if (dt->eom[b1].fn) { e = &dt->eom[b1]; prefix_len = 1; }
         }
     }
+
     if (!e) {
         const dispatch_entry_t *be = &dt->base[b0];
         if (be->fn) e = be;
@@ -158,6 +181,8 @@ int disasm_one_entry(const memory_t *mem, const dispatch_table_t *dt,
 
     out->address = addr;
     out->cycles  = e ? e->cycles : 0;
+    out->target_addr = 0;
+    out->has_target  = false;
 
     if (!e) {
         snprintf(out->bytes,    sizeof(out->bytes),    "%02X", b0);
@@ -197,60 +222,78 @@ int disasm_one_entry(const memory_t *mem, const dispatch_table_t *dt,
         break;
     case MODE_ZP:
         snprintf(out->operand, sizeof(out->operand), "$%02X", op1);
+        out->target_addr = op1; out->has_target = true;
         break;
     case MODE_ZP_X:
         snprintf(out->operand, sizeof(out->operand), "$%02X,X", op1);
+        out->target_addr = op1; out->has_target = true;
         break;
     case MODE_ZP_Y:
         snprintf(out->operand, sizeof(out->operand), "$%02X,Y", op1);
+        out->target_addr = op1; out->has_target = true;
         break;
     case MODE_ABSOLUTE:
         snprintf(out->operand, sizeof(out->operand), "$%04X", operand);
+        out->target_addr = operand; out->has_target = true;
         break;
     case MODE_ABSOLUTE_X:
         snprintf(out->operand, sizeof(out->operand), "$%04X,X", operand);
+        out->target_addr = operand; out->has_target = true;
         break;
     case MODE_ABSOLUTE_Y:
         snprintf(out->operand, sizeof(out->operand), "$%04X,Y", operand);
+        out->target_addr = operand; out->has_target = true;
         break;
     case MODE_INDIRECT:
         snprintf(out->operand, sizeof(out->operand), "($%04X)", operand);
+        out->target_addr = operand; out->has_target = true;
         break;
     case MODE_INDIRECT_X:
         snprintf(out->operand, sizeof(out->operand), "($%02X,X)", op1);
+        out->target_addr = op1; out->has_target = true;
         break;
     case MODE_INDIRECT_Y:
         snprintf(out->operand, sizeof(out->operand), "($%02X),Y", op1);
+        out->target_addr = op1; out->has_target = true;
         break;
     case MODE_ZP_INDIRECT:
         snprintf(out->operand, sizeof(out->operand), "($%02X)", op1);
+        out->target_addr = op1; out->has_target = true;
         break;
     case MODE_ABS_INDIRECT_Y:
         snprintf(out->operand, sizeof(out->operand), "($%04X),Y", operand);
+        out->target_addr = operand; out->has_target = true;
         break;
     case MODE_ZP_INDIRECT_Z:
         snprintf(out->operand, sizeof(out->operand), "($%02X),Z", op1);
+        out->target_addr = op1; out->has_target = true;
         break;
     case MODE_SP_INDIRECT_Y:
         snprintf(out->operand, sizeof(out->operand), "($%02X,SP),Y", op1);
+        out->target_addr = op1; out->has_target = true;
         break;
     case MODE_ABS_INDIRECT_X:
         snprintf(out->operand, sizeof(out->operand), "($%04X,X)", operand);
+        out->target_addr = operand; out->has_target = true;
         break;
     case MODE_ZP_INDIRECT_FLAT:
         snprintf(out->operand, sizeof(out->operand), "[$%02X]", op1);
+        out->target_addr = op1; out->has_target = true;
         break;
     case MODE_ZP_INDIRECT_Z_FLAT:
         snprintf(out->operand, sizeof(out->operand), "[$%02X],Z", op1);
+        out->target_addr = op1; out->has_target = true;
         break;
     case MODE_RELATIVE: {
         int target = (int)(addr + prefix_len) + instr_len + (signed char)op1;
         snprintf(out->operand, sizeof(out->operand), "$%04X", (unsigned short)target);
+        out->target_addr = (uint16_t)target; out->has_target = true;
         break;
     }
     case MODE_RELATIVE_LONG: {
         int target = (int)(addr + prefix_len) + instr_len + (short)operand;
         snprintf(out->operand, sizeof(out->operand), "$%04X", (unsigned short)target);
+        out->target_addr = (uint16_t)target; out->has_target = true;
         break;
     }
     default:
