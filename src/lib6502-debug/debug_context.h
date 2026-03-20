@@ -4,6 +4,7 @@
 #include "cpu_observer.h"
 #include "debug_types.h"
 #include <stdint.h>
+#include <vector>
 
 struct SnapNode;  /* Defined in debug_context.cpp */
 class CPU;        /* Defined in cpu.h */
@@ -37,9 +38,12 @@ public:
     int  get_history(int slot, sim_history_entry_t *entry);
 
     /* ---- Snapshot ---- */
-    void take_snapshot();
+    void take_snapshot(uint64_t cycles, uint32_t timestamp);
+    void clear_snapshot();
     int  snapshot_is_valid()   const   { return snap_active_; }
     int  snapshot_diff(sim_diff_entry_t *entries, int cap);
+    uint64_t snapshot_cycles()    const { return snap_cycles_; }
+    uint32_t snapshot_timestamp() const { return snap_timestamp_; }
 
     /* ---- Profiler ---- */
     void     enable_profiler(int on)      { prof_enabled_ = on; }
@@ -51,8 +55,9 @@ public:
     /* ---- Trace ---- */
     void enable_trace(int on)     { trace_enabled_ = on; }
     int  trace_is_enabled() const { return trace_enabled_; }
-    void clear_trace()            { trace_head_ = 0; trace_count_ = 0; }
-    int  trace_count()      const { return trace_count_; }
+    void clear_trace()            { trace_buf_.clear(); }
+    int  trace_count()      const { return (int)trace_buf_.size(); }
+    uint64_t trace_total()  const { return (uint64_t)trace_buf_.size(); }
     int  get_trace(int slot, sim_trace_entry_t *entry);
 
 private:
@@ -63,6 +68,8 @@ private:
     /* Snapshot: 256-bucket linked-list hash table */
     SnapNode *snap_buckets_[256];
     int snap_active_;
+    uint64_t snap_cycles_;
+    uint32_t snap_timestamp_;
     void snap_record_write(uint16_t addr, uint8_t before, uint8_t after, uint16_t writer_pc);
     void snap_free_nodes();
 
@@ -71,9 +78,9 @@ private:
     uint32_t *prof_cycles_;
     int prof_enabled_;
 
-    /* Trace ring buffer */
-    sim_trace_entry_t *trace_buf_;
-    int trace_head_, trace_count_, trace_enabled_;
+    /* Trace: linear storage up to SIM_TRACE_DEPTH */
+    std::vector<sim_trace_entry_t> trace_buf_;
+    int trace_enabled_;
 };
 
 #endif

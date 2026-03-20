@@ -37,7 +37,7 @@ let simulatorBuffer  = '';
 let simulatorResolve = null;
 
 const server = new Server(
-  { name: "6502-simulator", version: "1.1.0" },
+  { name: "6502-simulator", version: "1.6.0" },
   { capabilities: { tools: {} } }
 );
 
@@ -346,6 +346,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: { type: "object", properties: {
         address: { type: "number", description: "Breakpoint address to remove" }
       }, required: ["address"] }
+    },
+    {
+      name: "help",
+      description: "Get detailed help for a specific simulator command, or a list of all commands.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          command: { type: "string", description: "The command to get help for (e.g. 'step', 'break'). If omitted, lists all commands." }
+        }
+      }
     },
     {
       name: "list_breakpoints",
@@ -778,6 +788,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const raw  = await sendCommand(`clear ${addr}`);
         parseResults(raw);
         return text(`Breakpoint cleared at $${args.address.toString(16).toUpperCase().padStart(4,'0')}`);
+      }
+
+      case "help": {
+        const cmd = args.command ? `help ${args.command}` : "help";
+        const raw = await sendCommand(cmd);
+        // help output is usually text even in JSON mode if it's not handled specifically,
+        // but let's check if it comes back as a JSON 'ok'
+        try {
+            const results = parseResults(raw);
+            return text(fmtResults(results));
+        } catch (e) {
+            return text(raw);
+        }
       }
 
       case "list_breakpoints": {

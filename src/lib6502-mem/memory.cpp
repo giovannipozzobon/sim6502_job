@@ -17,11 +17,19 @@ unsigned char mem_read_phys(memory_t *mem, unsigned int phys) {
 	return mem->far_pages[page][off];
 }
 
+unsigned char mem_read_phys(const memory_t *mem, unsigned int phys) {
+    return mem_read_phys(const_cast<memory_t*>(mem), phys);
+}
+
 unsigned char mem_peek(memory_t *mem, uint16_t addr) {
     uint8_t val;
     if (mem->io_handlers[addr] && mem->io_handlers[addr]->io_peek(mem, addr, &val))
         return val;
     return mem->mem[addr];
+}
+
+unsigned char mem_peek(const memory_t *mem, uint16_t addr) {
+    return mem_peek(const_cast<memory_t*>(mem), addr);
 }
 
 void mem_write_phys(memory_t *mem, unsigned int phys, unsigned char val) {
@@ -33,7 +41,7 @@ void mem_write_phys(memory_t *mem, unsigned int phys, unsigned char val) {
 	}
 	unsigned int page = phys >> FAR_PAGE_SHIFT;
 	unsigned int off  = phys & (FAR_PAGE_SIZE - 1);
-	if (!mem->far_pages[page]) mem->far_pages[page] = (unsigned char *)calloc(FAR_PAGE_SIZE, 1);
+	if (!mem->far_pages[page]) mem->far_pages[page] = new unsigned char[FAR_PAGE_SIZE]();
 	mem->far_pages[page][off] = val;
 }
 
@@ -43,6 +51,13 @@ unsigned char mem_read(memory_t *mem, unsigned short addr) {
 	if (mem->map_offset[block]) {
 		unsigned int phys = ((unsigned int)addr + mem->map_offset[block]) & 0xFFFFF;
 		return mem_read_phys(mem, phys);
+	}
+	/* C64 PLA: character ROM visible at $D000–$DFFF when CHAREN=0 and HIRAM=1.
+	 * Bypasses I/O handlers; writes always go to RAM (mem_write unchanged). */
+	if (addr >= 0xD000 && addr <= 0xDFFF) {
+		uint8_t port = mem->mem[0x01];
+		if (!(port & 0x04) && (port & 0x02))          /* CHAREN=0, HIRAM=1 */
+			return mem->char_rom[(unsigned)(addr - 0xD000)];
 	}
 	uint8_t val;
 	if (mem->io_handlers[addr] && mem->io_handlers[addr]->io_read(mem, addr, &val))
@@ -88,7 +103,7 @@ void mem_free_far_pages(memory_t *mem) {
     if (!mem) return;
     for (int i = 0; i < FAR_NUM_PAGES; i++) {
         if (mem->far_pages[i]) {
-            free(mem->far_pages[i]);
+            delete[] mem->far_pages[i];
             mem->far_pages[i] = NULL;
         }
     }

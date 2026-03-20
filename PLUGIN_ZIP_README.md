@@ -238,7 +238,7 @@ This plugin is proprietary. See LICENSE file for details.
 
 ## Version Information
 
-- **Plugin Version:** 1.1
+- **Plugin Version:** 1.6
 - **Compatible with:** Claude (current and later)
 - **Requires:** Node.js 14.0+
 - **6502 Simulator:** v3.0+

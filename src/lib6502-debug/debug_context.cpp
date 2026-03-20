@@ -2,6 +2,7 @@
 #include "cpu.h"
 #include <stdlib.h>
 #include <string.h>
+#include <chrono>
 
 struct SnapNode {
     uint16_t  addr;
@@ -21,24 +22,23 @@ DebugContext::DebugContext()
     : hist_buf_(nullptr),
       hist_cap_(SIM_HIST_DEFAULT_DEPTH), hist_mask_(SIM_HIST_DEFAULT_DEPTH - 1),
       hist_write_(0), hist_count_(0), hist_enabled_(0), hist_pos_(0),
-      snap_active_(0),
+      snap_active_(0), snap_cycles_(0), snap_timestamp_(0),
       prof_exec_(nullptr), prof_cycles_(nullptr), prof_enabled_(0),
-      trace_buf_(nullptr), trace_head_(0), trace_count_(0), trace_enabled_(0)
+      trace_enabled_(0)
 {
     memset(snap_buckets_, 0, sizeof(snap_buckets_));
-    hist_buf_    = (sim_history_entry_t *)calloc((size_t)hist_cap_, sizeof(sim_history_entry_t));
+    hist_buf_    = new sim_history_entry_t[hist_cap_]();
     hist_enabled_ = (hist_buf_ != nullptr) ? 1 : 0;
     prof_exec_   = new uint32_t[65536]();
     prof_cycles_ = new uint32_t[65536]();
-    trace_buf_   = new sim_trace_entry_t[SIM_TRACE_DEPTH]();
+    trace_buf_.reserve(1024);
 }
 
 DebugContext::~DebugContext() {
     snap_free_nodes();
-    free(hist_buf_);
+    delete[] hist_buf_;
     delete[] prof_exec_;
     delete[] prof_cycles_;
-    delete[] trace_buf_;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -87,7 +87,11 @@ int DebugContext::get_history(int slot, sim_history_entry_t *entry) {
 void DebugContext::snap_free_nodes() {
     for (int i = 0; i < 256; i++) {
         SnapNode *n = snap_buckets_[i];
-        while (n) { SnapNode *nx = n->next; free(n); n = nx; }
+        while (n) { 
+            SnapNode *nx = n->next; 
+            delete n;
+            n = nx; 
+        }
         snap_buckets_[i] = nullptr;
     }
 }
@@ -97,33 +101,48 @@ void DebugContext::snap_record_write(uint16_t addr, uint8_t before, uint8_t afte
     for (SnapNode *n = snap_buckets_[bucket]; n; n = n->next) {
         if (n->addr == addr) { n->after = after; n->writer_pc = writer_pc; return; }
     }
-    SnapNode *n = (SnapNode *)malloc(sizeof(SnapNode));
+    SnapNode *n = new SnapNode();
     if (!n) return;
     n->addr = addr; n->before = before; n->after = after; n->writer_pc = writer_pc;
     n->next = snap_buckets_[bucket];
     snap_buckets_[bucket] = n;
 }
 
-void DebugContext::take_snapshot() {
+void DebugContext::take_snapshot(uint64_t cycles, uint32_t timestamp) {
     snap_free_nodes();
-    snap_active_ = 1;
+    snap_active_    = 1;
+    snap_cycles_    = cycles;
+    snap_timestamp_ = timestamp;
+}
+
+void DebugContext::clear_snapshot() {
+    snap_free_nodes();
+    snap_active_ = 0;
 }
 
 int DebugContext::snapshot_diff(sim_diff_entry_t *entries, int cap) {
     if (!snap_active_ || !entries || cap <= 0) return -1;
     int count = 0;
+    int filled = 0;
     for (int i = 0; i < 256; i++) {
-        for (SnapNode *n = snap_buckets_[i]; n; n = n->next) {
-            if (n->before != n->after && count < cap) {
-                entries[count].addr      = n->addr;
-                entries[count].before    = n->before;
-                entries[count].after     = n->after;
-                entries[count].writer_pc = n->writer_pc;
+        SnapNode *n = snap_buckets_[i];
+        while (n) {
+            if (n->before != n->after) {
+                if (filled < cap) {
+                    entries[filled].addr      = n->addr;
+                    entries[filled].before    = n->before;
+                    entries[filled].after     = n->after;
+                    entries[filled].writer_pc = n->writer_pc;
+                    filled++;
+                }
                 count++;
             }
+            n = n->next;
         }
     }
-    qsort(entries, (size_t)count, sizeof(sim_diff_entry_t), diff_entry_cmp);
+    if (filled > 0) {
+        qsort(entries, (size_t)filled, sizeof(sim_diff_entry_t), diff_entry_cmp);
+    }
     return count;
 }
 
@@ -141,9 +160,8 @@ void DebugContext::clear_profiler() {
 /* -------------------------------------------------------------------------- */
 
 int DebugContext::get_trace(int slot, sim_trace_entry_t *entry) {
-    if (slot < 0 || slot >= trace_count_ || !trace_buf_) return 0;
-    int idx = (trace_head_ - 1 - slot + SIM_TRACE_DEPTH) % SIM_TRACE_DEPTH;
-    *entry = trace_buf_[idx];
+    if (slot < 0 || slot >= (int)trace_buf_.size() || !entry) return 0;
+    *entry = trace_buf_[slot];
     return 1;
 }
 
@@ -188,14 +206,22 @@ void DebugContext::on_after_execute(uint16_t pre_pc,
         if (hist_count_ < hist_cap_) hist_count_++;
     }
 
-    /* --- Trace ring buffer --- */
-    if (trace_enabled_ && trace_buf_) {
-        sim_trace_entry_t *te = &trace_buf_[trace_head_];
-        te->pc           = pre_pc;
-        te->cpu          = post_state;
-        te->cycles_delta = (int)cycles_delta;
-        trace_head_ = (trace_head_ + 1) % SIM_TRACE_DEPTH;
-        if (trace_count_ < SIM_TRACE_DEPTH) trace_count_++;
+    /* --- Trace storage --- */
+    if (trace_enabled_) {
+        if (trace_buf_.size() >= SIM_TRACE_DEPTH) {
+            // Cap reached
+        } else {
+            sim_trace_entry_t te;
+            auto now = std::chrono::steady_clock::now();
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+            te.timestamp    = (uint32_t)(ms & 0xFFFFFFFF);
+            te.pc           = pre_pc;
+            te.cpu          = post_state;
+            te.cycles_delta = (int)cycles_delta;
+            te.cycles_total = post_state.cycles;
+            te.disasm[0]    = '\0'; 
+            trace_buf_.push_back(te);
+        }
     }
 
     /* --- Profiler --- */

@@ -1,3 +1,4 @@
+#include "sim_api.h"
 #include "vic2.h"
 #include <stdio.h>
 #include <string.h>
@@ -27,6 +28,19 @@ const char *vic2_color_names[16] = {
     "Orange", "Brown", "Lt Red", "Dk Grey", "Grey", "Lt Green", "Lt Blue", "Lt Grey"
 };
 
+/* Read one byte from VIC-II address space with hardwired charset ROM exceptions.
+ * On the C64, the character generator ROM is visible to the VIC in:
+ *   Bank 0 ($0000–$3FFF): addresses $1000–$1FFF → char_rom[addr - $1000]
+ *   Bank 2 ($8000–$BFFF): addresses $9000–$9FFF → char_rom[addr - $9000]
+ * All other addresses read from RAM/I/O via mem_peek. */
+static inline uint8_t vic_read(const memory_t *mem, uint32_t addr)
+{
+    if ((addr >= 0x1000u && addr < 0x2000u) ||
+        (addr >= 0x9000u && addr < 0xA000u))
+        return mem->char_rom[addr & 0x0FFFu];
+    return mem_peek(mem, (uint16_t)(addr & 0xFFFFu));
+}
+
 static inline void vic_put(uint8_t *px, int x, int y, int ci)
 {
     if (x < 0 || x >= VIC2_FRAME_W || y < 0 || y >= VIC2_FRAME_H) return;
@@ -40,14 +54,14 @@ static inline void vic_put(uint8_t *px, int x, int y, int ci)
 void vic2_render_rgb(const memory_t *mem, uint8_t *buf)
 {
     /* Read VIC-II control registers */
-    uint8_t ctrl1    = mem->mem[0xD011];
-    uint8_t ctrl2    = mem->mem[0xD016];
-    uint8_t memsetup = mem->mem[0xD018];
-    uint8_t border   = mem->mem[0xD020] & 0xF;
-    uint8_t bg0      = mem->mem[0xD021] & 0xF;
-    uint8_t bg1      = mem->mem[0xD022] & 0xF;
-    uint8_t bg2      = mem->mem[0xD023] & 0xF;
-    uint8_t bg3      = mem->mem[0xD024] & 0xF;
+    uint8_t ctrl1    = mem_peek(mem, 0xD011);
+    uint8_t ctrl2    = mem_peek(mem, 0xD016);
+    uint8_t memsetup = mem_peek(mem, 0xD018);
+    uint8_t border   = mem_peek(mem, 0xD020) & 0xF;
+    uint8_t bg0      = mem_peek(mem, 0xD021) & 0xF;
+    uint8_t bg1      = mem_peek(mem, 0xD022) & 0xF;
+    uint8_t bg2      = mem_peek(mem, 0xD023) & 0xF;
+    uint8_t bg3      = mem_peek(mem, 0xD024) & 0xF;
 
     int ecm = (ctrl1 >> 6) & 1;   /* Extended Colour Mode */
     int bmm = (ctrl1 >> 5) & 1;   /* Bitmap Mode          */
@@ -59,7 +73,7 @@ void vic2_render_rgb(const memory_t *mem, uint8_t *buf)
     int xscroll = ctrl2 & 7;      /* 0-7 horiz scroll     */
 
     /* VIC bank: CIA2 Port A $DD00 bits 1:0 (inverted) */
-    uint8_t  cia2a    = mem->mem[0xDD00];
+    uint8_t  cia2a    = mem_peek(mem, 0xDD00);
     uint32_t vic_bank = (uint32_t)((~cia2a) & 3) * 0x4000u;
 
     uint32_t screen_base = vic_bank + (uint32_t)((memsetup >> 4) & 0xF) * 1024u;
@@ -112,8 +126,8 @@ void vic2_render_rgb(const memory_t *mem, uint8_t *buf)
         for (int row = 0; row < 25; row++) {
             for (int col = 0; col < 40; col++) {
                 uint16_t cell = (uint16_t)(row * 40 + col);
-                uint8_t  sc   = mem->mem[(screen_base + cell) & 0xFFFF];
-                uint8_t  cr   = mem->mem[(color_ram   + cell) & 0xFFFF] & 0xF;
+                uint8_t  sc   = mem_peek(mem, (screen_base + cell) & 0xFFFF);
+                uint8_t  cr   = mem_peek(mem, (color_ram   + cell) & 0xFFFF) & 0xF;
                 int      px0  = VIC2_ACTIVE_X + col * 8 + dx;
                 int      py0  = VIC2_ACTIVE_Y + row * 8 + dy;
 
@@ -122,7 +136,7 @@ void vic2_render_rgb(const memory_t *mem, uint8_t *buf)
                     uint8_t bgtab[4] = { bg0, bg1, bg2, bg3 };
                     uint32_t cptr = (char_base + (uint32_t)(sc & 0x3F) * 8u) & 0xFFFF;
                     for (int cy = 0; cy < 8; cy++) {
-                        uint8_t bits = mem->mem[(cptr + (uint32_t)cy) & 0xFFFF];
+                        uint8_t bits = vic_read(mem, (cptr + (uint32_t)cy) & 0xFFFF);
                         for (int cx = 0; cx < 8; cx++)
                             vic_put_win(px0+cx, py0+cy,
                                         (bits & (0x80>>cx)) ? cr : bgtab[sc >> 6]);
@@ -132,7 +146,7 @@ void vic2_render_rgb(const memory_t *mem, uint8_t *buf)
                     uint8_t cols[4] = { bg0, bg1, bg2, (uint8_t)(cr & 0x7) };
                     uint32_t cptr = (char_base + (uint32_t)sc * 8u) & 0xFFFF;
                     for (int cy = 0; cy < 8; cy++) {
-                        uint8_t bits = mem->mem[(cptr + (uint32_t)cy) & 0xFFFF];
+                        uint8_t bits = vic_read(mem, (cptr + (uint32_t)cy) & 0xFFFF);
                         for (int cx = 0; cx < 4; cx++) {
                             int sel = (bits >> (6 - cx*2)) & 0x3;
                             vic_put_win(px0+cx*2,   py0+cy, cols[sel]);
@@ -143,7 +157,7 @@ void vic2_render_rgb(const memory_t *mem, uint8_t *buf)
                     /* Standard char (hires cell when MCM but cr bit 3 = 0) */
                     uint32_t cptr = (char_base + (uint32_t)sc * 8u) & 0xFFFF;
                     for (int cy = 0; cy < 8; cy++) {
-                        uint8_t bits = mem->mem[(cptr + (uint32_t)cy) & 0xFFFF];
+                        uint8_t bits = vic_read(mem, (cptr + (uint32_t)cy) & 0xFFFF);
                         for (int cx = 0; cx < 8; cx++)
                             vic_put_win(px0+cx, py0+cy,
                                         (bits & (0x80>>cx)) ? cr : bg0);
@@ -156,8 +170,8 @@ void vic2_render_rgb(const memory_t *mem, uint8_t *buf)
         for (int row = 0; row < 25; row++) {
             for (int col = 0; col < 40; col++) {
                 uint16_t cell = (uint16_t)(row * 40 + col);
-                uint8_t  sc   = mem->mem[(screen_base + cell) & 0xFFFF];
-                uint8_t  cr   = mem->mem[(color_ram   + cell) & 0xFFFF] & 0xF;
+                uint8_t  sc   = mem_peek(mem, (screen_base + cell) & 0xFFFF);
+                uint8_t  cr   = mem_peek(mem, (color_ram   + cell) & 0xFFFF) & 0xF;
                 uint8_t  fg   = (sc >> 4) & 0xF;
                 uint8_t  bg   = sc & 0xF;
                 int      px0  = VIC2_ACTIVE_X + col * 8 + dx;
@@ -167,7 +181,7 @@ void vic2_render_rgb(const memory_t *mem, uint8_t *buf)
                 if (!mcm) {
                     /* Standard bitmap: 1bpp per 8×8 block */
                     for (int cy = 0; cy < 8; cy++) {
-                        uint8_t bits = mem->mem[(bptr + (uint32_t)cy) & 0xFFFF];
+                        uint8_t bits = mem_peek(mem, (bptr + (uint32_t)cy) & 0xFFFF);
                         for (int cx = 0; cx < 8; cx++)
                             vic_put_win(px0+cx, py0+cy,
                                         (bits & (0x80>>cx)) ? fg : bg);
@@ -176,7 +190,7 @@ void vic2_render_rgb(const memory_t *mem, uint8_t *buf)
                     /* Multicolour bitmap: 2bpp, 4×8 doubled pixels */
                     uint8_t cols[4] = { bg0, fg, bg, cr };
                     for (int cy = 0; cy < 8; cy++) {
-                        uint8_t bits = mem->mem[(bptr + (uint32_t)cy) & 0xFFFF];
+                        uint8_t bits = mem_peek(mem, (bptr + (uint32_t)cy) & 0xFFFF);
                         for (int cx = 0; cx < 4; cx++) {
                             int sel = (bits >> (6 - cx*2)) & 0x3;
                             vic_put_win(px0+cx*2,   py0+cy, cols[sel]);
@@ -194,27 +208,27 @@ void vic2_render_rgb(const memory_t *mem, uint8_t *buf)
      *   frame_x = sprite_x - 16   (raster X 48 = col 0 = frame_x 32)
      *   frame_y = sprite_y - 15   (raster Y 51 = row 0 = frame_y 36)  */
     {
-        uint8_t d015 = mem->mem[0xD015];   /* sprite enable    */
-        uint8_t d010 = mem->mem[0xD010];   /* X MSBs           */
-        uint8_t d017 = mem->mem[0xD017];   /* Y expand         */
-        uint8_t d01c = mem->mem[0xD01C];   /* multicolor       */
-        uint8_t d01d = mem->mem[0xD01D];   /* X expand         */
-        uint8_t mc0  = mem->mem[0xD025] & 0xF;
-        uint8_t mc1  = mem->mem[0xD026] & 0xF;
+        uint8_t d015 = mem_peek(mem, 0xD015);   /* sprite enable    */
+        uint8_t d010 = mem_peek(mem, 0xD010);   /* X MSBs           */
+        uint8_t d017 = mem_peek(mem, 0xD017);   /* Y expand         */
+        uint8_t d01c = mem_peek(mem, 0xD01C);   /* multicolor       */
+        uint8_t d01d = mem_peek(mem, 0xD01D);   /* X expand         */
+        uint8_t mc0  = mem_peek(mem, 0xD025) & 0xF;
+        uint8_t mc1  = mem_peek(mem, 0xD026) & 0xF;
 
         for (int sn = 7; sn >= 0; sn--) {
             if (!(d015 & (1 << sn))) continue;
 
-            int      sx  = mem->mem[0xD000 + sn*2];
+            int      sx  = mem_peek(mem, 0xD000 + sn*2);
             if (d010 & (1 << sn)) sx |= 0x100;
-            int      sy  = mem->mem[0xD001 + sn*2];
-            uint8_t  col = mem->mem[0xD027 + sn] & 0xF;
+            int      sy  = mem_peek(mem, 0xD001 + sn*2);
+            uint8_t  col = mem_peek(mem, 0xD027 + sn) & 0xF;
             int      xe  = (d01d & (1 << sn)) ? 2 : 1;
             int      ye  = (d017 & (1 << sn)) ? 2 : 1;
             int      mcf = (d01c & (1 << sn)) ? 1 : 0;
 
             uint16_t ptr_addr  = (uint16_t)((screen_base + 0x3F8u + (uint32_t)sn) & 0xFFFF);
-            uint8_t  ptr       = mem->mem[ptr_addr];
+            uint8_t  ptr       = mem_peek(mem, ptr_addr);
             uint32_t data_base = (vic_bank + (uint32_t)ptr * 64u) & 0xFFFF;
 
             int fx0 = sx - 16;
@@ -222,9 +236,9 @@ void vic2_render_rgb(const memory_t *mem, uint8_t *buf)
 
             for (int row = 0; row < 21; row++) {
                 uint16_t ra = (uint16_t)((data_base + (uint32_t)row * 3u) & 0xFFFF);
-                uint32_t bits = ((uint32_t)mem->mem[ra]              << 16) |
-                                ((uint32_t)mem->mem[(ra+1u) & 0xFFFF] <<  8) |
-                                 (uint32_t)mem->mem[(ra+2u) & 0xFFFF];
+                uint32_t bits = ((uint32_t)mem_peek(mem, ra)              << 16) |
+                                ((uint32_t)mem_peek(mem, (ra+1u) & 0xFFFF) <<  8) |
+                                 (uint32_t)mem_peek(mem, (ra+2u) & 0xFFFF);
 
                 for (int yr = 0; yr < ye; yr++) {
                     int fy = fy0 + row * ye + yr;
@@ -279,14 +293,14 @@ static inline void vic_put_a(uint8_t *px, int x, int y, int ci)
 
 void vic2_render_rgb_active(const memory_t *mem, uint8_t *buf)
 {
-    uint8_t ctrl1    = mem->mem[0xD011];
-    uint8_t ctrl2    = mem->mem[0xD016];
-    uint8_t memsetup = mem->mem[0xD018];
-    uint8_t border   = mem->mem[0xD020] & 0xF;
-    uint8_t bg0      = mem->mem[0xD021] & 0xF;
-    uint8_t bg1      = mem->mem[0xD022] & 0xF;
-    uint8_t bg2      = mem->mem[0xD023] & 0xF;
-    uint8_t bg3      = mem->mem[0xD024] & 0xF;
+    uint8_t ctrl1    = mem_peek(mem, 0xD011);
+    uint8_t ctrl2    = mem_peek(mem, 0xD016);
+    uint8_t memsetup = mem_peek(mem, 0xD018);
+    uint8_t border   = mem_peek(mem, 0xD020) & 0xF;
+    uint8_t bg0      = mem_peek(mem, 0xD021) & 0xF;
+    uint8_t bg1      = mem_peek(mem, 0xD022) & 0xF;
+    uint8_t bg2      = mem_peek(mem, 0xD023) & 0xF;
+    uint8_t bg3      = mem_peek(mem, 0xD024) & 0xF;
 
     int ecm = (ctrl1 >> 6) & 1;
     int bmm = (ctrl1 >> 5) & 1;
@@ -297,7 +311,7 @@ void vic2_render_rgb_active(const memory_t *mem, uint8_t *buf)
     int csel = (ctrl2 >> 3) & 1;
     int xscroll = ctrl2 & 7;
 
-    uint8_t  cia2a    = mem->mem[0xDD00];
+    uint8_t  cia2a    = mem_peek(mem, 0xDD00);
     uint32_t vic_bank = (uint32_t)((~cia2a) & 3) * 0x4000u;
 
     uint32_t screen_base = vic_bank + (uint32_t)((memsetup >> 4) & 0xF) * 1024u;
@@ -350,8 +364,8 @@ void vic2_render_rgb_active(const memory_t *mem, uint8_t *buf)
         for (int row = 0; row < 25; row++) {
             for (int col = 0; col < 40; col++) {
                 uint16_t cell = (uint16_t)(row * 40 + col);
-                uint8_t  sc   = mem->mem[(screen_base + cell) & 0xFFFF];
-                uint8_t  cr   = mem->mem[(color_ram   + cell) & 0xFFFF] & 0xF;
+                uint8_t  sc   = mem_peek(mem, (screen_base + cell) & 0xFFFF);
+                uint8_t  cr   = mem_peek(mem, (color_ram   + cell) & 0xFFFF) & 0xF;
                 int      px0  = col * 8 + dx;
                 int      py0  = row * 8 + dy;
 
@@ -359,7 +373,7 @@ void vic2_render_rgb_active(const memory_t *mem, uint8_t *buf)
                     uint8_t bgtab[4] = { bg0, bg1, bg2, bg3 };
                     uint32_t cptr = (char_base + (uint32_t)(sc & 0x3F) * 8u) & 0xFFFF;
                     for (int cy = 0; cy < 8; cy++) {
-                        uint8_t bits = mem->mem[(cptr + (uint32_t)cy) & 0xFFFF];
+                        uint8_t bits = vic_read(mem, (cptr + (uint32_t)cy) & 0xFFFF);
                         for (int cx = 0; cx < 8; cx++)
                             vic_put_a_win(px0+cx, py0+cy,
                                           (bits & (0x80>>cx)) ? cr : bgtab[sc >> 6]);
@@ -368,7 +382,7 @@ void vic2_render_rgb_active(const memory_t *mem, uint8_t *buf)
                     uint8_t cols[4] = { bg0, bg1, bg2, (uint8_t)(cr & 0x7) };
                     uint32_t cptr = (char_base + (uint32_t)sc * 8u) & 0xFFFF;
                     for (int cy = 0; cy < 8; cy++) {
-                        uint8_t bits = mem->mem[(cptr + (uint32_t)cy) & 0xFFFF];
+                        uint8_t bits = vic_read(mem, (cptr + (uint32_t)cy) & 0xFFFF);
                         for (int cx = 0; cx < 4; cx++) {
                             int sel = (bits >> (6 - cx*2)) & 0x3;
                             vic_put_a_win(px0+cx*2,   py0+cy, cols[sel]);
@@ -378,7 +392,7 @@ void vic2_render_rgb_active(const memory_t *mem, uint8_t *buf)
                 } else {
                     uint32_t cptr = (char_base + (uint32_t)sc * 8u) & 0xFFFF;
                     for (int cy = 0; cy < 8; cy++) {
-                        uint8_t bits = mem->mem[(cptr + (uint32_t)cy) & 0xFFFF];
+                        uint8_t bits = vic_read(mem, (cptr + (uint32_t)cy) & 0xFFFF);
                         for (int cx = 0; cx < 8; cx++)
                             vic_put_a_win(px0+cx, py0+cy,
                                           (bits & (0x80>>cx)) ? cr : bg0);
@@ -391,8 +405,8 @@ void vic2_render_rgb_active(const memory_t *mem, uint8_t *buf)
         for (int row = 0; row < 25; row++) {
             for (int col = 0; col < 40; col++) {
                 uint16_t cell = (uint16_t)(row * 40 + col);
-                uint8_t  sc   = mem->mem[(screen_base + cell) & 0xFFFF];
-                uint8_t  cr   = mem->mem[(color_ram   + cell) & 0xFFFF] & 0xF;
+                uint8_t  sc   = mem_peek(mem, (screen_base + cell) & 0xFFFF);
+                uint8_t  cr   = mem_peek(mem, (color_ram   + cell) & 0xFFFF) & 0xF;
                 uint8_t  fg   = (sc >> 4) & 0xF;
                 uint8_t  bg   = sc & 0xF;
                 int      px0  = col * 8 + dx;
@@ -401,7 +415,7 @@ void vic2_render_rgb_active(const memory_t *mem, uint8_t *buf)
 
                 if (!mcm) {
                     for (int cy = 0; cy < 8; cy++) {
-                        uint8_t bits = mem->mem[(bptr + (uint32_t)cy) & 0xFFFF];
+                        uint8_t bits = mem_peek(mem, (bptr + (uint32_t)cy) & 0xFFFF);
                         for (int cx = 0; cx < 8; cx++)
                             vic_put_a_win(px0+cx, py0+cy,
                                           (bits & (0x80>>cx)) ? fg : bg);
@@ -409,7 +423,7 @@ void vic2_render_rgb_active(const memory_t *mem, uint8_t *buf)
                 } else {
                     uint8_t cols[4] = { bg0, fg, bg, cr };
                     for (int cy = 0; cy < 8; cy++) {
-                        uint8_t bits = mem->mem[(bptr + (uint32_t)cy) & 0xFFFF];
+                        uint8_t bits = mem_peek(mem, (bptr + (uint32_t)cy) & 0xFFFF);
                         for (int cx = 0; cx < 4; cx++) {
                             int sel = (bits >> (6 - cx*2)) & 0x3;
                             vic_put_a_win(px0+cx*2,   py0+cy, cols[sel]);
@@ -423,27 +437,27 @@ void vic2_render_rgb_active(const memory_t *mem, uint8_t *buf)
 
     /* ---- Sprite rendering (clipped to active window) ---- */
     {
-        uint8_t d015 = mem->mem[0xD015];
-        uint8_t d010 = mem->mem[0xD010];
-        uint8_t d017 = mem->mem[0xD017];
-        uint8_t d01c = mem->mem[0xD01C];
-        uint8_t d01d = mem->mem[0xD01D];
-        uint8_t mc0  = mem->mem[0xD025] & 0xF;
-        uint8_t mc1  = mem->mem[0xD026] & 0xF;
+        uint8_t d015 = mem_peek(mem, 0xD015);
+        uint8_t d010 = mem_peek(mem, 0xD010);
+        uint8_t d017 = mem_peek(mem, 0xD017);
+        uint8_t d01c = mem_peek(mem, 0xD01C);
+        uint8_t d01d = mem_peek(mem, 0xD01D);
+        uint8_t mc0  = mem_peek(mem, 0xD025) & 0xF;
+        uint8_t mc1  = mem_peek(mem, 0xD026) & 0xF;
 
         for (int sn = 7; sn >= 0; sn--) {
             if (!(d015 & (1 << sn))) continue;
 
-            int     sx  = mem->mem[0xD000 + sn*2];
+            int     sx  = mem_peek(mem, 0xD000 + sn*2);
             if (d010 & (1 << sn)) sx |= 0x100;
-            int     sy  = mem->mem[0xD001 + sn*2];
-            uint8_t col = mem->mem[0xD027 + sn] & 0xF;
+            int     sy  = mem_peek(mem, 0xD001 + sn*2);
+            uint8_t col = mem_peek(mem, 0xD027 + sn) & 0xF;
             int     xe  = (d01d & (1 << sn)) ? 2 : 1;
             int     ye  = (d017 & (1 << sn)) ? 2 : 1;
             int     mcf = (d01c & (1 << sn)) ? 1 : 0;
 
             uint16_t ptr_addr  = (uint16_t)((screen_base + 0x3F8u + (uint32_t)sn) & 0xFFFF);
-            uint8_t  ptr       = mem->mem[ptr_addr];
+            uint8_t  ptr       = mem_peek(mem, ptr_addr);
             uint32_t data_base = (vic_bank + (uint32_t)ptr * 64u) & 0xFFFF;
 
             int ax0 = sx - 48;   /* = (sx-16) - VIC2_ACTIVE_X */
@@ -451,9 +465,9 @@ void vic2_render_rgb_active(const memory_t *mem, uint8_t *buf)
 
             for (int row = 0; row < 21; row++) {
                 uint16_t ra = (uint16_t)((data_base + (uint32_t)row * 3u) & 0xFFFF);
-                uint32_t bits = ((uint32_t)mem->mem[ra]               << 16) |
-                                ((uint32_t)mem->mem[(ra+1u) & 0xFFFF] <<  8) |
-                                 (uint32_t)mem->mem[(ra+2u) & 0xFFFF];
+                uint32_t bits = ((uint32_t)mem_peek(mem, ra)               << 16) |
+                                ((uint32_t)mem_peek(mem, (ra+1u) & 0xFFFF) <<  8) |
+                                 (uint32_t)mem_peek(mem, (ra+2u) & 0xFFFF);
 
                 for (int yr = 0; yr < ye; yr++) {
                     int ay = ay0 + row * ye + yr;
@@ -493,15 +507,15 @@ int vic2_render_ppm_active(const memory_t *mem, const char *filename)
 
 void vic2_print_info(const memory_t *mem)
 {
-    uint8_t ctrl1    = mem->mem[0xD011];
-    uint8_t ctrl2    = mem->mem[0xD016];
-    uint8_t memsetup = mem->mem[0xD018];
-    uint8_t border   = mem->mem[0xD020] & 0xF;
-    uint8_t bg0      = mem->mem[0xD021] & 0xF;
-    uint8_t bg1      = mem->mem[0xD022] & 0xF;
-    uint8_t bg2      = mem->mem[0xD023] & 0xF;
-    uint8_t bg3      = mem->mem[0xD024] & 0xF;
-    uint8_t cia2a    = mem->mem[0xDD00];
+    uint8_t ctrl1    = mem_peek(mem, 0xD011);
+    uint8_t ctrl2    = mem_peek(mem, 0xD016);
+    uint8_t memsetup = mem_peek(mem, 0xD018);
+    uint8_t border   = mem_peek(mem, 0xD020) & 0xF;
+    uint8_t bg0      = mem_peek(mem, 0xD021) & 0xF;
+    uint8_t bg1      = mem_peek(mem, 0xD022) & 0xF;
+    uint8_t bg2      = mem_peek(mem, 0xD023) & 0xF;
+    uint8_t bg3      = mem_peek(mem, 0xD024) & 0xF;
+    uint8_t cia2a    = mem_peek(mem, 0xDD00);
 
     int ecm = (ctrl1 >> 6) & 1;
     int bmm = (ctrl1 >> 5) & 1;
@@ -523,45 +537,45 @@ void vic2_print_info(const memory_t *mem)
     uint32_t cg_addr     = vic_bank + (uint32_t)((memsetup >> 1) & 0x7) * 2048u;
     uint32_t bm_addr     = vic_bank + (uint32_t)(((memsetup >> 3) & 1) * 0x2000u);
 
-    printf("VIC-II State:\n");
-    printf("  Mode     : %s\n", mode);
-    printf("  D011     : $%02X  (ECM=%d BMM=%d DEN=%d RSEL=%d yscroll=%d)\n",
+    cli_printf("VIC-II State:\n");
+    cli_printf("  Mode     : %s\n", mode);
+    cli_printf("  D011     : $%02X  (ECM=%d BMM=%d DEN=%d RSEL=%d yscroll=%d)\n",
            ctrl1, ecm, bmm, den, (ctrl1>>3)&1, ctrl1&7);
-    printf("  D016     : $%02X  (MCM=%d CSEL=%d xscroll=%d)\n",
+    cli_printf("  D016     : $%02X  (MCM=%d CSEL=%d xscroll=%d)\n",
            ctrl2, mcm, (ctrl2>>3)&1, ctrl2&7);
-    printf("  D018     : $%02X\n", memsetup);
-    printf("  Bank     : %d ($%04X-$%04X)  CIA2PA=$%02X\n",
+    cli_printf("  D018     : $%02X\n", memsetup);
+    cli_printf("  Bank     : %d ($%04X-$%04X)  CIA2PA=$%02X\n",
            bank, (unsigned)vic_bank, (unsigned)(vic_bank + 0x3FFF), cia2a);
-    printf("  Screen   : $%04X\n", (unsigned)screen_addr);
+    cli_printf("  Screen   : $%04X\n", (unsigned)screen_addr);
     if (bmm)
-        printf("  Bitmap   : $%04X\n", (unsigned)bm_addr);
+        cli_printf("  Bitmap   : $%04X\n", (unsigned)bm_addr);
     else
-        printf("  CharGen  : $%04X\n", (unsigned)cg_addr);
-    printf("  Border   : %d (%s)\n", border, vic2_color_names[border]);
-    printf("  BG0      : %d (%s)\n", bg0,    vic2_color_names[bg0]);
+        cli_printf("  CharGen  : $%04X\n", (unsigned)cg_addr);
+    cli_printf("  Border   : %d (%s)\n", border, vic2_color_names[border]);
+    cli_printf("  BG0      : %d (%s)\n", bg0,    vic2_color_names[bg0]);
     if (ecm) {
-        printf("  BG1      : %d (%s)\n", bg1, vic2_color_names[bg1]);
-        printf("  BG2      : %d (%s)\n", bg2, vic2_color_names[bg2]);
-        printf("  BG3      : %d (%s)\n", bg3, vic2_color_names[bg3]);
+        cli_printf("  BG1      : %d (%s)\n", bg1, vic2_color_names[bg1]);
+        cli_printf("  BG2      : %d (%s)\n", bg2, vic2_color_names[bg2]);
+        cli_printf("  BG3      : %d (%s)\n", bg3, vic2_color_names[bg3]);
     }
-    printf("  Frame    : %dx%d px (active 320x200 at +%d,+%d)\n",
+    cli_printf("  Frame    : %dx%d px (active 320x200 at +%d,+%d)\n",
            VIC2_FRAME_W, VIC2_FRAME_H, VIC2_ACTIVE_X, VIC2_ACTIVE_Y);
 }
 
 void vic2_print_regs(const memory_t *mem)
 {
-    uint8_t ctrl1    = mem->mem[0xD011];
-    uint8_t ctrl2    = mem->mem[0xD016];
-    uint8_t memsetup = mem->mem[0xD018];
-    uint8_t raster   = mem->mem[0xD012];
-    uint8_t border   = mem->mem[0xD020] & 0xF;
-    uint8_t bg0      = mem->mem[0xD021] & 0xF;
-    uint8_t bg1      = mem->mem[0xD022] & 0xF;
-    uint8_t bg2      = mem->mem[0xD023] & 0xF;
-    uint8_t bg3      = mem->mem[0xD024] & 0xF;
-    uint8_t d019     = mem->mem[0xD019];
-    uint8_t d01a     = mem->mem[0xD01A];
-    uint8_t cia2a    = mem->mem[0xDD00];
+    uint8_t ctrl1    = mem_peek(mem, 0xD011);
+    uint8_t ctrl2    = mem_peek(mem, 0xD016);
+    uint8_t memsetup = mem_peek(mem, 0xD018);
+    uint8_t raster   = mem_peek(mem, 0xD012);
+    uint8_t border   = mem_peek(mem, 0xD020) & 0xF;
+    uint8_t bg0      = mem_peek(mem, 0xD021) & 0xF;
+    uint8_t bg1      = mem_peek(mem, 0xD022) & 0xF;
+    uint8_t bg2      = mem_peek(mem, 0xD023) & 0xF;
+    uint8_t bg3      = mem_peek(mem, 0xD024) & 0xF;
+    uint8_t d019     = mem_peek(mem, 0xD019);
+    uint8_t d01a     = mem_peek(mem, 0xD01A);
+    uint8_t cia2a    = mem_peek(mem, 0xDD00);
 
     int ecm     = (ctrl1 >> 6) & 1;
     int bmm     = (ctrl1 >> 5) & 1;
@@ -589,63 +603,63 @@ void vic2_print_regs(const memory_t *mem)
     else if ( bmm&&!ecm&& mcm)  mode = "Multicolour Bitmap";
     else                         mode = "Invalid";
 
-    printf("VIC-II Registers:\n");
-    printf("  Mode     : %s\n", mode);
-    printf("  D011=$%02X : ECM=%d BMM=%d DEN=%d RSEL=%d RST8=%d yscroll=%d\n",
+    cli_printf("VIC-II Registers:\n");
+    cli_printf("  Mode     : %s\n", mode);
+    cli_printf("  D011=$%02X : ECM=%d BMM=%d DEN=%d RSEL=%d RST8=%d yscroll=%d\n",
            ctrl1, ecm, bmm, den, rsel, rst8, yscroll);
-    printf("  D016=$%02X : MCM=%d CSEL=%d xscroll=%d\n",
+    cli_printf("  D016=$%02X : MCM=%d CSEL=%d xscroll=%d\n",
            ctrl2, mcm, csel, xscroll);
-    printf("  D018=$%02X : screen=bits[7:4]  char/bm=bits[3:1]\n", memsetup);
-    printf("  D012=$%02X : Raster line = %d ($%03X)\n",
+    cli_printf("  D018=$%02X : screen=bits[7:4]  char/bm=bits[3:1]\n", memsetup);
+    cli_printf("  D012=$%02X : Raster line = %d ($%03X)\n",
            raster, raster_line, raster_line);
-    printf("  D019=$%02X : IRQ=%d  RST=%d MBC=%d MMC=%d LP=%d\n",
+    cli_printf("  D019=$%02X : IRQ=%d  RST=%d MBC=%d MMC=%d LP=%d\n",
            d019, (d019>>7)&1, d019&1, (d019>>1)&1, (d019>>2)&1, (d019>>3)&1);
-    printf("  D01A=$%02X : ERST=%d EMBC=%d EMMC=%d ELP=%d\n",
+    cli_printf("  D01A=$%02X : ERST=%d EMBC=%d EMMC=%d ELP=%d\n",
            d01a, d01a&1, (d01a>>1)&1, (d01a>>2)&1, (d01a>>3)&1);
-    printf("  Bank     : %d  ($%04X-$%04X)  CIA2PA=$%02X\n",
+    cli_printf("  Bank     : %d  ($%04X-$%04X)  CIA2PA=$%02X\n",
            bank, (unsigned)vic_bank, (unsigned)(vic_bank + 0x3FFF), cia2a);
-    printf("  Screen   : $%04X\n", (unsigned)screen_addr);
+    cli_printf("  Screen   : $%04X\n", (unsigned)screen_addr);
     if (bmm)
-        printf("  Bitmap   : $%04X\n", (unsigned)bm_addr);
+        cli_printf("  Bitmap   : $%04X\n", (unsigned)bm_addr);
     else
-        printf("  CharGen  : $%04X\n", (unsigned)cg_addr);
-    printf("  ColourRAM: $D800\n");
-    printf("  D020 Border: %d (%s)\n",   border, vic2_color_names[border]);
-    printf("  D021   BG0: %d (%s)\n",    bg0,    vic2_color_names[bg0]);
-    printf("  D022   BG1: %d (%s)\n",    bg1,    vic2_color_names[bg1]);
-    printf("  D023   BG2: %d (%s)\n",    bg2,    vic2_color_names[bg2]);
-    printf("  D024   BG3: %d (%s)\n",    bg3,    vic2_color_names[bg3]);
+        cli_printf("  CharGen  : $%04X\n", (unsigned)cg_addr);
+    cli_printf("  ColourRAM: $D800\n");
+    cli_printf("  D020 Border: %d (%s)\n",   border, vic2_color_names[border]);
+    cli_printf("  D021   BG0: %d (%s)\n",    bg0,    vic2_color_names[bg0]);
+    cli_printf("  D022   BG1: %d (%s)\n",    bg1,    vic2_color_names[bg1]);
+    cli_printf("  D023   BG2: %d (%s)\n",    bg2,    vic2_color_names[bg2]);
+    cli_printf("  D024   BG3: %d (%s)\n",    bg3,    vic2_color_names[bg3]);
 }
 
 void vic2_print_sprites(const memory_t *mem)
 {
-    uint8_t d015  = mem->mem[0xD015];
-    uint8_t d01c  = mem->mem[0xD01C];
-    uint8_t d01d  = mem->mem[0xD01D];
-    uint8_t d017  = mem->mem[0xD017];
-    uint8_t d01b  = mem->mem[0xD01B];
-    uint8_t d010  = mem->mem[0xD010];
-    uint8_t d018  = mem->mem[0xD018];
-    uint8_t d025  = mem->mem[0xD025] & 0xF;
-    uint8_t d026  = mem->mem[0xD026] & 0xF;
-    uint8_t cia2a = mem->mem[0xDD00];
+    uint8_t d015  = mem_peek(mem, 0xD015);
+    uint8_t d01c  = mem_peek(mem, 0xD01C);
+    uint8_t d01d  = mem_peek(mem, 0xD01D);
+    uint8_t d017  = mem_peek(mem, 0xD017);
+    uint8_t d01b  = mem_peek(mem, 0xD01B);
+    uint8_t d010  = mem_peek(mem, 0xD010);
+    uint8_t d018  = mem_peek(mem, 0xD018);
+    uint8_t d025  = mem_peek(mem, 0xD025) & 0xF;
+    uint8_t d026  = mem_peek(mem, 0xD026) & 0xF;
+    uint8_t cia2a = mem_peek(mem, 0xDD00);
 
     uint32_t vic_bank    = (uint32_t)((~cia2a) & 3) * 0x4000u;
     uint32_t screen_base = vic_bank + (uint32_t)((d018 >> 4) & 0xF) * 1024u;
 
-    printf("VIC-II Sprites  D015=$%02X  MC0=%d(%s)  MC1=%d(%s):\n",
+    cli_printf("VIC-II Sprites  D015=$%02X  MC0=%d(%s)  MC1=%d(%s):\n",
            d015, d025, vic2_color_names[d025], d026, vic2_color_names[d026]);
-    printf("  #  En   X    Y   Col            MCM XE  YE  BG  DataAddr\n");
+    cli_printf("  #  En   X    Y   Col            MCM XE  YE  BG  DataAddr\n");
 
     for (int sn = 0; sn < 8; sn++) {
         int      enabled = (d015 >> sn) & 1;
-        uint16_t sx      = (uint16_t)(mem->mem[0xD000 + sn*2] | (((d010 >> sn) & 1) << 8));
-        uint8_t  sy      = mem->mem[0xD001 + sn*2];
-        uint8_t  color   = mem->mem[0xD027 + sn] & 0xF;
-        uint8_t  ptr     = mem->mem[(screen_base + 0x3F8 + sn) & 0xFFFF];
+        uint16_t sx      = (uint16_t)(mem_peek(mem, 0xD000 + sn*2) | (((d010 >> sn) & 1) << 8));
+        uint8_t  sy      = mem_peek(mem, 0xD001 + sn*2);
+        uint8_t  color   = mem_peek(mem, 0xD027 + sn) & 0xF;
+        uint8_t  ptr     = mem_peek(mem, (screen_base + 0x3F8 + sn) & 0xFFFF);
         uint32_t saddr   = (vic_bank + (uint32_t)ptr * 64u) & 0xFFFF;
 
-        printf("  %d  %-3s  %-4d %-3d  %X(%-10s)  %-3s %-3s %-3s %-3s $%04X\n",
+        cli_printf("  %d  %-3s  %-4d %-3d  %X(%-10s)  %-3s %-3s %-3s %-3s $%04X\n",
                sn, enabled ? "Yes" : "No", sx, sy,
                color, vic2_color_names[color],
                (d01c >> sn) & 1 ? "Y" : "-",
@@ -662,15 +676,15 @@ void vic2_print_sprites(const memory_t *mem)
 
 void vic2_json_info(const memory_t *mem)
 {
-    uint8_t ctrl1    = mem->mem[0xD011];
-    uint8_t ctrl2    = mem->mem[0xD016];
-    uint8_t memsetup = mem->mem[0xD018];
-    uint8_t border   = mem->mem[0xD020] & 0xF;
-    uint8_t bg0      = mem->mem[0xD021] & 0xF;
-    uint8_t bg1      = mem->mem[0xD022] & 0xF;
-    uint8_t bg2      = mem->mem[0xD023] & 0xF;
-    uint8_t bg3      = mem->mem[0xD024] & 0xF;
-    uint8_t cia2a    = mem->mem[0xDD00];
+    uint8_t ctrl1    = mem_peek(mem, 0xD011);
+    uint8_t ctrl2    = mem_peek(mem, 0xD016);
+    uint8_t memsetup = mem_peek(mem, 0xD018);
+    uint8_t border   = mem_peek(mem, 0xD020) & 0xF;
+    uint8_t bg0      = mem_peek(mem, 0xD021) & 0xF;
+    uint8_t bg1      = mem_peek(mem, 0xD022) & 0xF;
+    uint8_t bg2      = mem_peek(mem, 0xD023) & 0xF;
+    uint8_t bg3      = mem_peek(mem, 0xD024) & 0xF;
+    uint8_t cia2a    = mem_peek(mem, 0xDD00);
 
     int ecm  = (ctrl1 >> 6) & 1;
     int bmm  = (ctrl1 >> 5) & 1;
@@ -694,7 +708,7 @@ void vic2_json_info(const memory_t *mem)
     uint32_t cg_addr     = vic_bank + (uint32_t)((memsetup >> 1) & 0x7) * 2048u;
     uint32_t bm_addr     = vic_bank + (uint32_t)(((memsetup >> 3) & 1) * 0x2000u);
 
-    printf("{\"mode\":\"%s\","
+    cli_printf("{\"mode\":\"%s\","
            "\"d011\":%d,\"d016\":%d,\"d018\":%d,"
            "\"ecm\":%d,\"bmm\":%d,\"den\":%d,\"mcm\":%d,"
            "\"rsel\":%d,\"csel\":%d,"
@@ -724,18 +738,18 @@ void vic2_json_info(const memory_t *mem)
 
 void vic2_json_regs(const memory_t *mem)
 {
-    uint8_t ctrl1    = mem->mem[0xD011];
-    uint8_t ctrl2    = mem->mem[0xD016];
-    uint8_t memsetup = mem->mem[0xD018];
-    uint8_t raster   = mem->mem[0xD012];
-    uint8_t border   = mem->mem[0xD020] & 0xF;
-    uint8_t bg0      = mem->mem[0xD021] & 0xF;
-    uint8_t bg1      = mem->mem[0xD022] & 0xF;
-    uint8_t bg2      = mem->mem[0xD023] & 0xF;
-    uint8_t bg3      = mem->mem[0xD024] & 0xF;
-    uint8_t d019     = mem->mem[0xD019];
-    uint8_t d01a     = mem->mem[0xD01A];
-    uint8_t cia2a    = mem->mem[0xDD00];
+    uint8_t ctrl1    = mem_peek(mem, 0xD011);
+    uint8_t ctrl2    = mem_peek(mem, 0xD016);
+    uint8_t memsetup = mem_peek(mem, 0xD018);
+    uint8_t raster   = mem_peek(mem, 0xD012);
+    uint8_t border   = mem_peek(mem, 0xD020) & 0xF;
+    uint8_t bg0      = mem_peek(mem, 0xD021) & 0xF;
+    uint8_t bg1      = mem_peek(mem, 0xD022) & 0xF;
+    uint8_t bg2      = mem_peek(mem, 0xD023) & 0xF;
+    uint8_t bg3      = mem_peek(mem, 0xD024) & 0xF;
+    uint8_t d019     = mem_peek(mem, 0xD019);
+    uint8_t d01a     = mem_peek(mem, 0xD01A);
+    uint8_t cia2a    = mem_peek(mem, 0xDD00);
 
     int ecm     = (ctrl1 >> 6) & 1;
     int bmm     = (ctrl1 >> 5) & 1;
@@ -761,7 +775,7 @@ void vic2_json_regs(const memory_t *mem)
     else if ( bmm&&!ecm&& mcm)  mode = "Multicolour Bitmap";
     else                         mode = "Invalid";
 
-    printf("{\"mode\":\"%s\","
+    cli_printf("{\"mode\":\"%s\","
            "\"d011\":%d,\"d016\":%d,\"d018\":%d,\"d012\":%d,"
            "\"ecm\":%d,\"bmm\":%d,\"den\":%d,\"mcm\":%d,"
            "\"rsel\":%d,\"csel\":%d,\"rst8\":%d,"
@@ -795,33 +809,33 @@ void vic2_json_regs(const memory_t *mem)
 
 void vic2_json_sprites(const memory_t *mem)
 {
-    uint8_t d015  = mem->mem[0xD015];
-    uint8_t d01c  = mem->mem[0xD01C];
-    uint8_t d01d  = mem->mem[0xD01D];
-    uint8_t d017  = mem->mem[0xD017];
-    uint8_t d01b  = mem->mem[0xD01B];
-    uint8_t d010  = mem->mem[0xD010];
-    uint8_t d018  = mem->mem[0xD018];
-    uint8_t d025  = mem->mem[0xD025] & 0xF;
-    uint8_t d026  = mem->mem[0xD026] & 0xF;
-    uint8_t cia2a = mem->mem[0xDD00];
+    uint8_t d015  = mem_peek(mem, 0xD015);
+    uint8_t d01c  = mem_peek(mem, 0xD01C);
+    uint8_t d01d  = mem_peek(mem, 0xD01D);
+    uint8_t d017  = mem_peek(mem, 0xD017);
+    uint8_t d01b  = mem_peek(mem, 0xD01B);
+    uint8_t d010  = mem_peek(mem, 0xD010);
+    uint8_t d018  = mem_peek(mem, 0xD018);
+    uint8_t d025  = mem_peek(mem, 0xD025) & 0xF;
+    uint8_t d026  = mem_peek(mem, 0xD026) & 0xF;
+    uint8_t cia2a = mem_peek(mem, 0xDD00);
 
     uint32_t vic_bank    = (uint32_t)((~cia2a) & 3) * 0x4000u;
     uint32_t screen_base = vic_bank + (uint32_t)((d018 >> 4) & 0xF) * 1024u;
 
-    printf("{\"d015\":%d,\"mc0\":%d,\"mc0_name\":\"%s\",\"mc1\":%d,\"mc1_name\":\"%s\",\"sprites\":[",
+    cli_printf("{\"d015\":%d,\"mc0\":%d,\"mc0_name\":\"%s\",\"mc1\":%d,\"mc1_name\":\"%s\",\"sprites\":[",
            d015, d025, vic2_color_names[d025], d026, vic2_color_names[d026]);
 
     for (int sn = 0; sn < 8; sn++) {
         int      enabled = (d015 >> sn) & 1;
-        uint16_t sx      = (uint16_t)(mem->mem[0xD000 + sn*2] | (((d010 >> sn) & 1) << 8));
-        uint8_t  sy      = mem->mem[0xD001 + sn*2];
-        uint8_t  color   = mem->mem[0xD027 + sn] & 0xF;
-        uint8_t  ptr     = mem->mem[(screen_base + 0x3F8 + sn) & 0xFFFF];
+        uint16_t sx      = (uint16_t)(mem_peek(mem, 0xD000 + sn*2) | (((d010 >> sn) & 1) << 8));
+        uint8_t  sy      = mem_peek(mem, 0xD001 + sn*2);
+        uint8_t  color   = mem_peek(mem, 0xD027 + sn) & 0xF;
+        uint8_t  ptr     = mem_peek(mem, (screen_base + 0x3F8 + sn) & 0xFFFF);
         uint32_t saddr   = (vic_bank + (uint32_t)ptr * 64u) & 0xFFFF;
 
-        if (sn > 0) printf(",");
-        printf("{\"index\":%d,\"enabled\":%d,\"x\":%d,\"y\":%d,"
+        if (sn > 0) cli_printf(",");
+        cli_printf("{\"index\":%d,\"enabled\":%d,\"x\":%d,\"y\":%d,"
                "\"color\":%d,\"color_name\":\"%s\","
                "\"multicolor\":%d,\"expand_x\":%d,\"expand_y\":%d,"
                "\"behind_bg\":%d,\"data_addr\":%u}",
@@ -830,5 +844,89 @@ void vic2_json_sprites(const memory_t *mem)
                (d01c >> sn) & 1, (d01d >> sn) & 1, (d017 >> sn) & 1,
                (d01b >> sn) & 1, (unsigned)saddr);
     }
-    printf("]}");
+    cli_printf("]}");
+}
+
+void vic2_render_sprite(const memory_t *mem, int sn, uint8_t *buf) {
+    if (sn < 0 || sn > 7) return;
+
+    uint8_t memsetup = mem_peek(mem, 0xD018);
+    uint8_t cia2a    = mem_peek(mem, 0xDD00);
+    uint32_t vic_bank = (uint32_t)((~cia2a) & 3) * 0x4000u;
+    uint32_t screen_base = vic_bank + (uint32_t)((memsetup >> 4) & 0xF) * 1024u;
+
+    uint8_t d01c = mem_peek(mem, 0xD01C);   /* multicolor       */
+    uint8_t mc0  = mem_peek(mem, 0xD025) & 0xF;
+    uint8_t mc1  = mem_peek(mem, 0xD026) & 0xF;
+    uint8_t col  = mem_peek(mem, 0xD027 + sn) & 0xF;
+    int     mcf  = (d01c & (1 << sn)) ? 1 : 0;
+
+    uint16_t ptr_addr  = (uint16_t)((screen_base + 0x3F8u + (uint32_t)sn) & 0xFFFF);
+    uint8_t  ptr       = mem_peek(mem, ptr_addr);
+    uint32_t data_base = (vic_bank + (uint32_t)ptr * 64u) & 0xFFFF;
+
+    memset(buf, 0, 24 * 21 * 4);
+
+    for (int row = 0; row < 21; row++) {
+        uint16_t ra = (uint16_t)((data_base + (uint32_t)row * 3u) & 0xFFFF);
+        uint32_t bits = ((uint32_t)mem_peek(mem, ra)              << 16) |
+                        ((uint32_t)mem_peek(mem, (ra+1u) & 0xFFFF) <<  8) |
+                         (uint32_t)mem_peek(mem, (ra+2u) & 0xFFFF);
+
+        if (!mcf) {
+            for (int px = 0; px < 24; px++) {
+                if (bits & (0x800000u >> (uint32_t)px)) {
+                    int off = (row * 24 + px) * 4;
+                    buf[off+0] = vic2_palette[col][0];
+                    buf[off+1] = vic2_palette[col][1];
+                    buf[off+2] = vic2_palette[col][2];
+                    buf[off+3] = 255;
+                }
+            }
+        } else {
+            for (int px = 0; px < 12; px++) {
+                int sel = (int)((bits >> (uint32_t)(22 - px*2)) & 0x3u);
+                if (sel != 0) {
+                    uint8_t c = (sel == 1) ? mc0 : (sel == 2) ? col : mc1;
+                    for (int xr = 0; xr < 2; xr++) {
+                        int off = (row * 24 + px * 2 + xr) * 4;
+                        buf[off+0] = vic2_palette[c][0];
+                        buf[off+1] = vic2_palette[c][1];
+                        buf[off+2] = vic2_palette[c][2];
+                        buf[off+3] = 255;
+                    }
+                }
+            }
+        }
+    }
+}
+
+void vic2_render_char(const memory_t *mem, uint16_t char_base, int char_index, int mcm, uint8_t c0, uint8_t c1, uint8_t c2, uint8_t c3, uint8_t *buf) {
+    uint32_t data_base = (char_base + (uint32_t)char_index * 8u) & 0xFFFF;
+    for (int row = 0; row < 8; row++) {
+        uint8_t bits = vic_read(mem, (data_base + (uint32_t)row) & 0xFFFF);
+        if (!mcm) {
+            for (int px = 0; px < 8; px++) {
+                int bit = (bits >> (7 - px)) & 1;
+                uint8_t c = bit ? c3 : c0;  /* c3 = char fg color (equiv. color RAM); c1/c2 are MC-only */
+                int off = (row * 8 + px) * 4;
+                buf[off+0] = vic2_palette[c][0];
+                buf[off+1] = vic2_palette[c][1];
+                buf[off+2] = vic2_palette[c][2];
+                buf[off+3] = 255;
+            }
+        } else {
+            for (int px = 0; px < 4; px++) {
+                int sel = (bits >> (6 - (px << 1))) & 0x3;
+                uint8_t c = (sel == 0) ? c0 : (sel == 1) ? c1 : (sel == 2) ? c2 : c3;
+                for (int xr = 0; xr < 2; xr++) {
+                    int off = (row * 8 + px * 2 + xr) * 4;
+                    buf[off+0] = vic2_palette[c][0];
+                    buf[off+1] = vic2_palette[c][1];
+                    buf[off+2] = vic2_palette[c][2];
+                    buf[off+3] = 255;
+                }
+            }
+        }
+    }
 }

@@ -7,6 +7,7 @@ CXXFLAGS = -pthread -Wall -Wextra -O2 -Wno-stringop-truncation
 
 # Include paths for library code (no src/ prefix — each lib is its own root)
 LIB_IFLAGS = \
+	-I src \
 	-I src/lib6502-core \
 	-I src/lib6502-core/opcodes \
 	-I src/lib6502-mem \
@@ -57,10 +58,24 @@ DBG_SRCS = \
 	src/lib6502-debug/condition.cpp \
 	src/lib6502-debug/debug_context.cpp
 
+# --- lib6502-commands (Shared CLI logic) ---
+CMD_SRCS = \
+	src/cli/commands.cpp \
+	src/cli/commands/StepCmd.cpp \
+	src/cli/commands/NextCmd.cpp \
+	src/cli/commands/FinishCmd.cpp \
+	src/cli/commands/HistoryCmd.cpp \
+	src/cli/commands/BreakCmd.cpp \
+	src/cli/commands/EnvCmd.cpp \
+	src/cli/commands/DevicesCmd.cpp \
+	src/cli/commands/IdiomsCmd.cpp \
+	src/cli/commands/HelpCmd.cpp \
+	src/cli/commands/CommandRegistry.cpp \
+
 # --- sim_api (front-facing) ---
 API_SRCS = src/sim_api.cpp
 
-ALL_LIB_SRCS = $(CORE_SRCS) $(MEM_SRCS) $(DEV_SRCS) $(TOOL_SRCS) $(DBG_SRCS) $(API_SRCS)
+ALL_LIB_SRCS = $(CORE_SRCS) $(MEM_SRCS) $(DEV_SRCS) $(TOOL_SRCS) $(DBG_SRCS) $(CMD_SRCS) $(API_SRCS)
 ALL_LIB_OBJS = $(ALL_LIB_SRCS:.cpp=.o)
 
 LIB_TARGET = libsim6502.a
@@ -97,23 +112,20 @@ src/sim_api.o: src/sim_api.cpp
 	$(CXX) $(CXXFLAGS) $(FRONT_IFLAGS) -c -o $@ $<
 
 # --- CLI Frontend ---
-CLI_COMMANDS_SRCS = \
-	src/cli/commands/StepCmd.cpp \
-	src/cli/commands/NextCmd.cpp \
-	src/cli/commands/FinishCmd.cpp \
-	src/cli/commands/HistoryCmd.cpp \
-	src/cli/commands/BreakCmd.cpp \
-	src/cli/commands/EnvCmd.cpp \
-	src/cli/commands/DevicesCmd.cpp \
-	src/cli/commands/IdiomsCmd.cpp \
-	src/cli/commands/CommandRegistry.cpp
-
-CLI_SRCS = src/cli/main.cpp src/cli/commands.cpp $(CLI_COMMANDS_SRCS)
+CLI_SRCS = src/cli/main.cpp
 CLI_OBJS = $(CLI_SRCS:.cpp=.o)
 TARGET   = sim6502
 
+# Optional readline support for Tab-completion in CLI interactive mode.
+# Enabled automatically when readline is present; define HAVE_READLINE=0 to disable.
+READLINE_LIBS   := $(shell pkg-config --libs readline 2>/dev/null || echo "")
+READLINE_CFLAGS := $(shell pkg-config --cflags readline 2>/dev/null || echo "")
+ifneq ($(READLINE_LIBS),)
+    CXXFLAGS += -DHAVE_READLINE $(READLINE_CFLAGS)
+endif
+
 $(TARGET): $(CLI_OBJS) $(LIB_TARGET)
-	$(CXX) $(CXXFLAGS) -o $@ $^ $(SDL2_LIBS)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(SDL2_LIBS) $(READLINE_LIBS)
 
 src/cli/%.o: src/cli/%.cpp
 	$(CXX) $(CXXFLAGS) $(FRONT_IFLAGS) -c -o $@ $<
@@ -121,53 +133,60 @@ src/cli/%.o: src/cli/%.cpp
 src/cli/commands/%.o: src/cli/commands/%.cpp
 	$(CXX) $(CXXFLAGS) $(FRONT_IFLAGS) -c -o $@ $<
 
-# --- GUI Frontend ---
-IMGUI_DIR  = src/gui/imgui
-IMGUI_BACK = $(IMGUI_DIR)/backends
-
-SDL2_CFLAGS := $(shell pkg-config --cflags sdl2 2>/dev/null)
+# --- GUI Frontend (wxWidgets) ---
 SDL2_LIBS   := $(shell pkg-config --libs   sdl2 2>/dev/null)
 GL_LIBS      = -lGL -lpthread
 
-IMGUI_SRCS = \
-	$(IMGUI_DIR)/imgui.cpp \
-	$(IMGUI_DIR)/imgui_draw.cpp \
-	$(IMGUI_DIR)/imgui_tables.cpp \
-	$(IMGUI_DIR)/imgui_widgets.cpp \
-	$(IMGUI_BACK)/imgui_impl_sdl2.cpp \
-	$(IMGUI_BACK)/imgui_impl_opengl3.cpp
-IMGUI_OBJS = $(IMGUI_SRCS:.cpp=.o)
+WX_CFLAGS   := $(shell wx-config --cflags)
+WX_LIBS     := $(shell wx-config --libs std,aui,gl,stc,propgrid)
 
+GUI_SRCS = \
+	src/gui/app.cpp \
+	src/gui/main_frame.cpp \
+	src/gui/main_frame_menus.cpp \
+	src/gui/pane_registers.cpp \
+	src/gui/pane_disassembly.cpp \
+	src/gui/pane_memory.cpp \
+	src/gui/pane_console.cpp \
+	src/gui/pane_breakpoints.cpp \
+	src/gui/pane_trace.cpp \
+	src/gui/pane_stack.cpp \
+	src/gui/pane_watches.cpp \
+	src/gui/pane_snap_diff.cpp \
+	src/gui/pane_iref.cpp \
+	src/gui/pane_symbols.cpp \
+	src/gui/pane_source.cpp \
+	src/gui/pane_profiler.cpp \
+	src/gui/pane_test_runner.cpp \
+	src/gui/pane_devices.cpp \
+	src/gui/pane_patterns.cpp \
+	src/gui/dialogs.cpp \
+	src/gui/pane_vic_screen.cpp \
+	src/gui/pane_vic_char_editor.cpp \
+	src/gui/pane_vic_sprites.cpp \
+	src/gui/pane_vic_regs.cpp \
+	src/gui/pane_sid_debugger.cpp \
+	src/gui/pane_audio_mixer.cpp
+
+GUI_OBJS = $(GUI_SRCS:.cpp=.o)
 GUI_TARGET = sim6502-gui
 
-src/gui/main.o: src/gui/main.cpp $(IMGUI_DIR)/imgui.h src/sim_api.h src/gui/imgui_filedlg.h
-	$(CXX) $(CXXFLAGS) $(FRONT_IFLAGS) $(SDL2_CFLAGS) -I $(IMGUI_DIR) -I $(IMGUI_BACK) -c -o $@ $<
-
 .PHONY: gui
-gui: $(IMGUI_DIR)/imgui.h $(GUI_TARGET)
+gui: $(GUI_TARGET)
 
-$(GUI_TARGET): src/gui/main.o $(LIB_TARGET) $(IMGUI_OBJS)
-	$(CXX) -o $@ $^ $(SDL2_LIBS) $(GL_LIBS)
+$(GUI_TARGET): $(GUI_OBJS) $(LIB_TARGET)
+	$(CXX) -o $@ $^ $(WX_LIBS) $(SDL2_LIBS) $(GL_LIBS) $(READLINE_LIBS)
 
-$(IMGUI_DIR)/%.o: $(IMGUI_DIR)/%.cpp
-	$(CXX) -O2 -I $(IMGUI_DIR) -I $(IMGUI_BACK) -c -o $@ $<
-
-$(IMGUI_BACK)/%.o: $(IMGUI_BACK)/%.cpp
-	$(CXX) -O2 $(SDL2_CFLAGS) -I $(IMGUI_DIR) -I $(IMGUI_BACK) -c -o $@ $<
-
-# Auto-fetch ImGui (docking branch) if not present
-$(IMGUI_DIR)/imgui.h:
-	@echo "--- Dear ImGui not found; fetching docking branch ---"
-	git clone --depth 1 --branch docking https://github.com/ocornut/imgui.git $(IMGUI_DIR)
+src/gui/%.o: src/gui/%.cpp
+	$(CXX) $(CXXFLAGS) $(FRONT_IFLAGS) $(WX_CFLAGS) -c -o $@ $<
 
 # --- Unit Testing ---
-UNIT_TEST_SRCS = tests/unit/test_main.cpp tests/unit/test_cpu_arithmetic.cpp tests/unit/test_cpu_opcodes.cpp tests/unit/test_cpu_45gs02.cpp tests/unit/test_cpu_decode.cpp tests/unit/test_memory.cpp tests/unit/test_toolchain.cpp tests/unit/test_debug.cpp tests/unit/test_sim_api.cpp tests/unit/test_devices.cpp tests/unit/test_integration.cpp tests/unit/test_fuzz.cpp tests/unit/test_cli.cpp tests/unit/test_regression.cpp tests/unit/test_patterns_logic.cpp tests/unit/test_templates_logic.cpp
+UNIT_TEST_SRCS = tests/unit/test_main.cpp tests/unit/test_cpu_arithmetic.cpp tests/unit/test_cpu_opcodes.cpp tests/unit/test_cpu_45gs02.cpp tests/unit/test_cpu_decode.cpp tests/unit/test_memory.cpp tests/unit/test_toolchain.cpp tests/unit/test_debug.cpp tests/unit/test_sim_api.cpp tests/unit/test_devices.cpp tests/unit/test_vic2_sprites.cpp tests/unit/test_integration.cpp tests/unit/test_fuzz.cpp tests/unit/test_cli.cpp tests/unit/test_regression.cpp tests/unit/test_patterns_logic.cpp tests/unit/test_templates_logic.cpp
 UNIT_TEST_OBJS = $(UNIT_TEST_SRCS:.cpp=.o)
-UNIT_TEST_CLI_OBJS = $(CLI_COMMANDS_SRCS:.cpp=.o)
 UNIT_TEST_TARGET = unit-tests
 
-$(UNIT_TEST_TARGET): $(UNIT_TEST_OBJS) $(UNIT_TEST_CLI_OBJS) $(LIB_TARGET)
-	$(CXX) $(CXXFLAGS) -o $@ $^ $(SDL2_LIBS) $(GL_LIBS)
+$(UNIT_TEST_TARGET): $(UNIT_TEST_OBJS) $(LIB_TARGET)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(SDL2_LIBS) $(GL_LIBS) $(READLINE_LIBS)
 
 tests/unit/%.o: tests/unit/%.cpp tests/unit/catch.hpp
 	$(CXX) $(CXXFLAGS) $(FRONT_IFLAGS) -I tests/unit -c -o $@ $<
@@ -178,7 +197,7 @@ unit-test: $(UNIT_TEST_TARGET)
 
 # --- Housekeeping ---
 clean:
-	rm -f $(ALL_LIB_OBJS) $(CLI_OBJS) $(TARGET) src/gui/main.o $(IMGUI_OBJS) $(GUI_TARGET) $(LIB_TARGET) $(UNIT_TEST_OBJS) $(UNIT_TEST_TARGET)
+	rm -f $(ALL_LIB_OBJS) $(CLI_OBJS) $(TARGET) $(GUI_OBJS) $(GUI_TARGET) $(LIB_TARGET) $(UNIT_TEST_OBJS) $(UNIT_TEST_TARGET)
 
 test: $(TARGET) $(UNIT_TEST_TARGET)
 	./$(UNIT_TEST_TARGET)
